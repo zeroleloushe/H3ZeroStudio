@@ -126,6 +126,33 @@ export const CSS = String.raw`
 .h3z-transport { display:flex; align-items:center; justify-content:center; gap:8px; padding:12px 14px; }
 .h3z-play { width:44px; height:44px; border-radius:50%; background:var(--grad); border:none; color:#fff; display:grid; place-items:center; cursor:pointer; box-shadow:0 8px 22px rgba(99,102,241,.45); }
 .h3z-play svg { width:18px; height:18px; }
+/* main player in browser fullscreen (⛶ / F) */
+.h3z-center:fullscreen { background:#05070f; border-radius:0; padding:8px 0 0; }
+.h3z-center:fullscreen .h3z-dyn { display:none; }
+.h3z-center:fullscreen .h3z-frame { border-radius:4px; }
+/* «Удобный просмотр» */
+.h3z-viewer { position:fixed; inset:0; z-index:100000; display:flex; flex-direction:column; background:#03040a; color:var(--txt, #e7e9ff); outline:none; }
+.h3z-viewer .vhd { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); min-width:0; }
+.h3z-viewer .vtag { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:6px; background:var(--grad); color:#fff; white-space:nowrap; }
+.h3z-viewer .vtitle { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; } .h3z-viewer .vsub { white-space:nowrap; }
+.h3z-viewer .grow { flex:1; }
+.h3z-viewer .vzoom { display:flex; align-items:center; gap:4px; } .h3z-viewer .vzoom .zl { min-width:46px; text-align:right; font-variant-numeric:tabular-nums; }
+.h3z-viewer .on { background:var(--grad) !important; color:#fff !important; border-color:transparent !important; }
+.h3z-viewer .vvp { position:relative; flex:1; min-height:0; overflow:hidden; background:#000; touch-action:none; user-select:none; }
+.h3z-viewer .vvp.zoomed { cursor:grab; } .h3z-viewer .vvp.drag { cursor:grabbing; }
+.h3z-viewer .vct { position:absolute; left:50%; top:50%; transform-origin:50% 50%; will-change:transform; }
+.h3z-viewer .vct > video { width:100%; height:100%; display:block; object-fit:contain; background:#000; pointer-events:none; }
+.h3z-viewer .vct > .h3z-frame { border-radius:0; box-shadow:none; max-width:none; max-height:none; pointer-events:none; }
+.h3z-viewer .vct .h3z-badge-live { display:none; }
+.h3z-viewer .vct.px video, .h3z-viewer .vct.px img, .h3z-viewer .vct.px canvas { image-rendering:pixelated; }
+.h3z-viewer .vbar { padding:8px 14px 0; }
+.h3z-viewer .scrubw { position:relative; } .h3z-viewer .scrubw .scrub { width:100%; position:relative; z-index:1; }
+.h3z-viewer .loopband { position:absolute; top:50%; height:14px; transform:translateY(-50%); border-radius:4px; background:rgba(34,211,238,.18); border:1px solid rgba(34,211,238,.45); display:none; pointer-events:none; }
+.h3z-viewer .loopband.on { display:block; }
+.h3z-viewer .vctr { display:flex; align-items:center; gap:8px; padding:8px 14px; flex-wrap:wrap; }
+.h3z-viewer .vtime { font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--mut); white-space:nowrap; } .h3z-viewer .vtime b { color:var(--txt, #fff); }
+.h3z-viewer .sep { width:1px; height:20px; background:var(--line); margin:0 2px; }
+.h3z-viewer .vkeys { padding:0 14px 8px; font-size:11px; opacity:.75; }
 .h3z-time { font-variant-numeric:tabular-nums; color:var(--mut); font-size:12px; min-width:150px; text-align:center; }
 .h3z-time b { color:var(--txt); }
 /* ---------- inspector */

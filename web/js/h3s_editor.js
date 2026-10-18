@@ -17,6 +17,7 @@ import { installHelp } from "./h3s_help.js";
 import { installGallery } from "./h3s_gallery.js";
 import { installProjects } from "./h3s_projects.js";
 import { installRegions } from "./h3s_regions.js";
+import { installViewer } from "./h3s_viewer.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -773,7 +774,11 @@ export class H3Editor {
         h("button", { class: "h3z-btn icon", html: ICON.prev, title: "К предыдущему отрезку ([)", onclick: () => this.jumpSeg(-1) }),
         $.playBtn,
         h("button", { class: "h3z-btn icon", html: ICON.next, title: "К следующему отрезку (])", onclick: () => this.jumpSeg(1) }),
-        $.time, h("div", { class: "grow" }), h("div", { class: "h3z-volume" }, $.volBtn, $.volR)), this.buildDyn());
+        $.time, h("div", { class: "grow" }),
+        h("button", { class: "h3z-btn icon", html: H3Editor.VIEWER_ICONS.view, title: "Удобный просмотр: масштаб до ×4, покадрово, скорость, петля (двойной клик по кадру)", onclick: () => this.viewerFromPlayer() }),
+        h("button", { class: "h3z-btn icon h3z-fsbtn", html: H3Editor.VIEWER_ICONS.fs, title: "Плеер во весь экран (F) · Esc — выйти", onclick: () => this.toggleMainFullscreen() }),
+        h("div", { class: "h3z-volume" }, $.volBtn, $.volR)), this.buildDyn());
+    $.stage.addEventListener("dblclick", (e) => { if (e.target.closest("button, a, input")) return; this.viewerFromPlayer(); });
     this.applyVolume();
     try { new ResizeObserver(() => this.layoutStage()).observe($.stage); } catch (e) {}
   }
@@ -788,7 +793,7 @@ export class H3Editor {
   }
 
   layoutStage() {
-    const $ = this.$; if (!$.stage) return;
+    const $ = this.$; if (!$.stage || this.viewer?.comp) return;   // the frame is inside «Удобный просмотр»
     const [w, hh] = C.resolution(this.p.settings);
     const W = $.stage.clientWidth - 28, H = $.stage.clientHeight;
     if (W <= 0 || H <= 0) return;
@@ -884,6 +889,7 @@ export class H3Editor {
     this.$.playBtn.innerHTML = ICON.pause;
     if (!this._autoplay) { this.userGesture = true; this.autoMuted = false; } // pressed by the user: sound allowed (autoplay policy)
     this.applyVolume();
+    { const r = this.playRate || 1, v = this.$.video; if (v) { v.defaultPlaybackRate = r; v.playbackRate = r; } }
     if (this.src?.kind === "comp" && this.compChanged(this.playhead)) this.renderPreview();
     if (this.src && !this.src.ph) { this.syncVideoToPlayhead(); this.$.video.play().catch(() => { this.$.video.muted = true; this.autoMuted = true; this.$.video.play().catch(() => {}); }); }
     let last = performance.now();
@@ -893,12 +899,13 @@ export class H3Editor {
         // composition: the playhead only moves forward. The video time is trusted only once the current source
         // is loaded and its seek has landed (right after a switch currentTime is still 0 / the old value, which
         // mapped back into the overlap of the previous clip and looped the seam); otherwise the clock advances it.
-        const s = this.src, v = this.$.video, dt = (now - last) / 1000 * C.FPS;
+        const s = this.src, v = this.$.video, dt = (now - last) / 1000 * C.FPS * (this.playRate || 1);
         const ready = !s.ph && !this._compHold && !v.paused && !v.seeking && v.readyState >= 2 && v.dataset.src === this.host.url(s.ref);
         if (ready) {
           const d = s.start + (v.currentTime - (s.off || 0)) * C.FPS;
           this.playhead = d >= this.playhead - 0.5 ? Math.max(this.playhead, d) : this.playhead + dt;
         } else this.playhead += dt;
+        if (this.viewer?.comp && this.vwLoopGuard()) { last = now; this._raf = requestAnimationFrame(tick); return; }   // «Удобный просмотр» loop range
         if (this.playhead >= total) { this.playhead = total; this.stopPlayback(); this.updatePlayhead(true); return; }
         if (this.playhead >= s.end || this.compChanged(this.playhead)) this.compSwitch();
         else this.compPrefetch?.();
@@ -908,7 +915,7 @@ export class H3Editor {
         if (this.src.foot && this.playhead >= this.src.end) { this.playhead = this.src.end; this.$.video.pause(); this.onEnded(); if (!this.playing) { this.updatePlayhead(true); return; } }
       }
       else if (!this.src) {
-        this.playhead += (now - last) / 1000 * C.FPS;
+        this.playhead += (now - last) / 1000 * C.FPS * (this.playRate || 1);
         if (this.playhead >= total) { this.playhead = total; this.stopPlayback(); }
       }
       last = now;
@@ -1448,6 +1455,7 @@ export class H3Editor {
     // a modal on top owns the keyboard: the asset editor has its own window listener (registered later, so it
     // runs after this one) and the save dialog listens on its box — the timeline must not react (Esc closed it all)
     if (this.ae) return;
+    if (this.viewer) { this.viewerKey(e); return; }   // «Удобный просмотр» owns the keyboard
     if (this.$.saveModal) { if (e.key === "Escape" && !isTyping(e)) { e.preventDefault(); this.closeSaveDialog(); } return; }
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
     if (k === "Escape") { e.preventDefault(); if (isTyping(e)) { e.target.blur(); this.focusSink(); } else if (this.$.menu) this.closeMenu(); else if (this.$.pop) this.toggleWarnings(); else if (this.regionMode) this.toggleRegionMode(false); else if (this.selRegion) { this.selRegion = null; this.renderTimeline(); } else if (this.selMarker) { this.selMarker = null; this.renderInspector(); this.renderTimeline(); } else if (this.selAudio) { this.selAudio = null; this.renderTimeline(); this.renderLeft(); } else this.close(); return; }
@@ -1459,7 +1467,7 @@ export class H3Editor {
     const map = {
       Space: () => this.togglePlay(), KeyS: () => (this.selAudio ? this.splitAudio() : this.split()),
       Delete: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
-      KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), KeyR: () => this.toggleRegionMode(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
+      KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), KeyR: () => this.toggleRegionMode(), KeyF: () => this.toggleMainFullscreen(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
       ArrowLeft: () => this.seek(Math.round(this.playhead) - (e.shiftKey ? 24 : 1)), ArrowRight: () => this.seek(Math.round(this.playhead) + (e.shiftKey ? 24 : 1)),
       BracketLeft: () => this.jumpSeg(-1), BracketRight: () => this.jumpSeg(1),
       Equal: () => this.setZoomBy(1.25), NumpadAdd: () => this.setZoomBy(1.25), Minus: () => this.setZoomBy(0.8), NumpadSubtract: () => this.setZoomBy(0.8),
@@ -1720,3 +1728,4 @@ installHelp(H3Editor, { C, h, ICON });
 installGallery(H3Editor, { C, h, ICON });
 installProjects(H3Editor, { C, h, ICON });
 installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurrent / compSource
+installViewer(H3Editor, { C, h, ICON });

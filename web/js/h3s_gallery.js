@@ -237,6 +237,7 @@ export function installGallery(Editor, { C, h, ICON }) {
         grp ? { label: `▣ Открыть стопку (${grp.items.length} вар.)`, hint: "клик", fn: () => this.galOpenGroup(grp.key) } : null,
         grp && grp.items.length >= 2 ? { label: "⇄ Сравнить два последних варианта", fn: () => this.galView([grp.cover, grp.items.find((x) => x !== grp.cover)]) } : null,
         { label: grp ? "▶ Смотреть обложку" : "▶ Смотреть", hint: "2×клик", fn: () => this.galView([e]) },
+        { icon: this.constructor.VIEWER_ICONS?.view || "", label: "Удобный просмотр", title: "Во весь экран: масштаб до ×4, покадрово, скорость, петля", fn: () => this.galViewer(e), dis: !e.video },
         other ? { label: "⇄ Сравнить с выбранным", fn: () => this.galView([other, e]) } : null,
         "sep",
         ref ? { label: e.active ? "✓ Активный дубль на таймлайне" : `✓ Выбрать этот дубль (отрезок ${ref.i + 1})`, fn: () => this.selectTake(ref.i, ref.take.id), dis: e.active || busy || !!this.seg(ref.i)?.freeze } : null,
@@ -382,13 +383,18 @@ export function installGallery(Editor, { C, h, ICON }) {
         requestAnimationFrame(apply);
       }
       const box = h("div", { class: "h3z-gview h3z-glass" + (list.length === 2 ? " two" : "") },
-        h("div", { class: "hd" }, h("b", null, list.length === 2 ? "⇄ Сравнение" : "▶ Просмотр"), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: () => this.galClose() }, "✕")),
+        h("div", { class: "hd" }, h("b", null, list.length === 2 ? "⇄ Сравнение" : "▶ Просмотр"), h("i", { class: "grow" }),
+          list.length === 1 ? h("button", { class: "h3z-btn sm", html: (this.constructor.VIEWER_ICONS?.view || "") + "<span>Удобный просмотр</span>", title: "Во весь экран: масштаб до ×4, покадрово, скорость, петля", onclick: () => this.galViewer(list[0], vids[0].currentTime) }) : null, h("button", { class: "h3z-btn sm icon", onclick: () => this.galClose() }, "✕")),
         h("div", { class: "vids" }, cols), ctr);
       const modal = this.$.galModal = h("div", { class: "h3z-modal" }, box);
       modal.addEventListener("pointerdown", (x) => { if (x.target === modal) this.galClose(); });
       modal.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") this.galClose(); });
       modal.tabIndex = -1;
       this.root.append(modal); modal.focus();
+    },
+    galViewer(e, t = 0) {
+      if (!e?.video) return;
+      this.openViewer({ ref: e.video, t, title: (KIND[e.kind] || "Видео") + (e.seg_index != null ? ` · отрезок ${e.seg_index + 1}` : "") + (e.kind === "upscale" || e.kind === "region" ? " · " + this.galLine(e).split(" · ").slice(0, 2).join(" · ") : "") + (e.seed != null ? ` · сид ${e.seed}` : "") });
     },
     galClose(keepZoom = false) { if (!keepZoom) this._galZoom = null; if (this.$?.galModal) { this.$.galModal.querySelectorAll("video").forEach((v) => v.pause()); this.$.galModal.remove(); this.$.galModal = null; this.focusSink?.(); } },
   });

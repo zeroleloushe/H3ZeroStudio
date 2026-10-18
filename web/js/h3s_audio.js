@@ -315,9 +315,11 @@ export function installAudio(Editor, { C, h, ICON }) {
         let el = this._aud[c.id];
         if (!el || el.dataset.src !== url) { el?.pause(); el = this._aud[c.id] = new Audio(url); el.dataset.src = url; el.preload = "auto"; }
         el.volume = this.vol?.muted ? 0 : Math.max(0, Math.min(1, (this.vol?.v ?? 1) * envAt(c, t - sp.start, sp.len)));
+        const rate = this.playRate || 1;   // «Удобный просмотр» speed
+        if (el.playbackRate !== rate) { el.defaultPlaybackRate = rate; el.playbackRate = rate; }
         const want = sp.in + (t - sp.start);
         if (el.paused) { try { el.currentTime = want; } catch (e) {} el.play().catch(() => {}); }
-        else if (Math.abs(el.currentTime - want) > 0.25) { try { el.currentTime = want; } catch (e) {} }
+        else if (Math.abs(el.currentTime - want) > 0.25 * Math.max(1, rate)) { try { el.currentTime = want; } catch (e) {} }
       }
       for (const [id, el] of Object.entries(this._aud)) if (!live.has(id) && !el.paused) el.pause();
     },
