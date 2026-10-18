@@ -116,6 +116,15 @@ PROJECTS = [
      "segments": [{"frames": 362, "upscale": {"method": "latent", "scale": 2}}, {"frames": 158, "upscale": {"method": "tiles", "mp": 3.33333, "tile_ov": 7}},
                   {"frames": 124, "upscale": {"method": "latent", "mp": "0.1"}}, {"frames": 600, "upscale": {"method": "rtx", "mp": 99, "quality": "low"}}]},
     {"settings": {"upscale_chunk_sec": 0, "seg_upscale": {"method": "latent", "mp": 2.5}}, "segments": [{"frames": 600, "upscale": {"method": "latent", "mp": 2.5}}]},
+    # per-method upscale profiles (own σ / steps / sampler / chunks) + legacy flat chunk keys still present
+    {"segments": [{"id": "a", "frames": 124, "prompt": "x", "upscale": {"method": "rtx", "mp": 2}}],
+     "settings": {"seg_upscale": {"method": "latent", "mp": 2, "sigma": 0.25}, "upscale_chunk_sec": 4, "upscale_chunk_overlap": 2,
+                  "upscale_profiles": {"latent": {"sigma": 0.25, "steps": 6, "chunk": True, "chunk_sec": 3},
+                                       "rtx": {"quality": "HIGH", "sigma": 0.2, "sampler": "euler", "scheduler": "simple", "chunk": False},
+                                       "tiles": {"tile": 512, "chunk": True, "chunk_sec": 99, "chunk_overlap": 7, "steps": 999}}}},
+    # legacy flat values only: migrated into the selected method (tiles) profile
+    {"settings": {"seg_upscale": {"method": "tiles", "mp": 3, "sigma": 0.45, "tile": 768, "tile_ov": 64}, "upscale_chunk_sec": 6},
+     "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}}]}
 ]
 
 JS_DRIVER = textwrap.dedent("""
@@ -140,6 +149,8 @@ JS_DRIVER = textwrap.dedent("""
                ucv: p.segments.map((s) => (s.upscale ? C.upscaleCanvas(...C.workResolution(p.settings), s.upscale) : null)),
                rwin: p.regions.map((r) => C.regionWindow(p, r)), chains: C.sceneChains(C.plan(p)),
                chunks: [39, 124, 141, 158, 175, 226, 362, 600, 957].map((f) => C.upscaleChunking(p.settings, f)),
+               mchunks: ["latent", "rtx", "tiles"].map((m) => [124, 362, 957].map((f) => C.upscaleChunking(p.settings, f, m))),
+               upp: ["latent", "rtx", "tiles"].map((m) => p.segments.map((s, i) => C.upscalePassParams(p, i, m))),
                mpsc: [[960, 544], [1344, 768], [832, 480], [1280, 720]].map(([w, hh]) => [C.mpForScale(w, hh, 1.5), C.mpForScale(w, hh, 2), C.upscaleCanvas(w, hh, { mp: 3 })]),
                keyform: p.segments.map((s) => C.upscaleKeyForm(s.upscale, ...C.workResolution(p.settings))) };
     });
@@ -190,6 +201,8 @@ def test_core_parity(h3s, tmp_path):
         assert json.loads(json.dumps([core.region_window(p, r) for r in p["regions"]])) == j["rwin"]
         assert [list(c) for c in core.scene_chains(core.plan(p))] == j["chains"]
         assert [list(core.upscale_chunking(p["settings"], f)) for f in (39, 124, 141, 158, 175, 226, 362, 600, 957)] == j["chunks"]
+        assert [[list(core.upscale_chunking(p["settings"], f, m)) for f in (124, 362, 957)] for m in ("latent", "rtx", "tiles")] == j["mchunks"]
+        assert [[core.upscale_pass_params(p, i, m) for i in range(len(p["segments"]))] for m in ("latent", "rtx", "tiles")] == j["upp"]
         assert [[core.mp_for_scale(w, hh, 1.5), core.mp_for_scale(w, hh, 2), list(core.upscale_canvas(w, hh, {"mp": 3}))]
                 for w, hh in ((960, 544), (1344, 768), (832, 480), (1280, 720))] == j["mpsc"]
         assert [core.upscale_key_form(s["upscale"], *core.work_resolution(p["settings"])) for s in p["segments"]] == j["keyform"]

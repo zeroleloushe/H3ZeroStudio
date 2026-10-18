@@ -1234,3 +1234,41 @@ def test_upscale_temporal_chunks(patcher, dirs, monkeypatch, capsys):
     # progress events carry the chunk
     st_ = gen.run_status("chk")
     assert st_ is not None
+
+
+def test_upscale_profiles_per_method():
+    """Regression: every upscale method keeps its own profile. Root cause was one shared seg_upscale: switching the method
+    wrote that method's default σ and normalize_upscale dropped quality / tiles of the other method; chunks were global."""
+    # migration: the flat values go into the selected method's profile, the others get their own defaults
+    st = core.normalize_project({"settings": {"seg_upscale": {"method": "rtx", "mp": 3, "sigma": 0.33, "quality": "HIGH"},
+                                              "upscale_chunk_sec": 6, "upscale_chunk_overlap": 2}})["settings"]
+    pr = st["upscale_profiles"]
+    assert pr["rtx"]["sigma"] == 0.33 and pr["rtx"]["quality"] == "HIGH" and pr["rtx"]["mp"] == 3 and pr["rtx"]["chunk"] is True
+    assert pr["rtx"]["chunk_sec"] == 6 and pr["rtx"]["chunk_overlap"] == 2
+    assert pr["latent"]["sigma"] == core.SEG_UPSCALE_SIGMA["latent"] and pr["latent"]["chunk"] is True
+    assert pr["tiles"]["chunk"] is False                                   # defaults: chunks on for latent / RTX, off for tiles
+    assert core.normalize_project({})["settings"]["upscale_profiles"]["tiles"]["chunk"] is False
+    # switching the method only selects another profile: rtx σ / quality survive latent and back
+    st["upscale_profiles"]["latent"]["sigma"] = 0.5
+    st["seg_upscale"] = {"method": "latent"}
+    s2 = core.normalize_project({"settings": st})["settings"]
+    assert s2["seg_upscale"]["method"] == "latent" and s2["seg_upscale"]["sigma"] == 0.5
+    s2["seg_upscale"] = {"method": "rtx", "sigma": 0.15}                  # a stale mirror never overwrites the profile
+    s3 = core.normalize_project({"settings": s2})["settings"]
+    assert s3["seg_upscale"]["sigma"] == 0.33 and s3["seg_upscale"]["quality"] == "HIGH" and s3["upscale_profiles"]["latent"]["sigma"] == 0.5
+    # global settings round-trip keeps all profiles
+    g = core.global_settings({"upscale_profiles": s3["upscale_profiles"], "seg_upscale": s3["seg_upscale"]})
+    assert g["upscale_profiles"]["latent"]["sigma"] == 0.5 and g["upscale_profiles"]["rtx"]["quality"] == "HIGH"
+    # the backend reads chunking / steps / sampler of the clip's method
+    s3["upscale_profiles"]["tiles"].update(chunk=False)
+    s3["upscale_profiles"]["latent"].update(chunk=True, chunk_sec=3, steps=7, sampler="euler")
+    p = core.normalize_project({"settings": s3, "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}},
+                                                               {"frames": 362, "upscale": {"method": "latent", "mp": 2}}]})
+    assert core.upscale_chunking(p["settings"], 362, "tiles") == (1, 0, 0)
+    assert core.upscale_chunking(p["settings"], 362, "latent")[0] > 1
+    pp = core.upscale_pass_params(p, 1, "latent")
+    assert pp["steps"] == 7 and pp["sampler"] == "euler"
+    assert core.upscale_pass_params(p, 0, "tiles")["steps"] == core.pass_params(p, 0, "refine")["steps"]
+    keys = core.upscale_keys(p, core.segment_keys(p))
+    p["settings"]["upscale_profiles"]["rtx"]["sigma"] = 0.2               # another method's profile: keys of these clips unchanged
+    assert core.upscale_keys(core.normalize_project(p), core.segment_keys(p)) == keys

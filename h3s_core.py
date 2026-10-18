@@ -88,8 +88,9 @@ DEFAULT_SETTINGS = {
     "seg_upscale": {"method": "latent", "scale": 2.0},   # legacy multiplier, migrated to a megapixel target ("mp")
     # upscale in temporal chunks (sequential, like ComfyUI-H3-WindowedRefine): approximate chunk length in seconds
     # (snapped to 17k+5 frames; 0 = the whole clip in one piece) and the chunk overlap in H3 blocks (5o+2 latent frames)
-    "upscale_chunk_sec": 5.0,
+    "upscale_chunk_sec": 5.0,      # legacy (one value for all methods): migrated into upscale_profiles
     "upscale_chunk_overlap": 1,
+    "upscale_profiles": None,      # own settings per upscale method (normalize_upscale_profiles), see SEG_UPSCALE_METHODS
     # stage parameters ("" / 0 = as the main sampling parameters)
     "draft_sampler": "", "draft_scheduler": "", "draft_cfg": 0.0,
     "refine_sampler": "", "refine_scheduler": "", "refine_cfg": 0.0,
@@ -102,7 +103,7 @@ RUN_KINDS = ("draft", "refine", "full")
 GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log")
@@ -126,6 +127,11 @@ UPSCALE_CHUNK_OVERLAP_RANGE = (1, 3)
 SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.35}   # default refine strength (start sigma) per method
 SEG_UPSCALE_SIGMA_RANGE = (0.1, 0.7)
 RTX_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA")
+# every upscale method keeps its own profile: switching the method in «Настройки» only selects another profile.
+# The upscale fields (mp, sigma, quality, tile, tile_ov) are what a clip gets; steps / sampler / scheduler of the
+# refine pass ("" / 0 = those of «Этап 2») and the temporal chunks are read by method when the upscale runs.
+UPSCALE_CHUNK_DEFAULT = {"latent": True, "rtx": True, "tiles": False}
+UPSCALE_UP_FIELDS = ("mp", "scale", "sigma", "quality", "tile", "tile_ov")
 # tiled upscale: tile size in px (multiple of 32; absent = the clip's own canvas) and overlap in latent cells (×16 px;
 # absent = auto, max(4, min(16, tile/3))) — stored only when set, so older upscale keys stay valid
 TILE_PX_RANGE = (256, 2048)
@@ -385,6 +391,7 @@ def normalize_project(p):
     cs = _num(st.get("upscale_chunk_sec"), 5.0)
     st["upscale_chunk_sec"] = 0.0 if cs <= 0 else _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1)
     st["upscale_chunk_overlap"] = int(min(UPSCALE_CHUNK_OVERLAP_RANGE[1], max(UPSCALE_CHUNK_OVERLAP_RANGE[0], _num(st.get("upscale_chunk_overlap"), 1))))
+    normalize_upscale_profiles(st)
     for k in ("draft", "refine"):
         st[k + "_sampler"] = str(st.get(k + "_sampler") or "")[:64]
         st[k + "_scheduler"] = str(st.get(k + "_scheduler") or "")[:64]
@@ -473,7 +480,12 @@ def normalize_project(p):
         out["segments"].append(seg)
     # legacy upscale multipliers -> megapixel targets with the same canvas (cache keys unchanged: upscale_key_form)
     rw, rh = resolution(out["settings"])
-    out["settings"]["seg_upscale"] = migrate_upscale(out["settings"]["seg_upscale"], rw, rh)
+    for m, pr in out["settings"]["upscale_profiles"].items():
+        mu = migrate_upscale(profile_upscale(out["settings"], m), rw, rh)
+        for k in ("mp", "scale"):
+            pr.pop(k, None)
+        pr.update({k: mu[k] for k in ("mp", "scale") if k in mu})
+    out["settings"]["seg_upscale"] = profile_upscale(out["settings"], out["settings"]["seg_upscale"]["method"])
     for seg in out["segments"]:
         seg["upscale"] = migrate_upscale(seg["upscale"], rw, rh)
     return out
@@ -502,6 +514,65 @@ def normalize_upscale(u):
             ov = min(TILE_OV_RANGE[1], max(TILE_OV_RANGE[0], ov))
             out["tile_ov"] = ov - ov % 2
     return out
+
+
+def normalize_upscale_profile(m, p):
+    """One method's profile: upscale fields + refine pass (steps 0 / sampler "" = «Этап 2») + temporal chunks."""
+    p = p if isinstance(p, dict) else {}
+    u = normalize_upscale({**{k: p[k] for k in UPSCALE_UP_FIELDS if k in p}, "method": m}) or normalize_upscale({"method": m, "scale": 2.0})
+    out = {k: v for k, v in u.items() if k != "method"}
+    out["steps"] = int(max(0, min(200, _num(p.get("steps"), 0))))
+    out["sampler"] = str(p.get("sampler") or "")[:64]
+    out["scheduler"] = str(p.get("scheduler") or "")[:64]
+    out["chunk"] = bool(p["chunk"]) if "chunk" in p else UPSCALE_CHUNK_DEFAULT[m]
+    cs = _num(p.get("chunk_sec"), 5.0)
+    out["chunk_sec"] = _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs if cs > 0 else 5.0)), 1)
+    out["chunk_overlap"] = int(min(UPSCALE_CHUNK_OVERLAP_RANGE[1], max(UPSCALE_CHUNK_OVERLAP_RANGE[0], _num(p.get("chunk_overlap"), 1))))
+    return out
+
+
+def normalize_upscale_profiles(st):
+    """settings.upscale_profiles = {method: profile}; the selected method's profile is mirrored into seg_upscale
+    (the profiles are the source: seg_upscale only selects the method). Older settings had one flat set
+    (seg_upscale + upscale_chunk_sec / _overlap): it becomes the profile of the selected method, the other
+    methods get their defaults (same size, own σ, chunks on for latent / RTX, off for tiles)."""
+    su = st["seg_upscale"]
+    raw = st.get("upscale_profiles")
+    if not isinstance(raw, dict) or not any(isinstance(raw.get(m), dict) for m in SEG_UPSCALE_METHODS):
+        cs, co = _num(st.get("upscale_chunk_sec"), 5.0), st.get("upscale_chunk_overlap", 1)
+        size = {k: su[k] for k in ("mp", "scale") if k in su}
+        raw = {}
+        for m in SEG_UPSCALE_METHODS:
+            base = {k: v for k, v in su.items() if k != "method"} if m == su["method"] else {**size, "sigma": SEG_UPSCALE_SIGMA[m]}
+            on = cs > 0 if m == su["method"] else UPSCALE_CHUNK_DEFAULT[m]
+            raw[m] = {**base, "chunk": on, "chunk_sec": cs if cs > 0 else 5.0, "chunk_overlap": co}
+    st["upscale_profiles"] = {m: normalize_upscale_profile(m, raw.get(m)) for m in SEG_UPSCALE_METHODS}
+    st["seg_upscale"] = profile_upscale(st, su["method"])
+
+
+def upscale_profile(settings, method):
+    """The profile of an upscale method (defaults when the settings have none)."""
+    pr = (settings.get("upscale_profiles") or {}).get(method)
+    return pr if isinstance(pr, dict) else normalize_upscale_profile(method, None)
+
+
+def profile_upscale(settings, method):
+    """The upscale a clip gets from the method's profile: {method, mp, sigma, [quality], [tile, tile_ov]}."""
+    pr = upscale_profile(settings, method)
+    return normalize_upscale({**{k: pr[k] for k in UPSCALE_UP_FIELDS if k in pr}, "method": method})
+
+
+def upscale_pass_params(project, index, method):
+    """pass_params of a clip's upscale refine: «Этап 2» with the method profile's own steps / sampler / scheduler."""
+    p = pass_params(project, index, "refine")
+    pr = upscale_profile(project["settings"], method)
+    if pr.get("steps"):
+        p["steps"] = int(pr["steps"])
+    if pr.get("sampler"):
+        p["sampler"] = pr["sampler"]
+    if pr.get("scheduler"):
+        p["scheduler"] = pr["scheduler"]
+    return p
 
 
 def upscalable(seg):
@@ -565,14 +636,19 @@ def chunk_starts(k, m, o):
     return sorted({int(_round(i * last / (n - 1), 0)) for i in range(n)})
 
 
-def upscale_chunking(settings, frames):
-    """Temporal chunks of a clip's upscale: (count, chunk frames 17k+5 or 0 = off, overlap blocks)."""
-    sec = _num(settings.get("upscale_chunk_sec"), 0)
+def upscale_chunking(settings, frames, method=None):
+    """Temporal chunks of a clip's upscale with `method` (its profile's chunks; no method = the legacy flat
+    settings): (count, chunk frames 17k+5 or 0 = off, overlap blocks)."""
+    if method:
+        pr = upscale_profile(settings, method)
+        sec, ov = (_num(pr.get("chunk_sec"), 5.0) if pr.get("chunk") else 0), pr.get("chunk_overlap", 1)
+    else:
+        sec, ov = _num(settings.get("upscale_chunk_sec"), 0), settings.get("upscale_chunk_overlap", 1)
     if sec <= 0:
         return 1, 0, 0
     cf = snap_frames(sec * FPS)
     m = (latent_t(cf) - 2) // 5
-    o = max(1, min(int(_num(settings.get("upscale_chunk_overlap"), 1)), m - 1))
+    o = max(1, min(int(_num(ov, 1)), m - 1))
     k = (latent_t(frames) - 2) // 5
     # approximate length: a clip up to 2 blocks (≈1.4 s) longer than a chunk stays one piece
     n = len(chunk_starts(k, m, o)) if frames > cf + 34 else 1
@@ -968,10 +1044,11 @@ def estimate(project):
     steps = sum(seg_steps(project, it["index"]) for it in items)
     ups = [it["index"] for it in items if upscalable(project["segments"][it["index"]])]
     fr = {it["index"]: it["frames"] for it in items}
-    steps += sum(pass_params(project, i, "refine")["steps"] * upscale_chunking(project["settings"], fr[i])[0] for i in ups)
+    um = lambda i: project["segments"][i]["upscale"]["method"]
+    steps += sum(upscale_pass_params(project, i, um(i))["steps"] * upscale_chunking(project["settings"], fr[i], um(i))[0] for i in ups)
     if ups:
         uw, uh = max((upscale_canvas(w, h, project["segments"][i]["upscale"]) for i in ups), key=lambda c: c[0] * c[1])
-        nch = max(upscale_chunking(project["settings"], fr[i])[0] for i in ups)
+        nch = max(upscale_chunking(project["settings"], fr[i], um(i))[0] for i in ups)
         warnings.append(f"апскейл отрезков: {len(ups)} → до {uw}×{uh}" + (f" · до {nch} фрагм. по времени" if nch > 1 else ""))
     return {"segments": len(items), "frames": total, "seconds": round(total / FPS, 3), "width": w, "height": h,
             "steps_total": steps, "warnings": warnings, "kind": run_kind(project["settings"])}
@@ -1051,10 +1128,12 @@ def upscale_keys(project, base_keys, kind=None, up_env=None):
         cont = it["link"] == "extend" and it["index"] > 0 and it["overlap"]
         wh = list(upscale_canvas(w, h, up))
         chain = prev[0] if prev and cont and prev[1] == wh else ""
-        nch, cf, co = upscale_chunking(project["settings"], it["frames"])
+        nch, cf, co = upscale_chunking(project["settings"], it["frames"], up["method"])
+        upp, pr = upscale_pass_params(project, it["index"], up["method"]), upscale_profile(project["settings"], up["method"])
+        smp = [pr.get("sampler") or "", pr.get("scheduler") or ""]   # in the key only when the profile sets its own (old keys stay)
         k = _h({"v": SCHEMA_VERSION, "up": bk, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
-                "steps": pass_params(project, it["index"], "refine")["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {}),
-                **({"ch": [cf, co]} if nch > 1 else {})})[:16]
+                "steps": upp["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {}),
+                **({"ch": [cf, co]} if nch > 1 else {}), **({"smp": smp} if any(smp) else {})})[:16]
         out.append(k)
         prev = (k, wh)
     return out

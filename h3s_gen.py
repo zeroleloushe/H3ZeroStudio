@@ -1353,7 +1353,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                                     d, use_cache) if proj.get("regions") else []
     todo_steps += sum(rp["steps"] for rp in reg_plans)
     up_cached = [bool(uk) and use_cache and os.path.isfile(seg_pt_path(d, uk)) for uk in ukeys]
-    todo_steps += sum(core.pass_params(proj, i, "refine")["steps"] * core.upscale_chunking(s, items[i]["frames"])[0]
+    _um = lambda i: proj["segments"][items[i]["index"]]["upscale"]["method"]
+    todo_steps += sum(core.upscale_pass_params(proj, items[i]["index"], _um(i))["steps"] * core.upscale_chunking(s, items[i]["frames"], _um(i))[0]
                       for i, uk in enumerate(ukeys) if uk and not up_cached[i] and i >= first)
     pbar = comfy.utils.ProgressBar(max(1, todo_steps))
     t0 = time.perf_counter()
@@ -1547,7 +1548,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 log(f"segment {i + 1}: upscale done in {time.perf_counter() - t_up:.1f}s -> {uinfo['wh'][0]}x{uinfo['wh'][1]} ({uinfo['input']})")
             notify("phase", seg=i, phase="decode")
             t_dec = time.perf_counter()
-            frames = upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1]))   # chunk by chunk when chunked
+            frames = upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"]))   # chunk by chunk when chunked
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}
             rk, rwh = uk, [int(uv.shape[-1]) * 16, int(uv.shape[-2]) * 16]

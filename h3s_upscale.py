@@ -225,10 +225,10 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA"):
 
 
 # ---------------------------------------------------------------- temporal chunks
-def chunk_plan(settings, T, A):
+def chunk_plan(settings, T, A, method=None):
     """Sequential temporal chunks [(v0, v1, a0, a1)] of an upscale (one piece when chunking is off / not needed).
     Same count as core.upscale_chunking (estimate, cache key, progress)."""
-    n, cf, o = core.upscale_chunking(settings, frames_for_latent_t(T))
+    n, cf, o = core.upscale_chunking(settings, frames_for_latent_t(T), method)
     if n <= 1 or T < 2 or (T - 2) % 5:
         return [(0, T, 0, A)]
     m = (core.latent_t(cf) - 2) // 5
@@ -561,16 +561,16 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     seg = project["segments"][index]
     up = seg["upscale"]
     it = items[index]
-    p = core.pass_params(project, index, "refine")
+    p = core.upscale_pass_params(project, index, seg["upscale"]["method"])   # the method profile's own steps / sampler
     bw, bh = v.shape[-1] * 16, v.shape[-2] * 16
     W, H = core.upscale_canvas(bw, bh, up)
     method = up["method"]
     want = "rtx" if method == "rtx" else "learned"
     T, A = v.shape[2], a.shape[-1]
-    chunks = chunk_plan(s, T, A)
+    chunks = chunk_plan(s, T, A, method)
     nch = len(chunks)
     log(f"segment {index + 1} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
-        + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T))[1]} frames each, processed one by one): "
+        + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T), method)[1]} frames each, processed one by one): "
            + ", ".join(f"{frames_for_latent_t(v0) if v0 else 0}-{frames_for_latent_t(v1)}" for v0, v1, _, _ in chunks) if nch > 1 else ""))
     prompt = core.compose_prompt(project, index)
     pos = neg = None

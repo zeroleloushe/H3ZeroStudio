@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS = {
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 3, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1,
+  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 3, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
 };
 export const DRAFT_SCALES = [0.5, 0.67, 0.75];
@@ -117,11 +117,55 @@ export function chunkStarts(k, m, o) {
   return [...out].sort((a, b) => a - b);
 }
 /** Temporal chunks of a clip's upscale: [count, chunk frames (0 = off), overlap blocks] (mirror of upscale_chunking). */
-export function upscaleChunking(s, frames) {
-  const sec = num(s.upscale_chunk_sec, 0); if (sec <= 0) return [1, 0, 0];
+export function upscaleChunking(s, frames, method = null) {
+  let sec, ov;
+  if (method) { const pr = upscaleProfile(s, method); sec = pr.chunk ? num(pr.chunk_sec, 5) : 0; ov = pr.chunk_overlap; }
+  else { sec = num(s.upscale_chunk_sec, 0); ov = s.upscale_chunk_overlap; }
+  if (sec <= 0) return [1, 0, 0];
   const cf = snapFrames(sec * FPS), m = (latentT(cf) - 2) / 5;
-  const o = Math.max(1, Math.min(Math.trunc(num(s.upscale_chunk_overlap, 1)), m - 1)), k = (latentT(frames) - 2) / 5;
+  const o = Math.max(1, Math.min(Math.trunc(num(ov, 1)), m - 1)), k = (latentT(frames) - 2) / 5;
   return [frames > cf + 34 ? chunkStarts(k, m, o).length : 1, cf, o];
+}
+// every upscale method keeps its own profile (mirror of h3s_core.normalize_upscale_profile & co)
+export const UPSCALE_CHUNK_DEFAULT = { latent: true, rtx: true, tiles: false };
+export const UPSCALE_UP_FIELDS = ["mp", "scale", "sigma", "quality", "tile", "tile_ov"];
+const pick = (o, keys) => { const r = {}; for (const k of keys) if (o && k in o) r[k] = o[k]; return r; };
+export function normalizeUpscaleProfile(m, p) {
+  p = p && typeof p === "object" ? p : {};
+  const u = normalizeUpscale({ ...pick(p, UPSCALE_UP_FIELDS), method: m }) || normalizeUpscale({ method: m, scale: 2 });
+  const out = {}; for (const [k, v] of Object.entries(u)) if (k !== "method") out[k] = v;
+  out.steps = Math.trunc(Math.max(0, Math.min(200, num(p.steps, 0))));
+  out.sampler = String(p.sampler || "").slice(0, 64);
+  out.scheduler = String(p.scheduler || "").slice(0, 64);
+  out.chunk = "chunk" in p ? !!p.chunk : UPSCALE_CHUNK_DEFAULT[m];
+  const cs = num(p.chunk_sec, 5.0);
+  out.chunk_sec = roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs > 0 ? cs : 5.0)), 1);
+  out.chunk_overlap = Math.trunc(Math.min(UPSCALE_CHUNK_OVERLAP_RANGE[1], Math.max(UPSCALE_CHUNK_OVERLAP_RANGE[0], num(p.chunk_overlap, 1))));
+  return out;
+}
+export function normalizeUpscaleProfiles(st) {
+  const su = st.seg_upscale;
+  let raw = st.upscale_profiles;
+  if (!raw || typeof raw !== "object" || !SEG_UPSCALE_METHODS.some((m) => raw[m] && typeof raw[m] === "object")) {
+    const cs = num(st.upscale_chunk_sec, 5.0), co = st.upscale_chunk_overlap ?? 1, size = pick(su, ["mp", "scale"]);
+    raw = {};
+    for (const m of SEG_UPSCALE_METHODS) {
+      const base = m === su.method ? pick(su, UPSCALE_UP_FIELDS) : { ...size, sigma: SEG_UPSCALE_SIGMA[m] };
+      raw[m] = { ...base, chunk: m === su.method ? cs > 0 : UPSCALE_CHUNK_DEFAULT[m], chunk_sec: cs > 0 ? cs : 5.0, chunk_overlap: co };
+    }
+  }
+  const out = {}; for (const m of SEG_UPSCALE_METHODS) out[m] = normalizeUpscaleProfile(m, raw[m]);
+  st.upscale_profiles = out;
+  st.seg_upscale = profileUpscale(st, su.method);
+}
+export function upscaleProfile(s, method) { const pr = (s.upscale_profiles || {})[method]; return pr && typeof pr === "object" ? pr : normalizeUpscaleProfile(method, null); }
+export function profileUpscale(s, method) { return normalizeUpscale({ ...pick(upscaleProfile(s, method), UPSCALE_UP_FIELDS), method }); }
+export function upscalePassParams(project, index, method) {
+  const p = passParams(project, index, "refine"), pr = upscaleProfile(project.settings, method);
+  if (pr.steps) p.steps = pr.steps;
+  if (pr.sampler) p.sampler = pr.sampler;
+  if (pr.scheduler) p.scheduler = pr.scheduler;
+  return p;
 }
 /** The segment's upscale applies: set, not footage as is, not a take frozen after its upscale (freeze.up). */
 export const upscalable = (seg) => !!seg.upscale && !isFootage(seg) && !(seg.freeze && seg.freeze.up);
@@ -131,7 +175,7 @@ export const RUN_KINDS = ["draft", "refine", "full"];
 export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log"];
@@ -242,6 +286,7 @@ export function normalizeProject(p) {
     st.seg_upscale = normalizeUpscale(st.seg_upscale) || normalizeUpscale({ method: "latent", scale: 2 });
     { const cs = num(st.upscale_chunk_sec, 5.0); st.upscale_chunk_sec = cs <= 0 ? 0 : roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1);
       st.upscale_chunk_overlap = Math.trunc(Math.min(UPSCALE_CHUNK_OVERLAP_RANGE[1], Math.max(UPSCALE_CHUNK_OVERLAP_RANGE[0], num(st.upscale_chunk_overlap, 1)))); }
+    normalizeUpscaleProfiles(st);
     for (const k of ["draft", "refine"]) {
       st[k + "_sampler"] = String(st[k + "_sampler"] || "").slice(0, 64);
       st[k + "_scheduler"] = String(st[k + "_scheduler"] || "").slice(0, 64);
@@ -312,7 +357,11 @@ export function normalizeProject(p) {
   });
   { // legacy upscale multipliers -> megapixel targets with the same canvas (keys unchanged: upscaleKeyForm)
     const [rw, rh] = resolution(out.settings);
-    out.settings.seg_upscale = migrateUpscale(out.settings.seg_upscale, rw, rh);
+    for (const [m, pr] of Object.entries(out.settings.upscale_profiles)) {
+      const mu = migrateUpscale(profileUpscale(out.settings, m), rw, rh);
+      delete pr.mp; delete pr.scale; for (const k of ["mp", "scale"]) if (k in mu) pr[k] = mu[k];
+    }
+    out.settings.seg_upscale = profileUpscale(out.settings, out.settings.seg_upscale.method);
     for (const seg of out.segments) seg.upscale = migrateUpscale(seg.upscale, rw, rh);
   }
   return out;
@@ -588,10 +637,11 @@ export function estimate(project) {
   let steps = items.reduce((acc, it) => acc + segSteps(project, it.index), 0);
   const ups = items.map((it) => it.index).filter((i) => upscalable(project.segments[i]));
   const fr = Object.fromEntries(items.map((it) => [it.index, it.frames]));
-  steps += ups.reduce((acc, i) => acc + passParams(project, i, "refine").steps * upscaleChunking(project.settings, fr[i])[0], 0);
+  const um = (i) => project.segments[i].upscale.method;
+  steps += ups.reduce((acc, i) => acc + upscalePassParams(project, i, um(i)).steps * upscaleChunking(project.settings, fr[i], um(i))[0], 0);
   if (ups.length) {
     const [uw, uh] = ups.map((i) => upscaleCanvas(w, h, project.segments[i].upscale)).reduce((a, b) => (b[0] * b[1] > a[0] * a[1] ? b : a));
-    const nch = Math.max(...ups.map((i) => upscaleChunking(project.settings, fr[i])[0]));
+    const nch = Math.max(...ups.map((i) => upscaleChunking(project.settings, fr[i], um(i))[0]));
     warnings.push(`апскейл отрезков: ${ups.length} → до ${uw}×${uh}` + (nch > 1 ? ` · до ${nch} фрагм. по времени` : ""));
   }
   return { segments: items.length, frames: total, seconds: Math.round(total / FPS * 1000) / 1000, width: w, height: h, steps_total: steps, warnings, kind: runKind(project.settings) };
@@ -625,8 +675,9 @@ export function upscaleSigList(project, base, kind) {
     const cont = it.link === "extend" && it.index > 0 && it.overlap;
     const wh = upscaleCanvas(w, h, up), whs = wh.join("x");
     const chain = prev && cont && prev[1] === whs ? prev[0] : "";
-    const [nch, cf, co] = upscaleChunking(project.settings, it.frames);
-    const sig = fnv(JSON.stringify(["up", base[j], upscaleKeyForm(up, w, h), wh, passParams(project, it.index, "refine").steps, chain].concat(refineExtra(project.settings), nch > 1 ? [["ch", cf, co]] : [])));
+    const [nch, cf, co] = upscaleChunking(project.settings, it.frames, up.method);
+    const pr = upscaleProfile(project.settings, up.method), smp = [pr.sampler || "", pr.scheduler || ""];
+    const sig = fnv(JSON.stringify(["up", base[j], upscaleKeyForm(up, w, h), wh, upscalePassParams(project, it.index, up.method).steps, chain].concat(refineExtra(project.settings), nch > 1 ? [["ch", cf, co]] : [], smp.some(Boolean) ? [["smp", ...smp]] : [])));
     out.push(sig); prev = [sig, whs];
   });
   return out;
