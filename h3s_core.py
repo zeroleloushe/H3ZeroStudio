@@ -1,0 +1,970 @@
+"""Pure project / timeline logic for H3ZeroStudio (no torch, no comfy imports).
+
+Mirrored 1:1 in web/js/h3s_core.js (tests/test_core_parity.py runs both and compares).
+
+MiniMax H3 facts used here (comfy_extras/nodes_minimax_h3.py, comfy/ldm/minimax):
+- 24 fps, valid clip lengths are 17k+5 pixel frames <-> 5k+2 latent frames;
+- latent frame 5j is a standalone single-frame token at pixel frame 17j, so a tail of 5o+2
+  latent frames of a 5m+2 latent starts at 5(m-o) (aligned) and decodes to the last 17o+5 frames;
+- audio latent runs at 40 frames/s: length round(frames / 24 * 40);
+- canvas multiple 32 (latent /16, DiT 2x2 patch); trained length range ~124-362 frames;
+- at most 9 reference images per prompt (<Picture 1..9>).
+"""
+import copy
+import hashlib
+import json
+import math
+import re
+
+FPS = 24
+AUDIO_LATENT_FPS = 40
+CANVAS_MULTIPLE = 32
+MAX_REF_IMAGES = 9
+TRAINED_MIN_FRAMES = 124
+TRAINED_MAX_FRAMES = 362
+MIN_FRAMES = 22
+MAX_FRAMES = 17 * 56 + 5  # 957 frames ~ 40 s, hard UI limit
+CATEGORY_ORDER = ("character", "location", "other")   # image references, in <Picture N> order
+ASSET_CATEGORIES = CATEGORY_ORDER + ("audio", "video")
+AUDIO_INPUT_ID = "input"           # the node's audio input, usable like an audio asset
+MAX_REF_AUDIOS = 3                 # standalone <Audio j> references per segment (MiniMaxH3ReferenceToVideo)
+REF_AUDIO_MAX_SEC = 20.0           # a reference audio is cut to its first seconds
+MAX_REF_VIDEOS = 3                 # <Video k> references per segment (MiniMaxH3ReferenceToVideo ref_videos)
+REF_VIDEO_MAX_SEC = 15.0           # H3 reference videos: 2-15 s
+ASPECTS = {"16:9": (16, 9), "9:16": (9, 16), "1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "21:9": (21, 9)}
+SCHEMA_VERSION = 1
+
+DEFAULT_CONTINUITY = ("Continuity: <Picture {n}> is the last frame of the previous shot of this video; "
+                      "continue seamlessly from it and keep characters, faces, clothing, lighting and details consistent with <Picture {n}>.")
+
+DEFAULT_SETTINGS = {
+    "prompt": "",
+    "negative": "",
+    "aspect": "16:9",
+    "res_mode": "mp",          # "mp" (megapixels + aspect) | "custom" (explicit w/h)
+    "megapixels": 0.5,
+    "width": 960,
+    "height": 544,
+    "steps": 20,
+    "cfg": 1.0,
+    "sampler": "res_multistep",
+    "scheduler": "simple",
+    "shift_video": 12.0,
+    "shift_audio": 3.0,
+    "seed": 0,
+    "fps": FPS,
+    "denoise": 1.0,
+    "overlap_blocks": 1,       # extend overlap: 5o+2 latent = 17o+5 pixel frames
+    "audio_context_sec": 1.0,  # seconds of the previous sound the extension hears, ending where the overlap ends
+                               # (reaches back before it, independent of the video overlap); 0 = just the overlap
+    "lock_overlap": True,
+    "continuity_ref": True,    # last frame of previous segment as extra <Picture N>
+    "continuity_phrase": DEFAULT_CONTINUITY,
+    "ref_size": "match",
+    "cache": True,
+    # audio at extend seams (not used in the "locked" soundtrack mode)
+    "audio_seam_lock": True,   # lock the overlap audio latent to the previous segment's tail (even without lock_overlap)
+    "audio_xfade": True,       # equal-power crossfade inside the overlap when stitching the final audio
+    "audio_xfade_sec": 0.4,    # crossfade length, 0.1-1.0 s (limited to the overlap)
+    "audio_match": True,       # match the next segment's loudness (RMS) to the previous one around the seam
+    # live preview while sampling (do not affect the cache keys)
+    "preview_tiny_vae": "auto", "preview_max_res": 512, "preview_quality": 80, "preview_frames": 48,
+    "preview_fps": 0, "preview_suppress": True, "preview_audio": True,
+    "verbose_log": True,       # detailed [H3ZS] console log (run, segments, every step)
+    # draft mode: «Черновик» samples every segment small and fast; «Финал» either samples again at full size
+    # ("full", one pass) or takes each segment's draft (cached or made first), upscales its video latent and
+    # refines it with a partial-denoise H3 pass ("refine"); the draft's sound is kept 1:1 (H3 audio denoise mask)
+    "quality": "final",        # "final" | "draft"
+    "final_mode": "full",      # "full" | "refine" (switched to "refine" when the user first turns drafts on)
+    "draft_scale": 0.5,        # linear size of the draft (0.5 = a quarter of the pixels)
+    "draft_steps": 0,          # 0 = the normal steps
+    "refine_sigma": 0.4,      # start sigma of the refine pass (0.25-0.45 keeps the draft, more re-draws it)
+    "refine_steps": 0,         # 0 = half of the normal steps (at least 4)
+    # draft -> final upscale: "learned" (H3 latent upscaler model, default; RTX VSR if it is missing) | "rtx"
+    # (RTX VSR -> VAE encode; the learned upscaler if RTX is missing). Neither available = a clear error.
+    "upscale_method": "learned",
+    "upscale_rev": 3,
+    # «↑ Апскейл» (header: the whole video, clip: one clip): method / scale / sigma / RTX quality
+    "seg_upscale": {"method": "latent", "scale": 2.0},
+    # stage parameters ("" / 0 = as the main sampling parameters)
+    "draft_sampler": "", "draft_scheduler": "", "draft_cfg": 0.0,
+    "refine_sampler": "", "refine_scheduler": "", "refine_cfg": 0.0,
+    # «Настройки»: "global" = follows the user's global settings, "project" = own settings (older projects)
+    "settings_scope": "project",
+}
+STAGE_KEYS = ("draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg")
+RUN_KINDS = ("draft", "refine", "full")
+# «Настройки»: set-once settings shared by all projects (unless a project keeps its own: settings_scope="project")
+GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
+               "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
+               "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
+               "upscale_method", "seg_upscale", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
+               "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
+               "verbose_log")
+
+
+def global_settings(values):
+    """Normalized subset of the set-once settings (only the keys given)."""
+    values = {k: v for k, v in (values or {}).items() if k in GLOBAL_KEYS}
+    st = normalize_project({"settings": values, "segments": []})["settings"]
+    return {k: st[k] for k in values}
+DRAFT_SCALES = (0.5, 0.67, 0.75)
+REFINE_SIGMA_RANGE = (0.15, 0.8)
+UPSCALE_METHODS = ("learned", "rtx")   # nearest-exact / VAE-Lanczos were removed (garbage after the refine)
+# «Апскейл отрезка»: per-segment upscale + low-strength refine (see h3s_upscale.py)
+SEG_UPSCALE_METHODS = ("latent", "rtx", "tiles")
+SEG_UPSCALE_SCALES = (1.5, 2.0)
+SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.35}   # default refine strength (start sigma) per method
+SEG_UPSCALE_SIGMA_RANGE = (0.1, 0.7)
+RTX_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA")
+# tiled upscale: tile size in px (multiple of 32; absent = the clip's own canvas) and overlap in latent cells (×16 px;
+# absent = auto, max(4, min(16, tile/3))) — stored only when set, so older upscale keys stay valid
+TILE_PX_RANGE = (256, 2048)
+TILE_OV_RANGE = (2, 32)
+UPSCALE_LABELS_LOG = {"latent": "latent", "rtx": "RTX VSR", "tiles": "tiles"}
+AUDIO_XFADE_RANGE = (0.1, 1.0)
+AUDIO_MATCH_RANGE = (0.5, 2.0)    # gain limits of the loudness match (about +-6 dB)
+AUDIO_MATCH_RELEASE = 2.0         # seconds over which the matching gain returns to 1
+
+DEFAULT_SEGMENT = {
+    "id": "",
+    "name": "",
+    "color": 0,
+    "frames": 124,
+    "prompt": "",
+    "refs": [],
+    "link": "extend",         # "extend": continue previous segment | "cut": new shot, no continuity
+    "overlap_blocks": -1,      # per-segment extend overlap (blocks of 17 frames, 17o+5 frames); -1 = global setting
+    "overrides": {},           # seed/steps/cfg/denoise/sampler/scheduler/shift_video/shift_audio
+    # generated versions: [{id, key, sig, seed, created, snap{prompt,refs,frames,overrides,link}, result}]
+    # choosing a take restores its snapshot, so the cache key matches again and the take's latent
+    # is reused for the stitch and as the continuity source of the next segment
+    "takes": [],
+    "active_take": None,
+    "locked": False,
+    "freeze": None,   # «Зафиксировать»: {key, sig, frames, ...} -> never regenerated
+    # footage clip: a video asset on the timeline. denoise 0 = used as is (VAE-encoded, continuity source of the
+    # next segment), > 0 = regenerated from it (vid2vid with that denoise, prompt and refs apply)
+    "source": None,   # {asset, in (frames into the file), denoise}
+    # «Апскейл отрезка»: {method "latent"|"rtx"|"tiles", scale 1.5|2, sigma, quality (RTX)} or None
+    "upscale": None,
+    "approved": False,   # «Одобрен» (for «Апскейл: все одобренные»; a frozen segment counts as approved)
+}
+
+MAX_TAKES = 12
+
+MARKER_EFFECTS = ("note", "prompt", "boost")
+DEFAULT_MARKER = {
+    "id": "",
+    "frame": 0,                # timeline pixel frame
+    "label": "",
+    "color": 0,
+    "effect": "note",          # "note": just a note | "prompt": event text added to the segment prompt at this time
+    "text": "",                #  | "boost": stronger identity of a character reference in that segment (prompt emphasis)
+    "asset": "",               # boost: asset id ("" = all characters of the segment)
+}
+MARKER_PROMPT = "At {t}s: {text}"
+BOOST_PHRASE = ("Strictly preserve the identity of {pics} exactly as in the reference image: "
+                "same face, hairstyle, body proportions and clothing in every frame.")
+
+DEFAULT_AUDIO = {
+    # Clips on the audio track are the main composition: their audio latent is locked on every step, the video
+    # follows the sound. Where no clip lies H3 generates the sound itself. Audio assets in a segment's references
+    # are <Audio j> references instead.
+    "clips": [],
+    "video_volume": 1.0,       # level of the video's own (generated) sound under the music, export/playback
+    "input_ref": None,         # copy of the last connected input audio written by the node (for the waveform)
+}
+DEFAULT_AUDIO_CLIP = {
+    "id": "",
+    "asset": AUDIO_INPUT_ID,   # audio asset id, or "input" (the node's audio input)
+    "lane": 0,                 # 0 / 1: lock lanes (mixed, locked); 2: music (overlay, never locked, not a reference)
+    "volume": 1.0,             # clip level 0..2
+    "fade_in": 0.0,            # seconds
+    "fade_out": 0.0,
+    "start": 0.0,              # timeline seconds where the clip begins
+    "in": 0.0,                 # seconds into the source where the clip starts (trim in)
+    "length": 0.0,             # clip length in seconds, 0 = until the end of the source
+}
+
+MUSIC_LANE = 2
+
+AUDIO_REF_PHRASE = "Use {tags} as the sound reference of this shot."
+VIDEO_REF_PHRASE = "Use {tags} as the motion reference of this shot."
+OVERRIDE_KEYS = ("seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio")
+
+
+# ---------------------------------------------------------------- frame grid
+def snap_frames(n, mode="nearest"):
+    """Snap a pixel frame count to the H3 grid 17k+5 within [MIN_FRAMES, MAX_FRAMES]."""
+    n = float(n)
+    k = (n - 5) / 17.0
+    k = math.floor(k) if mode == "down" else math.ceil(k) if mode == "up" else math.floor(k + 0.5)
+    k = max((MIN_FRAMES - 5) // 17, min((MAX_FRAMES - 5) // 17, int(k)))
+    return 17 * k + 5
+
+
+def latent_t(frames):
+    return 2 if frames <= 5 else ((frames - 5) // 17) * 5 + 2
+
+
+def frames_for_latent(t):
+    return sum((1, 4, 4, 4, 4)[k % 5] for k in range(t))
+
+
+def audio_len(frames):
+    return round(frames / FPS * AUDIO_LATENT_FPS)
+
+
+def overlap_frames(o):
+    return 17 * int(o) + 5
+
+
+MAX_OVERLAP_BLOCKS = 8
+AUDIO_CONTEXT_MAX = 4.0
+
+
+# The kept overlap audio ends with a hard 0/1 boundary of the audio denoise mask (as H3's native extension).
+# A fractional "hand-off" ramp blended two differently noised latents there: the variance loss decoded as a
+# ~60 ms dropout right after the overlap (measured in a user's final file). 0 = no ramp.
+AUDIO_HANDOFF_TICKS = 0
+
+
+def audio_context_extra(project, a_ov, available):
+    """Audio latent frames of the previous segment given as context BEFORE the overlap (a multiple of 5 so the
+    window sits exactly on the pixel-frame grid: 5 audio frames = 3 pixel frames), limited to what exists."""
+    want = float(project["settings"].get("audio_context_sec", 0) or 0)
+    want = min(want, AUDIO_CONTEXT_MAX)
+    ext = int(round(want * AUDIO_LATENT_FPS)) - int(a_ov)
+    if ext <= 0:
+        return 0
+    ext = ext // 5 * 5 + (5 if ext % 5 else 0)
+    return max(0, min(ext, int(available) // 5 * 5))
+
+
+def wanted_overlap(project, index):
+    """Overlap blocks requested for segment `index` (before fitting): its own override or the global setting,
+    0 = no overlap (last frame only)."""
+    s = project["settings"]
+    seg = project["segments"][index]
+    o = int(seg.get("overlap_blocks", -1) if seg.get("overlap_blocks", -1) is not None else -1)
+    if o < 0:
+        o = int(s.get("overlap_blocks", 1) or 0)
+    return max(0, min(MAX_OVERLAP_BLOCKS, o))
+
+
+def snap32(x):
+    return max(CANVAS_MULTIPLE, int(math.floor(float(x) / CANVAS_MULTIPLE + 0.5)) * CANVAS_MULTIPLE)
+
+
+def run_kind(settings):
+    """Kind of sampling pass a run does: "draft", "refine" (final from the draft) or "full" (one pass)."""
+    if settings.get("quality") == "draft":
+        return "draft"
+    return "refine" if settings.get("final_mode") == "refine" else "full"
+
+
+def work_resolution(settings, kind=None):
+    """Canvas of a pass: the draft is resolution() scaled by draft_scale (snapped to 32), else resolution()."""
+    w, h = resolution(settings)
+    if (kind or run_kind(settings)) != "draft":
+        return w, h
+    k = float(settings.get("draft_scale") or 0.5)
+    return snap32(w * k), snap32(h * k)
+
+
+def pass_steps(settings, steps, kind):
+    """Steps of a pass from the segment's normal steps."""
+    if kind == "draft":
+        return int(settings.get("draft_steps") or 0) or steps
+    if kind == "refine":
+        return int(settings.get("refine_steps") or 0) or max(4, steps // 2)
+    return steps
+
+
+def resolution(settings):
+    """(width, height) snapped to 32. "mp": aspect + megapixels, "custom": explicit."""
+    s = settings
+    if s.get("res_mode") == "custom":
+        return snap32(s.get("width", 960)), snap32(s.get("height", 544))
+    a = ASPECTS.get(s.get("aspect"), (16, 9))
+    mp = max(0.05, min(4.0, float(s.get("megapixels", 0.5))))
+    px = mp * 1024 * 1024
+    w = math.sqrt(px * a[0] / a[1])
+    h = w * a[1] / a[0]
+    # same as the template's ResolutionSelector table: 0.5 MP 16:9 -> 960x544, 0.98 -> 1344x768
+    return snap32(w), snap32(h)
+
+
+# ---------------------------------------------------------------- project
+def _num(v, d):
+    if isinstance(v, bool) or v is None or v == "":
+        return d
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else d
+    except (TypeError, ValueError):
+        return d
+
+
+def _merge(defaults, value):
+    out = copy.deepcopy(defaults)
+    if isinstance(value, dict):
+        for k, v in value.items():
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def normalize_project(p):
+    """Fill defaults, snap lengths. Never raises on garbage input (returns an empty project)."""
+    if isinstance(p, str):
+        try:
+            p = json.loads(p) if p.strip() else {}
+        except ValueError:
+            p = {}
+    if not isinstance(p, dict):
+        p = {}
+    out = {
+        "version": SCHEMA_VERSION,
+        "id": re.sub(r"[^A-Za-z0-9_-]", "", str(p.get("id") or "")) or "project",
+        "name": str(p.get("name") or "H3 проект"),
+        "settings": _merge(DEFAULT_SETTINGS, p.get("settings")),
+        "assets": [],
+        "segments": [],
+        "audio": _merge(DEFAULT_AUDIO, p.get("audio")),
+        "markers": [],
+        "end": max(0, int(_num(p.get("end"), 0))),   # video end marker (pixel frames), 0 = end of the last clip
+        # «Длина: Фикс» (default): the marker stays where it was set, editing clips may leave an empty gap before
+        # it; «Авто»: the marker follows the end of the last clip (end stays 0)
+        "end_mode": "auto" if p.get("end_mode") == "auto" else "fixed",
+        "run": {"upto": -1, "only": -1, "kind": ""},
+        "stats": copy.deepcopy(p.get("stats")) if isinstance(p.get("stats"), dict) else None,
+        "result": p.get("result") if isinstance(p.get("result"), dict) else None,
+    }
+    if out["end_mode"] == "auto":
+        out["end"] = 0
+    st = out["settings"]
+    st["quality"] = "draft" if st.get("quality") == "draft" else "final"
+    st["final_mode"] = "refine" if st.get("final_mode") == "refine" else "full"
+    ds = _num(st.get("draft_scale"), 0.5)
+    st["draft_scale"] = min(DRAFT_SCALES, key=lambda x: abs(x - ds))
+    st["draft_steps"] = max(0, min(200, int(_num(st.get("draft_steps"), 0))))
+    st["refine_steps"] = max(0, min(200, int(_num(st.get("refine_steps"), 0))))
+    st["refine_sigma"] = round(max(REFINE_SIGMA_RANGE[0], min(REFINE_SIGMA_RANGE[1], _num(st.get("refine_sigma"), 0.4))), 2)
+    st["upscale_method"] = st.get("upscale_method") if st.get("upscale_method") in UPSCALE_METHODS else "learned"
+    st["upscale_rev"] = 3   # any older value ("vae", "latent" = nearest-exact, …) became "learned" above
+    st["seg_upscale"] = normalize_upscale(st.get("seg_upscale")) or normalize_upscale({"method": "latent", "scale": 2.0})
+    for k in ("draft", "refine"):
+        st[k + "_sampler"] = str(st.get(k + "_sampler") or "")[:64]
+        st[k + "_scheduler"] = str(st.get(k + "_scheduler") or "")[:64]
+        st[k + "_cfg"] = round(max(0.0, min(30.0, _num(st.get(k + "_cfg"), 0.0))), 2)
+    st["settings_scope"] = "global" if st.get("settings_scope") == "global" else "project"
+    out["run"]["upto"] = int(_num((p.get("run") or {}).get("upto", -1) if isinstance(p.get("run"), dict) else -1, -1))
+    out["run"]["only"] = int(_num((p.get("run") or {}).get("only", -1) if isinstance(p.get("run"), dict) else -1, -1))
+    rk = (p.get("run") or {}).get("kind") if isinstance(p.get("run"), dict) else None
+    out["run"]["kind"] = rk if rk in RUN_KINDS else ""
+    for i, m in enumerate(p.get("markers") or []):
+        if not isinstance(m, dict):
+            continue
+        mk = _merge(DEFAULT_MARKER, {k: v for k, v in m.items() if k in DEFAULT_MARKER})
+        mk["id"] = str(mk["id"] or f"m{i + 1}")
+        mk["frame"] = max(0, int(_num(mk["frame"], 0)))
+        mk["color"] = max(0, int(_num(mk["color"], 0)))
+        mk["effect"] = mk["effect"] if mk["effect"] in MARKER_EFFECTS else "note"
+        for k in ("label", "text", "asset"):
+            mk[k] = str(mk[k] or "")
+        out["markers"].append(mk)
+    out["markers"].sort(key=lambda m: m["frame"])
+    for a in p.get("assets") or []:
+        if not isinstance(a, dict) or not a.get("id") or not a.get("file"):
+            continue
+        cat = a.get("category") if a.get("category") in ASSET_CATEGORIES else "other"
+        asset = {"id": str(a["id"]), "name": str(a.get("name") or a["file"]), "file": str(a["file"]),
+                 "subfolder": str(a.get("subfolder") or ""), "type": str(a.get("type") or "input"), "category": cat}
+        if cat == "audio":
+            asset["duration"] = max(0.0, _num(a.get("duration"), 0.0))
+        # asset editor: the original file and the ops of the processed derivative now in file/subfolder
+        if isinstance(a.get("orig"), dict) and a["orig"].get("filename") and isinstance(a.get("edit"), dict):
+            asset["orig"] = {"filename": str(a["orig"]["filename"]), "subfolder": str(a["orig"].get("subfolder") or ""),
+                             "type": str(a["orig"].get("type") or "input")}
+            asset["edit"] = copy.deepcopy(a["edit"])
+        if cat == "video":
+            asset["duration"] = max(0.0, _num(a.get("duration"), 0.0))
+            asset["frames"] = max(0, int(_num(a.get("frames"), 0)))
+            asset["width"] = max(0, int(_num(a.get("width"), 0)))
+            asset["height"] = max(0, int(_num(a.get("height"), 0)))
+            asset["has_audio"] = bool(a.get("has_audio"))
+            asset["poster"] = a["poster"] if isinstance(a.get("poster"), dict) and a["poster"].get("filename") else None
+            asset["strip"] = a["strip"] if isinstance(a.get("strip"), dict) and a["strip"].get("filename") else None
+            try:
+                asset["strip_n"] = max(0, int(float(a.get("strip_n") or 0))) if asset["strip"] else 0
+            except (TypeError, ValueError):
+                asset["strip_n"] = 0
+            asset["frozen"] = str(a.get("frozen") or "")
+        out["assets"].append(asset)
+    out["audio"] = _normalize_audio(p, out["assets"])
+    video_ids = {a["id"] for a in out["assets"] if a["category"] == "video"}
+    for i, s in enumerate(p.get("segments") or []):
+        if not isinstance(s, dict):
+            continue
+        seg = _merge(DEFAULT_SEGMENT, s)
+        seg["id"] = str(seg["id"] or f"s{i + 1}")
+        seg["frames"] = snap_frames(seg.get("frames") or 124)
+        seg["link"] = "cut" if seg.get("link") == "cut" else "extend"
+        try:
+            seg["overlap_blocks"] = max(-1, min(MAX_OVERLAP_BLOCKS, int(float(seg.get("overlap_blocks", -1)))))
+        except (TypeError, ValueError):
+            seg["overlap_blocks"] = -1
+        try:
+            seg["color"] = max(0, int(float(seg.get("color") or 0)))
+        except (TypeError, ValueError):
+            seg["color"] = 0
+        seg["refs"] = [str(r) for r in (seg.get("refs") or [])]
+        seg["overrides"] = {k: v for k, v in (seg.get("overrides") or {}).items()
+                            if k in OVERRIDE_KEYS and v is not None and v != ""}
+        seg["takes"] = [t for t in (seg.get("takes") or []) if isinstance(t, dict) and t.get("key")][-MAX_TAKES:]
+        if seg.get("active_take") is not None:
+            seg["active_take"] = str(seg["active_take"])
+        seg["freeze"] = _normalize_freeze(seg.get("freeze"))
+        seg["source"] = _normalize_source(seg.get("source"), video_ids)
+        seg["upscale"] = normalize_upscale(seg.get("upscale"))
+        seg["approved"] = bool(seg.get("approved"))
+        if seg["freeze"]:
+            seg["frames"] = seg["freeze"]["frames"]
+        out["segments"].append(seg)
+    return out
+
+
+def normalize_upscale(u):
+    if not isinstance(u, dict) or u.get("method") not in SEG_UPSCALE_METHODS:
+        return None
+    m = u["method"]
+    sc = _num(u.get("scale"), 2.0)
+    sc = min(SEG_UPSCALE_SCALES, key=lambda x: abs(x - sc))
+    sg = round(min(SEG_UPSCALE_SIGMA_RANGE[1], max(SEG_UPSCALE_SIGMA_RANGE[0], _num(u.get("sigma"), SEG_UPSCALE_SIGMA[m]))), 3)
+    out = {"method": m, "scale": sc, "sigma": sg}
+    if m == "rtx":
+        q = str(u.get("quality") or "ULTRA").upper()
+        out["quality"] = q if q in RTX_QUALITIES else "ULTRA"
+    if m == "tiles":
+        t = u.get("tile")
+        if isinstance(t, (list, tuple)) and len(t) == 2 and _num(t[0], 0) > 0 and _num(t[1], 0) > 0:
+            out["tile"] = [int(min(TILE_PX_RANGE[1], max(TILE_PX_RANGE[0], snap32(_num(x, 0))))) for x in t]
+        ov = int(_num(u.get("tile_ov"), 0))
+        if ov > 0:
+            ov = min(TILE_OV_RANGE[1], max(TILE_OV_RANGE[0], ov))
+            out["tile_ov"] = ov - ov % 2
+    return out
+
+
+def upscalable(seg):
+    """The segment's upscale applies: set, not footage as is, not a take frozen after its upscale (freeze.up)."""
+    return bool(seg.get("upscale")) and not is_footage(seg) and not (seg.get("freeze") or {}).get("up")
+
+
+def upscale_canvas(w, h, scale):
+    """Target canvas of a segment upscale (snapped to 32)."""
+    return snap32(w * float(scale)), snap32(h * float(scale))
+
+
+def _normalize_freeze(f):
+    """Frozen segment: its cached latent (by backend key) and the editor signature at freeze time."""
+    if not isinstance(f, dict) or not f.get("key"):
+        return None
+    out = dict(f)
+    out["key"] = str(f["key"])
+    out["sig"] = str(f.get("sig") or "")
+    out["frames"] = snap_frames(f.get("frames") or 124)
+    return out
+
+
+def _normalize_source(src, video_ids):
+    if not isinstance(src, dict) or str(src.get("asset") or "") not in video_ids:
+        return None
+    return {"asset": str(src["asset"]), "in": max(0, int(_num(src.get("in"), 0))),
+            "denoise": min(1.0, max(0.0, _num(src.get("denoise"), 0.0)))}
+
+
+def is_footage(seg):
+    """Footage used as is (no sampling)."""
+    return bool(seg.get("source")) and not seg["source"]["denoise"]
+
+
+def video_refs(project, seg):
+    """Video references of a segment (<Video k> order = chip order)."""
+    by_id = {a["id"]: a for a in project["assets"] if a["category"] == "video"}
+    out, seen = [], set()
+    for r in seg.get("refs", []):
+        if r in by_id and r not in seen:
+            seen.add(r)
+            out.append(by_id[r])
+    return out
+
+
+def _normalize_audio(p, assets):
+    pa = p.get("audio") if isinstance(p.get("audio"), dict) else {}
+    au = {"clips": [], "video_volume": min(2.0, max(0.0, _num(pa.get("video_volume"), 1.0))), "input_ref": pa.get("input_ref")}
+    if not (isinstance(au["input_ref"], dict) and au["input_ref"].get("filename")):
+        au["input_ref"] = None
+    src = pa.get("clips")
+    if not isinstance(src, list):
+        # projects before the audio track redesign: one source (input or an uploaded file) and a mode
+        f = pa.get("file")
+        asset_id = AUDIO_INPUT_ID
+        if pa.get("source") == "file" and isinstance(f, dict) and f.get("filename"):
+            asset_id = "au_" + re.sub(r"[^A-Za-z0-9]", "_", str(f["filename"]))[:48]
+            if not any(a["id"] == asset_id for a in assets):
+                assets.append({"id": asset_id, "name": str(f.get("name") or f["filename"]), "file": str(f["filename"]),
+                               "subfolder": str(f.get("subfolder") or ""), "type": str(f.get("type") or "input"),
+                               "category": "audio", "duration": max(0.0, _num(pa.get("duration"), 0.0))})
+        src = []
+        if pa.get("mode") == "locked":   # "reference" is now a per-segment reference, "none" has no track clip
+            src = [{"id": "a1", "asset": asset_id, "start": pa.get("start"), "length": pa.get("length"),
+                    "in": pa.get("in") if "in" in pa else pa.get("offset")}]
+    audio_ids = {a["id"] for a in assets if a["category"] == "audio"} | {AUDIO_INPUT_ID}
+    for i, c in enumerate(src):
+        if not isinstance(c, dict):
+            continue
+        cl = _merge(DEFAULT_AUDIO_CLIP, {k: v for k, v in c.items() if k in DEFAULT_AUDIO_CLIP})
+        cl["id"] = str(cl["id"] or f"a{i + 1}")
+        cl["asset"] = str(cl["asset"] or AUDIO_INPUT_ID)
+        if cl["asset"] not in audio_ids:
+            continue
+        ln = _num(cl["lane"], 0)
+        cl["lane"] = MUSIC_LANE if ln >= MUSIC_LANE else 1 if ln >= 1 else 0
+        for k in ("start", "in", "length", "fade_in", "fade_out"):
+            cl[k] = max(0.0, _num(cl[k], 0.0))
+        cl["volume"] = min(2.0, max(0.0, _num(cl["volume"], 1.0)))
+        au["clips"].append(cl)
+    au["clips"].sort(key=lambda c: (c["start"], c["lane"]))
+    return au
+
+
+def audio_refs(project, seg):
+    """Audio references of a segment (<Audio j> order = chip order): audio assets and/or the node input."""
+    by_id = {a["id"]: a for a in project["assets"] if a["category"] == "audio"}
+    out, seen = [], set()
+    for r in seg.get("refs", []):
+        if r in seen:
+            continue
+        if r in by_id:
+            out.append(by_id[r])
+        elif r == AUDIO_INPUT_ID:
+            out.append({"id": AUDIO_INPUT_ID, "name": "Вход audio ноды", "category": "audio"})
+        else:
+            continue
+        seen.add(r)
+    return out
+
+
+def seg_param(project, seg, index, key):
+    s = project["settings"]
+    ov = seg.get("overrides") or {}
+    if key in ov:
+        return ov[key]
+    if key == "seed":
+        return int(s.get("seed", 0)) + index
+    return s.get(key)
+
+
+def effective_params(project, index):
+    seg = project["segments"][index]
+    keys = ("seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio")
+    p = {k: seg_param(project, seg, index, k) for k in keys}
+    p["seed"] = int(p["seed"])
+    p["steps"] = int(p["steps"])
+    p["cfg"] = float(p["cfg"])
+    p["denoise"] = float(p["denoise"])
+    p["shift_video"] = float(p["shift_video"])
+    p["shift_audio"] = float(p["shift_audio"])
+    return p
+
+
+def pass_params(project, index, kind=None):
+    """effective_params of one sampling pass: the draft may use fewer steps, the refine pass its own steps and
+    partial denoise."""
+    s = project["settings"]
+    kind = kind or run_kind(s)
+    p = effective_params(project, index)
+    p["steps"] = pass_steps(s, p["steps"], kind)
+    if kind in ("draft", "refine"):   # stage parameters (empty = the main ones)
+        if s.get(kind + "_sampler"):
+            p["sampler"] = s[kind + "_sampler"]
+        if s.get(kind + "_scheduler"):
+            p["scheduler"] = s[kind + "_scheduler"]
+        if float(s.get(kind + "_cfg") or 0) > 0:
+            p["cfg"] = float(s[kind + "_cfg"])
+    if kind == "refine":
+        p["denoise"] = 1.0   # the refine pass runs its own schedule from refine_sigma (see h3s_gen.refine_sigmas)
+        p["sigma0"] = float(s.get("refine_sigma") or 0.4)
+    return p
+
+
+def seg_steps(project, index):
+    """Sampling steps of a segment in the project's run kind (footage used as is: none). A final from the draft
+    counts the draft pass too (cached drafts make the run shorter than this)."""
+    if is_footage(project["segments"][index]):
+        return 0
+    s = project["settings"]
+    kind = run_kind(s)
+    n = effective_params(project, index)["steps"]
+    if kind == "refine":
+        return pass_steps(s, n, "draft") + pass_steps(s, n, "refine")
+    return pass_steps(s, n, kind)
+
+
+def ordered_refs(project, seg):
+    """Assets of a segment in <Picture N> order: characters, locations, other; chip order inside a category."""
+    by_id = {a["id"]: a for a in project["assets"]}
+    refs = [by_id[r] for r in seg.get("refs", []) if r in by_id and by_id[r]["category"] in CATEGORY_ORDER]
+    seen, uniq = set(), []
+    for a in refs:
+        if a["id"] not in seen:
+            seen.add(a["id"])
+            uniq.append(a)
+    return sorted(uniq, key=lambda a: CATEGORY_ORDER.index(a["category"]))
+
+
+def uses_continuity(project, index):
+    if index == 0:
+        return False
+    seg = project["segments"][index]
+    return seg["link"] == "extend" and not is_footage(seg)
+
+
+def compose_prompt(project, index):
+    """Global prompt + segment prompt (+ continuity phrase for extended segments)."""
+    s = project["settings"]
+    seg = project["segments"][index]
+    parts = [t.strip() for t in (s.get("prompt") or "", seg.get("prompt") or "") if t and t.strip()]
+    items = plan(project)
+    it = items[index]
+    pics = {a["id"]: n + 1 for n, a in enumerate(ordered_refs(project, seg))}
+    boost = []
+    for m in segment_markers(project, index, items):
+        if m["effect"] == "prompt" and m["text"].strip():
+            parts.append(MARKER_PROMPT.replace("{t}", fmt_sec10(m["frame"] - it["start"])).replace("{text}", m["text"].strip()))
+        elif m["effect"] == "boost":
+            ids = [m["asset"]] if m["asset"] else [a["id"] for a in ordered_refs(project, seg) if a["category"] == "character"]
+            for aid in ids:
+                if aid in pics and pics[aid] not in boost:
+                    boost.append(pics[aid])
+    if boost:
+        parts.append(BOOST_PHRASE.replace("{pics}", ", ".join(f"<Picture {n}>" for n in sorted(boost))))
+    text = "\n".join(parts)
+    n = continuity_picture(project, index)
+    if n:
+        phrase = (s.get("continuity_phrase") or "").strip() or "<Picture {n}>"
+        text = (text + "\n" if text else "") + phrase.replace("{n}", str(n))
+    nv = min(MAX_REF_VIDEOS, len(video_refs(project, seg)))
+    if nv and "<Video" not in text:
+        text = (text + "\n" if text else "") + VIDEO_REF_PHRASE.replace("{tags}", ", ".join(f"<Video {k + 1}>" for k in range(nv)))
+    na = min(MAX_REF_AUDIOS, len(audio_refs(project, seg)))
+    if na and "<Audio" not in text:
+        text = (text + "\n" if text else "") + AUDIO_REF_PHRASE.replace("{tags}", ", ".join(f"<Audio {j + 1}>" for j in range(na)))
+    return text
+
+
+def fmt_sec10(frames):
+    """Frames -> seconds with one decimal, integer-exact (same result in JS)."""
+    f = max(0, int(frames))
+    t10 = (f * 20 + FPS) // (2 * FPS)
+    return f"{t10 // 10}.{t10 % 10}"
+
+
+def marker_segment(items, frame):
+    """Index of the segment shown at a timeline frame (overlap zones belong to the later segment), or -1."""
+    for it in items:
+        if frame < it["end"]:
+            return it["index"]
+    return -1
+
+
+def segment_markers(project, index, items=None):
+    items = items if items is not None else plan(project)
+    return [m for m in project.get("markers", []) if marker_segment(items, m["frame"]) == index]
+
+
+def audio_windows(project):
+    """[(asset, start, in, length)] in seconds for every audio track clip; length None = until source end."""
+    out = []
+    for c in lock_clips(project):
+        ln = float(c.get("length") or 0.0)
+        out.append((c["asset"], float(c.get("start") or 0.0), float(c.get("in") or 0.0), ln if ln > 0 else None))
+    return out
+
+
+def lock_clips(project):
+    """Clips on the lock lanes (main composition, locked in the audio latent)."""
+    return [c for c in project["audio"].get("clips") or [] if int(c.get("lane", 0)) < MUSIC_LANE]
+
+
+def music_clips(project):
+    """Clips on the music lane: mixed over the video's sound at export/playback only."""
+    return [c for c in project["audio"].get("clips") or [] if int(c.get("lane", 0)) >= MUSIC_LANE]
+
+
+def clip_gain(c):
+    """(volume, fade_in, fade_out) of a clip, None when neutral (keeps old cache keys)."""
+    g = (float(c.get("volume", 1.0)), float(c.get("fade_in", 0.0)), float(c.get("fade_out", 0.0)))
+    return None if g == (1.0, 0.0, 0.0) else [round(x, 4) for x in g]
+
+
+def segment_track(project, it):
+    """Track clips overlapping a segment, relative to its start (part of the cache key: moving a clip elsewhere
+    on the timeline does not invalidate this segment)."""
+    t0, t1 = it["start"] / FPS, it["end"] / FPS
+    out = []
+    for c, (asset, start, t_in, ln) in zip(lock_clips(project), audio_windows(project)):
+        if start < t1 and (ln is None or start + ln > t0):
+            e = [asset, round(start - t0, 4), round(t_in, 4), None if ln is None else round(ln, 4)]
+            g = clip_gain(c)
+            out.append(e + [g] if g else e)
+    return out
+
+
+def content_end(items):
+    return items[-1]["end"] if items else 0
+
+
+def video_end(project, items=None):
+    """Frame where the video ends: the end marker if set, else the end of the last clip."""
+    items = items if items is not None else plan(project)
+    e = int(project.get("end") or 0)
+    return e if e > 0 else content_end(items)
+
+
+def limited_project(project):
+    """Project as generated with the video end marker: segments whose visible part starts at/after the end are
+    dropped, the segment crossing the end is shortened to the grid length covering it (the stitch is cut exactly
+    at the end). Segments before it are untouched, so their cache keys stay the same."""
+    e = int(project.get("end") or 0)
+    items = plan(project)
+    if e <= 0 or e >= content_end(items):
+        return project
+    out = copy.deepcopy(project)
+    keep = []
+    for it in items:
+        i, ov = it["index"], it["overlap"] if it["index"] else 0
+        if it["start"] + ov >= e:
+            break
+        seg = out["segments"][i]
+        if it["end"] > e and not seg.get("freeze"):   # a frozen clip keeps its length (the output is cut at the end)
+            seg["frames"] = min(seg["frames"], snap_frames(e - it["start"], "up"))
+        keep.append(seg)
+    out["segments"] = keep
+    return out
+
+
+def audio_lock_overlap(project):
+    """Is the overlap audio latent locked to the previous segment's tail?"""
+    return bool(project["settings"].get("audio_seam_lock", True))
+
+
+def audio_seam_params(project):
+    """Stitch parameters of the final audio at extend seams (seams covered by a track clip are skipped:
+    the locked track is used as is)."""
+    s = project["settings"]
+    lo, hi = AUDIO_XFADE_RANGE
+    xf = min(hi, max(lo, _num(s.get("audio_xfade_sec"), 0.4))) if s.get("audio_xfade", True) else 0.0
+    return {"xfade": xf, "match": bool(s.get("audio_match", True))}
+
+
+def run_items(project, items=None):
+    """Items processed by a run: all, or 0..upto ("regenerate up to this segment")."""
+    items = items if items is not None else plan(project)
+    u = int((project.get("run") or {}).get("upto", -1))
+    return items if u < 0 or u >= len(items) - 1 else items[:u + 1]
+
+
+def continuity_picture(project, index):
+    """Picture number of the previous segment's last frame, or 0."""
+    if not uses_continuity(project, index) or not project["settings"].get("continuity_ref", True):
+        return 0
+    return len(ordered_refs(project, project["segments"][index])) + 1
+
+
+def plan(project):
+    """Timeline layout. Each item: start/end pixel frame on the stitched timeline, overlap frames shared
+    with the previous segment, latent sizes."""
+    items, cursor = [], 0
+    for i, seg in enumerate(project["segments"]):
+        f = seg["frames"]
+        ov = 0
+        if uses_continuity(project, i):
+            prev = project["segments"][i - 1]["frames"]
+            o = wanted_overlap(project, i)
+            # overlap must leave at least one new block in both segments: shrink to the largest that fits
+            while o > 0 and not (overlap_frames(o) < f and overlap_frames(o) < prev):
+                o -= 1
+            ov = overlap_frames(o) if o > 0 else 0
+        start = cursor - ov
+        items.append({"index": i, "id": seg["id"], "frames": f, "start": start, "end": start + f,
+                      "overlap": ov, "overlap_blocks": (ov - 5) // 17 if ov else 0,
+                      "latent_t": latent_t(f), "audio_t": audio_len(f), "link": seg["link"] if i else "start"})
+        cursor = start + f
+    return items
+
+
+def estimate(project):
+    """Summary + warnings shown before a run (of the project limited by the video end marker)."""
+    full_n = len(project["segments"])
+    project = limited_project(project)
+    items = plan(project)
+    w, h = work_resolution(project["settings"])
+    total = items[-1]["end"] if items else 0
+    if int(project.get("end") or 0) > 0:
+        total = min(total, int(project["end"]))
+    warnings = []
+    if len(items) < full_n:
+        warnings.append(f"{full_n - len(items)} отр. за маркером конца ролика — не генерируются")
+    gap = int(project.get("end") or 0) - content_end(items)
+    if items and gap > 0:
+        warnings.append(f"пусто {fmt_sec10(gap)} с между последним отрезком и маркером конца — ролик будет короче: "
+                        f"заполните пустоту отрезком («Продлить») или растяните последний")
+    for it in items:
+        seg = project["segments"][it["index"]]
+        name = seg.get("name") or f"#{it['index'] + 1}"
+        if it["frames"] < TRAINED_MIN_FRAMES or it["frames"] > TRAINED_MAX_FRAMES:
+            warnings.append(f"{name}: {it['frames']} кадров ({it['frames'] / FPS:.1f} с) — вне обучающего диапазона H3 "
+                            f"{TRAINED_MIN_FRAMES}–{TRAINED_MAX_FRAMES} кадров")
+        n_refs = len(ordered_refs(project, seg)) + (1 if continuity_picture(project, it["index"]) else 0)
+        if n_refs > MAX_REF_IMAGES:
+            warnings.append(f"{name}: {n_refs} референсов, максимум {MAX_REF_IMAGES}"
+                            + (" (вместе с последним кадром прошлого отрезка)" if continuity_picture(project, it["index"]) else ""))
+        na = len(audio_refs(project, seg))
+        if na > MAX_REF_AUDIOS:
+            warnings.append(f"{name}: {na} аудио-референса, максимум {MAX_REF_AUDIOS}")
+        nv = len(video_refs(project, seg))
+        if nv > MAX_REF_VIDEOS:
+            warnings.append(f"{name}: {nv} видео-референса, максимум {MAX_REF_VIDEOS}")
+        if is_footage(seg):
+            continue
+        if it["link"] == "extend" and it["index"] > 0 and it["overlap"] == 0 and wanted_overlap(project, it["index"]) > 0:
+            warnings.append(f"{name}: перекрытие не помещается в отрезок — продление только по последнему кадру")
+        if not (project["settings"].get("prompt") or "").strip() and not (seg.get("prompt") or "").strip():
+            warnings.append(f"{name}: пустой промпт")
+        ids = {a["id"] for a in ordered_refs(project, seg)}
+        for m in segment_markers(project, it["index"], items):
+            if m["effect"] == "boost" and m["asset"] and m["asset"] not in ids:
+                warnings.append(f"{name}: маркер «{m['label'] or m['id']}» усиливает персонажа, которого нет в референсах отрезка")
+    for m in project.get("markers", []):
+        if m["effect"] != "note" and marker_segment(items, m["frame"]) < 0:
+            warnings.append(f"маркер «{m['label'] or m['id']}» за концом ролика — не действует")
+    if w * h > 1344 * 768 * 1.05:
+        warnings.append(f"{w}×{h} больше официальных 1344×768 — дольше и больше VRAM")
+    steps = sum(seg_steps(project, it["index"]) for it in items)
+    ups = [it["index"] for it in items if upscalable(project["segments"][it["index"]])]
+    steps += sum(pass_params(project, i, "refine")["steps"] for i in ups)
+    if ups:
+        sc = max(project["segments"][i]["upscale"]["scale"] for i in ups)
+        uw, uh = upscale_canvas(w, h, sc)
+        warnings.append(f"апскейл отрезков: {len(ups)} → до {uw}×{uh}")
+    return {"segments": len(items), "frames": total, "seconds": round(total / FPS, 3), "width": w, "height": h,
+            "steps_total": steps, "warnings": warnings, "kind": run_kind(project["settings"])}
+
+
+# ---------------------------------------------------------------- cache keys
+def _h(obj):
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
+def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
+    """Chained cache key per segment: changing a segment invalidates it and every extended segment after it.
+    ref_sigs: {asset_id: file signature} (images, audio assets and "input" for the node's audio).
+    kind: pass kind (default: the project's run kind). "full" keys are the one-pass keys of older versions; a
+    draft key differs by its size/steps; a "refine" key is the draft key + refine settings + previous final."""
+    ref_sigs = ref_sigs or {}
+    project = limited_project(project)
+    kind = kind or run_kind(project["settings"])
+    if kind == "refine":
+        return _refine_keys(project, segment_keys(project, ref_sigs, env_sig, "draft"),
+                            segment_keys(project, ref_sigs, env_sig, "full"), up_env)
+    items = plan(project)
+    w, h = work_resolution(project["settings"], kind)
+    s = project["settings"]
+    keys, prev = [], ""
+    for it in items:
+        i = it["index"]
+        seg = project["segments"][i]
+        data = {
+            "v": SCHEMA_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
+            "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
+            "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
+            "params": pass_params(project, i, kind), "lock": bool(s.get("lock_overlap", True)),
+            "cref": continuity_picture(project, i), "ref_size": s.get("ref_size"),
+            "audio": [[c + [ref_sigs.get(c[0], "")] for c in segment_track(project, it)],
+                      [[a["id"], ref_sigs.get(a["id"], "")] for a in audio_refs(project, seg)][:MAX_REF_AUDIOS]]
+            if segment_track(project, it) or audio_refs(project, seg) else None,
+            "prev": prev if it["link"] == "extend" and i > 0 else "",
+        }
+        if it["link"] == "extend" and i > 0 and it["overlap"]:
+            data["alock"] = [audio_lock_overlap(project), 4 if audio_lock_overlap(project) else 3,   # 4: hard mask boundary (no hand-off ramp)
+                             round(min(float(s.get("audio_context_sec", 0) or 0), AUDIO_CONTEXT_MAX), 2)]
+        elif data["audio"] and data["audio"][0]:
+            data["alock"] = [False, 3]
+        src = seg.get("source")
+        if src:
+            a = next((x for x in project["assets"] if x["id"] == src["asset"]), {})
+            sd = [a.get("id"), a.get("file"), a.get("subfolder"), ref_sigs.get(src["asset"], ""), src["in"], src["denoise"]]
+            if is_footage(seg):   # used as is: only the file range, size and VAE matter
+                data = {"v": SCHEMA_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "src": sd}
+            else:
+                data["src"] = sd
+        vr = video_refs(project, seg)
+        if vr and not is_footage(seg):
+            data["vrefs"] = [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in vr][:MAX_REF_VIDEOS]
+        k = seg["freeze"]["key"] if seg.get("freeze") else _h(data)[:16]
+        keys.append(k)
+        prev = k
+    return keys
+
+
+def upscale_keys(project, base_keys, kind=None, up_env=None):
+    """Keys of the segment upscales: None where a segment has no upscale (or is frozen / footage as is).
+    key = base key + upscale params + the previous segment's upscale key when this one continues it on the same
+    canvas (its overlap is locked to the previous upscaled tail)."""
+    project = limited_project(project)
+    kind = kind or run_kind(project["settings"])
+    w, h = work_resolution(project["settings"], kind)
+    out, prev = [], None
+    for it, bk in zip(plan(project), base_keys):
+        seg = project["segments"][it["index"]]
+        up = seg.get("upscale")
+        if not upscalable(seg):
+            out.append(None)
+            prev = None
+            continue
+        cont = it["link"] == "extend" and it["index"] > 0 and it["overlap"]
+        chain = prev[0] if prev and cont and prev[1] == up["scale"] else ""
+        k = _h({"v": SCHEMA_VERSION, "up": bk, "p": up, "env": (up_env or {}).get(up["method"], ""), "wh": list(upscale_canvas(w, h, up["scale"])),
+                "steps": pass_params(project, it["index"], "refine")["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {})})[:16]
+        out.append(k)
+        prev = (k, up["scale"])
+    return out
+
+
+def refine_extra(s):
+    """Refine-stage sampler / scheduler / cfg in the keys — only when set (older keys stay valid)."""
+    x = [s.get("refine_sampler") or "", s.get("refine_scheduler") or "", float(s.get("refine_cfg") or 0)]
+    return [["rx"] + x] if any(x) else []
+
+
+def _refine_keys(project, draft_keys, full_keys, up_env=""):
+    """Keys of the final-from-draft pass: footage as is and frozen clips keep their one-pass key (no refine).
+    up_env: what really upscales (backend: learned model name / rtx / vae fallback)."""
+    s = project["settings"]
+    items = plan(project)
+    rp = [s.get("refine_sigma"), s.get("upscale_method"), list(resolution(s))] + ([up_env] if up_env else []) + refine_extra(s)
+    keys, prev = [], ""
+    for it, dk, fk in zip(items, draft_keys, full_keys):
+        seg = project["segments"][it["index"]]
+        if seg.get("freeze") or is_footage(seg):
+            k = fk
+        else:
+            k = _h({"v": SCHEMA_VERSION, "refine": dk, "rp": rp, "steps": pass_params(project, it["index"], "refine")["steps"],
+                    "prev": prev if it["link"] == "extend" and it["index"] > 0 else ""})[:16]
+        keys.append(k)
+        prev = k
+    return keys

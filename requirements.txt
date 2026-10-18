@@ -1,0 +1,5 @@
+# H3ZeroStudio uses only what ComfyUI already ships (torch, numpy, Pillow, av, aiohttp).
+# Nothing is required here.
+#
+# Optional — RTX Video Super Resolution upscale (NVIDIA RTX GPU, Windows/Linux):
+#   pip install nvidia-vfx

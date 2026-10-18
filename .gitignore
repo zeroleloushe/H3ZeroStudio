@@ -1,0 +1,44 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# partial downloads / logs / archives
+*.part
+*.log
+*.tmp
+*.zip
+*.tar
+*.7z
+
+# models and weights — never commit (they live in ComfyUI/models)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+*.onnx
+
+# generated media / test outputs (screenshots for the README live in docs/images)
+output/
+outputs/
+input/
+*.mp4
+*.webm
+*.mov
+*.wav
+*.flac
+*.mp3
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
