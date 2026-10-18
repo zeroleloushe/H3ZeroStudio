@@ -39,6 +39,16 @@ def test_gallery_records_runs_and_scans(patcher, dirs):
         lib.gallery_delete("gal", "../../x")
 
 
+def test_gallery_lineage_final_from_draft(patcher, dirs):
+    """A final made from a draft records the draft's key (the gallery stacks them); entries carry the segment id."""
+    p = project(id="glin"); p["settings"]["final_mode"] = "refine"
+    gen.run_project(patcher, FakeClip(), FakeVAE(), dict(p, run={"upto": 0, "only": 0, "kind": "draft"}), FakeAudioVAE(), None)
+    dr = next(e for e in lib.gallery_list("glin") if e["kind"] == "draft")
+    gen.run_project(patcher, FakeClip(), FakeVAE(), dict(p, run={"upto": 0, "only": 0, "kind": "refine"}), FakeAudioVAE(), None)
+    fin = next(e for e in lib.gallery_list("glin") if e["kind"] == "refine")
+    assert fin["draft_key"] == dr["key"] and fin["seg_id"] == dr["seg_id"] == p["segments"][0]["id"] and fin["key"] != dr["key"]
+
+
 def test_gallery_frozen_copy_survives(patcher, dirs):
     p = project(id="gfz")
     _, _, _, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE(), None)

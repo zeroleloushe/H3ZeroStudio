@@ -956,8 +956,11 @@ def test_upscale_keys_and_normalize():
         {"id": "s2", "frames": 56, "prompt": "two", "upscale": {"method": "tiles"}},
         {"id": "s3", "frames": 39, "prompt": "3", "upscale": {"method": "nope"}}]))
     u = [s["upscale"] for s in p["segments"]]
-    assert u[0] == {"method": "rtx", "scale": 2.0, "sigma": 0.7, "quality": "ULTRA"}
-    assert u[1] == {"method": "tiles", "scale": 2.0, "sigma": 0.35} and u[2] is None
+    # legacy multipliers become megapixel targets with exactly the same canvas (96x64 x2 = 192x128)
+    assert u[0] == {"method": "rtx", "mp": 0.025, "sigma": 0.7, "quality": "ULTRA"}
+    assert u[1] == {"method": "tiles", "mp": 0.025, "sigma": 0.35} and u[2] is None
+    assert core.upscale_canvas(96, 64, u[0]) == (192, 128) and core.normalize_project(p) == p, "idempotent"
+    assert core.upscale_key_form(u[0], 96, 64) == {"method": "rtx", "scale": 2.0, "sigma": 0.7, "quality": "ULTRA"}
     base = core.segment_keys(p)
     uk = core.upscale_keys(p, base)
     assert uk[0] and uk[1] and uk[2] is None and len(set(uk[:2])) == 2 and not set(uk[:2]) & set(base)
@@ -1003,9 +1006,9 @@ def test_segment_upscale_tiles_keeps_audio_and_seam(patcher, dirs, monkeypatch, 
     v, a = lat["samples"].unbind()
     assert v.shape[-2:] == (8, 12) and torch.allclose(a, a0, atol=1e-6), "audio 1:1"
     assert "NOT KEPT" not in log and "upscale audio check" in log
-    assert "[upscale tiles x2" in log and "input learned" in log
+    assert "[upscale tiles 192x128" in log and "input learned" in log
     assert seen and all(n == 12 for n, _, _ in seen), "3x4 synchronized tiles (4x6 cells) on 8x12"
-    assert "upscale input:" in log and "upscale input done" in log and "grid 4x3 tile" in log
+    assert "upscale input done" in log and "grid 4x3 tile" in log
     assert "tile 12/12" in log and "ms/tile" in log and "blended (12 tile evaluation(s))" in log and "upscaled clip decoded" in log
     assert all(ad for _, _, ad in seen) and any(dm for _, dm, _ in seen), "masks reach every crop; seam lock on seg 2"
     r = info["segments"]
@@ -1177,3 +1180,57 @@ def test_stage_parameters_and_run_kind(patcher, dirs, monkeypatch):
     p = project(id="stg2"); p["settings"]["final_mode"] = "refine"; p["run"] = {"upto": 0, "only": 0, "kind": "draft"}
     gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE(), None)
     assert seen and set(seen) == {"draft"}
+
+
+def test_upscale_megapixel_target_keeps_old_keys():
+    """A megapixel target equal to an old ×2 canvas keeps the old cache key; another target is a new key."""
+    old = core.normalize_project(project(segments=[{"id": "s1", "frames": 39, "prompt": "one", "upscale": {"method": "latent", "scale": 2}}]))
+    k_old = core.upscale_keys(old, core.segment_keys(old))[0]
+    import copy
+    same = copy.deepcopy(old); same["segments"][0]["upscale"] = {"method": "latent", "mp": 0.0246, "sigma": 0.4}
+    assert core.upscale_keys(core.normalize_project(same), core.segment_keys(old))[0] == k_old
+    other = copy.deepcopy(old); other["segments"][0]["upscale"] = {"method": "latent", "mp": 0.05, "sigma": 0.4}
+    n = core.normalize_project(other)
+    assert core.upscale_canvas(96, 64, n["segments"][0]["upscale"]) == (288, 192)
+    assert core.upscale_keys(n, core.segment_keys(old))[0] != k_old
+
+
+def test_upscale_temporal_chunks(patcher, dirs, monkeypatch, capsys):
+    """Long clip + chunk length: upscale input + refine chunk by chunk (VRAM freed between), overlaps kept clean
+    (continuation of the previous chunk), audio 1:1, progress with chunk i/N, chunked decode."""
+    frees, ev, inputs = [], [], []
+    monkeypatch.setattr(upscale.comfy.model_management, "soft_empty_cache", lambda *a, **k: frees.append(1))
+    real_in = upscale.upscale_input
+    monkeypatch.setattr(upscale, "upscale_input", lambda vae, v, *a, **k: (inputs.append(v.shape[2]), real_in(vae, v, *a, **k))[1])
+    st = {"upscale_chunk_sec": 2.0, "upscale_chunk_overlap": 1}
+    p = project(id="chk", segments=[{"id": "s1", "frames": 158, "prompt": "one", "upscale": {"method": "latent", "scale": 2}}])
+    p["settings"].update(st)
+    n = core.normalize_project(p)
+    assert core.upscale_chunking(n["settings"], 158) == (4, 56, 1)
+    assert upscale.chunk_plan(n["settings"], 47, 264) == [(0, 17, 0, 93), (10, 27, 57, 150), (20, 37, 113, 206), (30, 47, 170, 264)]
+    est = core.estimate(n)
+    assert est["steps_total"] == 2 + 4 * core.pass_params(n, 0, "refine")["steps"] and any("4 фрагм" in w for w in est["warnings"])
+    images, _, lat, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE(), None, node_id="chk")
+    log = capsys.readouterr().out
+    v, a = lat["samples"].unbind()
+    assert images.shape == (158, 128, 192, 3) and v.shape[2] == 47
+    assert inputs == [17, 17, 17, 17], "each chunk gets its own upscale input"
+    assert "4 temporal chunks" in log and "chunk 4/4" in log and "NOT KEPT" not in log and len(frees) >= 4
+    for c in (2, 3, 4):
+        line = [l for l in log.splitlines() if f"chunk {c}/4 overlap with chunk {c - 1}" in l][0]
+        assert float(line.rsplit("max diff ", 1)[1].rstrip(")")) < 1e-4, line
+    # the plain clip: same audio, all frames written
+    p0 = project(id="chk", segments=[{"id": "s1", "frames": 158, "prompt": "one"}]); p0["settings"].update(st)
+    _, _, lat0, info0 = gen.run_project(patcher, FakeClip(), FakeVAE(), p0, FakeAudioVAE(), None)
+    assert torch.allclose(a, lat0["samples"].unbind()[1], atol=1e-6)
+    assert float(v.abs().sum((0, 1, 3, 4)).min()) > 0, "no latent frame left empty"
+    # key: chunking is part of it only for chunked clips
+    p1 = copy_p = __import__("copy").deepcopy(p); copy_p["settings"]["upscale_chunk_sec"] = 0
+    n1 = core.normalize_project(p1)
+    assert core.upscale_keys(n1, core.segment_keys(n1))[0] != info["segments"][0]["key"]
+    short = project(segments=[{"id": "s1", "frames": 56, "prompt": "one", "upscale": {"method": "latent", "scale": 2}}])
+    ks = [core.upscale_keys(core.normalize_project(dict(short, settings=dict(short["settings"], upscale_chunk_sec=c))), core.segment_keys(core.normalize_project(short)))[0] for c in (0, 2.0, 5.0)]
+    assert ks[0] == ks[2] and ks[0] == ks[1], "56 frames ≤ 56 + 2 blocks: one piece, key unchanged"
+    # progress events carry the chunk
+    st_ = gen.run_status("chk")
+    assert st_ is not None

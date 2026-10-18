@@ -16,6 +16,7 @@ import { installSettings } from "./h3s_settings.js";
 import { installHelp } from "./h3s_help.js";
 import { installGallery } from "./h3s_gallery.js";
 import { installProjects } from "./h3s_projects.js";
+import { installRegions } from "./h3s_regions.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -477,7 +478,7 @@ export class H3Editor {
     const k = [["Пробел", "воспроизвести / пауза"], ["S", "разрезать отрезок по плейхеду"], ["Del", "удалить отрезок"], ["D", "дублировать отрезок"],
       ["E", "продлить (+ отрезок в конце)"], ["Ctrl+Z", "отменить"], ["Ctrl+Shift+Z, Ctrl+Y", "повторить"], ["← / →", "кадр назад / вперёд (Shift — 1 с)"],
       ["Home / End", "в начало / в конец"], ["[ / ]", "предыдущий / следующий отрезок"], ["+ / −, Ctrl+колесо", "масштаб таймлайна"], ["Ctrl+Enter", "сгенерировать"],
-      ["M", "маркер на плейхеде"], ["ПКМ по отрезку", "меню: новый дубль, разрезать, маркер…"],
+      ["M", "маркер на плейхеде"], ["R", "✂ Участок: выделить и пересоздать часть ролика"], ["ПКМ по отрезку", "меню: новый дубль, разрезать, маркер…"],
       ["Esc", "свернуть редактор"], ["Ctrl+V", "вставить картинку в ассеты"]];
     L.append(h("div", { class: "h3z-ph" }, h("h3", null, "Горячие клавиши")), h("div", { class: "h3z-scroll" }, h("div", { class: "h3z-keys" }, k.map(([a, b]) => [h("div", null, h("kbd", null, a)), h("div", { class: "h3z-note" }, b)]))));
   }
@@ -839,7 +840,7 @@ export class H3Editor {
       }
       const its = this.items(), done = its.filter((it, i) => i < this.genCount() && this.seg(i)?.result?.video && !this.isStale(i)).length;
       $.frame.append(h("div", { class: "h3z-badge-live" }, "Весь ролик · сборка таймлайна",
-        src.seg >= 0 ? ` · отрезок ${src.seg + 1}` + (src.foot ? " · футаж" : src.ph ? " · заглушка" : "") : " · пустота",
+        src.seg >= 0 ? ` · отрезок ${src.seg + 1}` + (src.region ? ` · ✂ участок ${this.regionNo(src.region)}` : src.foot ? " · футаж" : src.ph ? " · заглушка" : "") : " · пустота",
         src.stale ? h("span", { style: { color: "var(--warn)" } }, " · дубль устарел") : null,
         this.p.result?.full?.video ? h("span", { style: { color: "var(--warn)" } }, " · итог устарел") : null));
       $.pvInfo.textContent = `${this.totalFrames()} кадров · ${(this.totalFrames() / C.FPS).toFixed(1)} с · готово ${done}/${this.genCount()} · «Сгенерировать» соберёт итог`;
@@ -883,7 +884,7 @@ export class H3Editor {
     this.$.playBtn.innerHTML = ICON.pause;
     if (!this._autoplay) { this.userGesture = true; this.autoMuted = false; } // pressed by the user: sound allowed (autoplay policy)
     this.applyVolume();
-    if (this.src?.kind === "comp" && (this.compIndexAt(this.playhead) !== this.src.seg)) this.renderPreview();
+    if (this.src?.kind === "comp" && this.compChanged(this.playhead)) this.renderPreview();
     if (this.src && !this.src.ph) { this.syncVideoToPlayhead(); this.$.video.play().catch(() => { this.$.video.muted = true; this.autoMuted = true; this.$.video.play().catch(() => {}); }); }
     let last = performance.now();
     const tick = (now) => {
@@ -899,7 +900,7 @@ export class H3Editor {
           this.playhead = d >= this.playhead - 0.5 ? Math.max(this.playhead, d) : this.playhead + dt;
         } else this.playhead += dt;
         if (this.playhead >= total) { this.playhead = total; this.stopPlayback(); this.updatePlayhead(true); return; }
-        if (this.playhead >= s.end || this.compIndexAt(this.playhead) !== s.seg) this.compSwitch();
+        if (this.playhead >= s.end || this.compChanged(this.playhead)) this.compSwitch();
         else this.compPrefetch?.();
       }
       else if (this.src && !this.$.video.paused) {
@@ -966,7 +967,7 @@ export class H3Editor {
     this.playhead = clamp(frame, 0, Math.max(0, this.totalFrames()));
     if (this.src?.kind === "comp") {
       this._compHold = false;
-      if (this.compIndexAt(this.playhead) !== this.src.seg) this.compSwitch(); else if (!this.src.ph) this.syncVideoToPlayhead();
+      if (this.compChanged(this.playhead)) this.compSwitch(); else if (!this.src.ph) this.syncVideoToPlayhead();
       this.updatePlayhead(); return;
     }
     if (fromUser && this.src?.kind !== "full") {
@@ -1012,6 +1013,7 @@ export class H3Editor {
       B(ICON.copy, "", "Дублировать (D)", () => this.duplicate()),
       B(ICON.trash, "", "Удалить (Del)", () => this.deleteSeg(this.sel)),
       h("button", { class: "h3z-btn sm", html: '<b style="color:#fbbf24">◆</b><span>Маркер</span>', title: "Маркер на плейхеде (M): заметка, событие в промпте или усиление персонажа", onclick: () => this.addMarker() }),
+      ...this.regionToolbar(),
       h("div", { class: "sep" }), h("div", { class: "h3z-endbox", title: "Маркер конца ролика (красный флажок на линейке): за ним всё приглушено и не генерируется" }, h("span", null, "Длина ролика"), $.endIn, h("span", null, "с"), $.endAuto),
       h("div", { class: "sep" }), $.tlInfo, h("div", { class: "grow" }),
       h("div", { class: "h3z-zoom" }, B(ICON.minus || "−", "", "Отдалить (−)", () => this.setZoomBy(0.7)), $.zoomR, B(ICON.plus, "", "Приблизить (+)", () => this.setZoomBy(1.4)),
@@ -1028,6 +1030,50 @@ export class H3Editor {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.setZoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX); }
       else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { $.tscroll.scrollLeft += e.deltaY; e.preventDefault(); }
     }, { passive: false });
+    // any drag on the timeline (end flag, playhead, markers, clips, edges, seams, audio clips, region): the scale is
+    // frozen while the pointer is down — a drag that changes the content length must not rescale the view (the
+    // dragged thing would look pinned while the timeline slides under it). Near the very edge of the visible
+    // area the view scrolls gently; it never re-centres.
+    $.tscroll.addEventListener("pointerdown", (e) => { if (e.button === 0) this.tlDragBegin(e); }, true);
+    // «✂ Участок» mode: a drag on the video track selects a range (normal drags are untouched outside the mode)
+    $.tinner.addEventListener("pointerdown", (e) => this.regionPointer(e), true);
+    $.tscroll.addEventListener("scroll", () => { if ($.regPop) this.placeRegionPopover(this.region() ? this.regionWin(this.region()) : null); });
+  }
+
+  /** Timeline drag helpers: frozen scale + gentle edge auto-scroll (re-sends the last pointer position so the
+   *  dragged item follows the cursor while the view scrolls). */
+  tlDragBegin(e) {
+    const $ = this.$; this._ppfLock = this.ppf;
+    const st = { x: e.clientX, y: e.clientY, sx: e.clientX, moved: false, last: null, raf: 0 };
+    const EDGE = 36, MAXV = 14;
+    const tick = () => {
+      st.raf = 0;
+      if (!st.moved || !st.last || !this._ppfLock) return;
+      const r = $.tscroll.getBoundingClientRect(), x = st.last.clientX;
+      const left = r.left + 0, right = r.right;
+      let v = 0;
+      if (x > right - EDGE) v = Math.min(MAXV, Math.ceil((x - (right - EDGE)) / EDGE * MAXV));
+      else if (x < left + EDGE && $.tscroll.scrollLeft > 0) v = -Math.min(MAXV, Math.ceil(((left + EDGE) - x) / EDGE * MAXV));
+      if (!v) return;
+      const before = $.tscroll.scrollLeft; $.tscroll.scrollLeft = before + v;
+      if ($.tscroll.scrollLeft !== before) {
+        const ev = st.last; st.synth = true;
+        try { window.dispatchEvent(new PointerEvent("pointermove", { clientX: ev.clientX, clientY: ev.clientY, shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, buttons: 1, bubbles: true })); } finally { st.synth = false; }
+      }
+      st.raf = requestAnimationFrame(tick);
+    };
+    const move = (ev) => {
+      if (st.synth) return;
+      st.last = ev; if (Math.abs(ev.clientX - st.sx) > 4) st.moved = true;
+      if (!st.raf) st.raf = requestAnimationFrame(tick);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true);
+      if (st.raf) cancelAnimationFrame(st.raf);
+      // keep the scale the drag ended with (zoom follows the new length) — no jump on release
+      setTimeout(() => { this._ppfLock = 0; }, 0);
+    };
+    window.addEventListener("pointermove", move, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
   }
 
   setZoomBy(f, clientX) {
@@ -1094,7 +1140,14 @@ export class H3Editor {
     const vEnd = this.totalFrames(), hasEnd = this.p.end > 0;
     const total = Math.max(this.contentFrames(), vEnd, 24 * 5);
     const viewW = Math.max(200, $.tscroll.clientWidth - 170);
-    const ppf = this._ppf = Math.max(0.002, viewW / total * this.zoom);
+    let ppf = Math.max(0.002, viewW / total * this.zoom);
+    if (this._ppfLock) {   // during a timeline drag: same scale; the zoom absorbs the length change (no jump after it)
+      ppf = this._ppfLock;
+      this.zoom = clamp(ppf * total / viewW, ZMIN, ZMAX);
+      ppf = Math.max(0.002, viewW / total * this.zoom);   // = the lock unless the zoom limits were hit
+      this.syncZoomUI();
+    }
+    this._ppf = ppf;
     const W = Math.max($.tscroll.clientWidth, Math.ceil(total * ppf) + 150);
     const inner = $.tinner; inner.innerHTML = ""; inner.style.width = W + "px";
     // ruler
@@ -1180,6 +1233,7 @@ export class H3Editor {
       seam.addEventListener("pointerdown", (e) => this.rollStart(e, i));
       vt.append(seam);
     }
+    this.renderRegions(vt, ppf);
     const endX = (its.length ? its[its.length - 1].end : 0) * ppf + 10;
     const gapF = this.p.end_mode !== "auto" && this.p.end > 0 ? this.p.end - this.contentFrames() : 0;
     if (gapF > 0 && its.length) {
@@ -1215,6 +1269,7 @@ export class H3Editor {
     $.tlInfo.textContent = `${est.frames} кадров · сетка H3: 17 кадров` + (nGen < its.length ? ` · ${its.length - nGen} отр. за концом` : "");
     this.updatePlayhead();
     this.updateRunUI();
+    this.regionPopover();
   }
 
   updatePlayhead(follow = false) {
@@ -1395,7 +1450,7 @@ export class H3Editor {
     if (this.ae) return;
     if (this.$.saveModal) { if (e.key === "Escape" && !isTyping(e)) { e.preventDefault(); this.closeSaveDialog(); } return; }
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
-    if (k === "Escape") { e.preventDefault(); if (isTyping(e)) { e.target.blur(); this.focusSink(); } else if (this.$.menu) this.closeMenu(); else if (this.$.pop) this.toggleWarnings(); else if (this.selMarker) { this.selMarker = null; this.renderInspector(); this.renderTimeline(); } else if (this.selAudio) { this.selAudio = null; this.renderTimeline(); this.renderLeft(); } else this.close(); return; }
+    if (k === "Escape") { e.preventDefault(); if (isTyping(e)) { e.target.blur(); this.focusSink(); } else if (this.$.menu) this.closeMenu(); else if (this.$.pop) this.toggleWarnings(); else if (this.regionMode) this.toggleRegionMode(false); else if (this.selRegion) { this.selRegion = null; this.renderTimeline(); } else if (this.selMarker) { this.selMarker = null; this.renderInspector(); this.renderTimeline(); } else if (this.selAudio) { this.selAudio = null; this.renderTimeline(); this.renderLeft(); } else this.close(); return; }
     if (ctrl && k === "Enter") { e.preventDefault(); this.generate(); return; }
     if (isTyping(e)) return;
     if (ctrl && e.code === "KeyZ") { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; }
@@ -1404,7 +1459,7 @@ export class H3Editor {
     const map = {
       Space: () => this.togglePlay(), KeyS: () => (this.selAudio ? this.splitAudio() : this.split()),
       Delete: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
-      KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
+      KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), KeyR: () => this.toggleRegionMode(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
       ArrowLeft: () => this.seek(Math.round(this.playhead) - (e.shiftKey ? 24 : 1)), ArrowRight: () => this.seek(Math.round(this.playhead) + (e.shiftKey ? 24 : 1)),
       BracketLeft: () => this.jumpSeg(-1), BracketRight: () => this.jumpSeg(1),
       Equal: () => this.setZoomBy(1.25), NumpadAdd: () => this.setZoomBy(1.25), Minus: () => this.setZoomBy(0.8), NumpadSubtract: () => this.setZoomBy(0.8),
@@ -1414,23 +1469,26 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ run
   /** upto: -1 = whole project, i = only segments 0..i (cached ones are reused). */
-  async generate({ upto = -1, only = -1, kind = "" } = {}) {
+  async generate({ upto = -1, only = -1, kind = "", region = "" } = {}) {
     if (this.run.active) return;
     if (!this.p.segments.length) return this.toast("Добавьте хотя бы один отрезок", true);
     const hard = C.estimate(this.p).warnings.filter((w) => w.includes("максимум"));
     if (hard.length) return this.toast(hard[0], true);
     // kind: one stage for this run only (✎ Черновик / ✦ Чистовик of a clip, «↑ Финал»), the project mode stays
-    this.p.run = { upto: upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "" };
+    if (region && !this.region(region)) region = "";
+    // region: the whole project runs (cached clips are reused) and this «✂ Участок» is sampled anew
+    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region };
     this.flushSave();
     this.pendingSigs = C.segmentSigs(this.p, this.p.run.kind || null);
+    this.pendingRegionSig = Object.fromEntries((this.p.regions || []).map((r) => [r.id, C.regionSig(this.p, r, this.p.run.kind || null)]));
     this.run = { active: true, queued: true, seg: -1, step: 0, steps: 0, done: 0, total: 0, eta: null };
     this._queuedAt = Date.now(); this.startPolling();
     if (this.root) { this.renderHeader(); this.renderInspector(); }
     try {
       await this.host.queue();
-      if (this.run.queued) this.toast(this.p.run.upto >= 0 ? `В очереди: отрезки 1–${this.p.run.upto + 1} (следующие — позже)` : "Поставлено в очередь ComfyUI");
+      if (this.run.queued) this.toast(region ? `В очереди: участок ${this.regionNo(region)}` : this.p.run.upto >= 0 ? `В очереди: отрезки 1–${this.p.run.upto + 1} (следующие — позже)` : "Поставлено в очередь ComfyUI");
     } catch (e) { this.run = { active: false }; if (this.root) { this.renderHeader(); this.renderInspector(); } this.toast("Не удалось поставить в очередь: " + (e.message || e), true); }
-    finally { this.p.run = { upto: -1, only: -1, kind: "" }; this.flushSave(); } // the queued prompt already holds the scoped copy
+    finally { this.p.run = { upto: -1, only: -1, kind: "", region: "" }; this.flushSave(); } // the queued prompt already holds the scoped copy
   }
 
   async stop() { try { await this.host.interrupt(); this.toast("Останавливаю…"); } catch (e) { this.toast("Не удалось прервать", true); } }
@@ -1511,14 +1569,15 @@ export class H3Editor {
     if (["start", "sigmas", "step", "done"].includes(d.event)) this.dynEvent?.(d);
     if (d.event === "sigmas") return;
     if (d.event === "start") this.run = { active: true, queued: false, seg: -1, segs: d.segments, cached: d.cached, total: d.steps_total, done: 0, step: 0, steps: 0, eta: null, kind: d.estimate?.kind || "full", phase: null };
-    else if (d.event === "phase") { Object.assign(r, { phase: d.phase, seg: d.seg, upInput: d.input || r.upInput }); if (d.phase !== "upscale") this.tileOverlay(null); this.updateRunUI?.(); return; }
+    else if (d.event === "phase") { Object.assign(r, { phase: d.phase, seg: d.seg, upInput: d.input || r.upInput, region: d.region || null, chunk: d.chunk || r.chunk, chunks: d.chunks || r.chunks }); if (d.phase !== "upscale") this.tileOverlay(null); this.updateRunUI?.(); return; }
     else if (d.event === "uptile") {   // tiled / windowed upscale: every crop evaluation
       Object.assign(r, { active: true, queued: false, seg: d.seg, phase: "upscale", up: d, step: d.step - 1, steps: d.steps, done: d.done, total: d.total || r.total, elapsed: d.elapsed, segCached: false });
       this.tileOverlay(d); this.updateRunUI?.(); return;
     }
-    else if (d.event === "seg_start") { Object.assign(r, { active: true, queued: false, seg: d.seg, step: 0, steps: 0, segCached: d.cached, phase: r.kind === "draft" ? "draft" : null, up: null }); this.tileOverlay(null); }
-    else if (d.event === "step") { Object.assign(r, { active: true, queued: false, seg: d.seg, step: d.step, steps: d.steps, done: d.done, total: d.total, eta: d.eta, elapsed: d.elapsed, segCached: false }); if (r.up) r.up = { ...r.up, tile: 0 }; }
+    else if (d.event === "seg_start") { Object.assign(r, { active: true, queued: false, seg: d.seg, step: 0, steps: 0, segCached: d.cached, phase: r.kind === "draft" ? "draft" : null, up: null, region: null }); this.tileOverlay(null); }
+    else if (d.event === "step") { Object.assign(r, { active: true, queued: false, seg: d.seg, step: d.step, steps: d.steps, done: d.done, total: d.total, eta: d.eta, elapsed: d.elapsed, segCached: false, region: d.region || null }); if (r.up) r.up = { ...r.up, tile: 0 }; }
     else if (d.event === "live") { this.onLiveFrames(d); return; }
+    else if (d.event === "region_done") { this.recordRegionTake(d.region, d.result, this.pendingRegionSig?.[d.region]); this.scheduleSave(); if (this.root) this.renderTimeline(); return; }
     else if (d.event === "seg_done") {
       // show the finished segment right away; the next segment's live preview replaces it once it starts
       this.hideLive();
@@ -1527,6 +1586,7 @@ export class H3Editor {
       if (this.followRun !== false && this.root && this.src?.kind === "segment") { this.playhead = this.items()[d.seg].start + (d.seg ? this.items()[d.seg].overlap : 0); this.syncVideoToPlayhead(); }   // no autoplay: playback only starts on Play / Space
     }
     else if (d.event === "done") {
+      this.applyRegionResults(d.regions);
       this.applyFull(d.full, d.segments, d.elapsed, d.audio_source);
       this.run = { active: false };
       this.hideLive(); this.tileOverlay(null);
@@ -1562,7 +1622,7 @@ export class H3Editor {
     // segs/end: what the final file was made of — «Весь ролик» plays it only while the timeline is exactly that
     if (!full?.partial || !this.p.result) this.p.result = { full, count: full?.partial ? full.count : this.genCount(),
       segs: full?.partial ? null : this.p.segments.slice(0, this.genCount()).map((s) => ({ id: s.id, key: s.result?.key || "" })),
-      end: this.totalFrames() };
+      end: this.totalFrames(), regs: this.appliedRegionKeys() };
     try { // speed statistics for the next estimate (fresh segments only)
       const [w, hh] = C.resolution(this.p.settings), its = this.items();
       let units = 0;
@@ -1570,14 +1630,14 @@ export class H3Editor {
       if (units > 0 && elapsed > 0) this.p.stats = { sec_per_unit: elapsed / units };
     } catch (e) {}
     this.pvMode = "full";
-    this.pendingSigs = null;
+    this.pendingSigs = null; this.pendingRegionSig = null;
     this.flushSave();
   }
 
   /** Results delivered through the node's onExecuted (covers runs queued from the graph). */
   applyExecuted(info) {
     if (!info?.segments) return;
-    if (!this.p.result || this.p.result.full?.key !== info.full?.key) this.applyFull(info.full, info.segments, 0, info.audio_source);
+    if (!this.p.result || this.p.result.full?.key !== info.full?.key) { this.applyRegionResults(info.regions); this.applyFull(info.full, info.segments, 0, info.audio_source); }
     this.hideLive();
     this.run = { active: false };
     if (this.root) this.renderAll();
@@ -1596,7 +1656,7 @@ export class H3Editor {
     if (!cur) { cur = h("div", { class: "cur" }); $.tileOv.append(cur); }
     const [y0, y1, x0, x1] = d.rect;
     Object.assign(cur.style, { top: pc(y0, d.lh), height: pc(y1 - y0, d.lh), left: pc(x0, d.lw), width: pc(x1 - x0, d.lw) });
-    $.tileOv.querySelector(".lbl").textContent = `тайл ${d.tile}/${d.tiles} · сетка ${d.cols}×${d.rows} · шаг ${d.step}/${d.steps}` + (d.wins > 1 ? ` · окно ${d.win}/${d.wins}` : "");
+    $.tileOv.querySelector(".lbl").textContent = (d.chunks > 1 ? `кусок ${d.chunk}/${d.chunks} · ` : "") + `тайл ${d.tile}/${d.tiles} · сетка ${d.cols}×${d.rows} · шаг ${d.step}/${d.steps}` + (d.wins > 1 ? ` · окно ${d.win}/${d.wins}` : "");
   }
 
   updateRunUI() {
@@ -1608,20 +1668,24 @@ export class H3Editor {
       $.runPill.querySelector("i").style.width = (frac * 100).toFixed(1) + "%";
       const pct = Math.round(frac * 100), eta = r.eta != null && r.done ? C.fmtTime(r.eta).replace(/\.\d+$/, "") : "";
       const inLbl = { learned: "обученный апскейлер", rtx: "RTX VSR" }[r.upInput] || r.upInput || "";
-      const txt = r.queued ? "В очереди ComfyUI…" : r.seg < 0 ? "Подготовка…" : r.segCached ? `Отрезок ${r.seg + 1}/${r.segs} · из кэша` :
-        r.phase === "up_input" ? `Апскейл · отр. ${r.seg + 1} · вход: ${inLbl || "…"} · ${pct}%` :
+      const chk = (c, n) => (n > 1 ? ` · кусок ${c}/${n}` : "");
+      const rn = r.region ? this.regionNo(r.region) : 0;
+      const txt = r.queued ? "В очереди ComfyUI…" : r.seg < 0 ? "Подготовка…" :
+        rn && r.phase !== "up_input" ? `✂ Участок ${rn}` + (r.phase === "region_draft" ? " · черновик" : r.kind === "refine" ? " · доработка ↑" : "") + ` · шаг ${r.step}/${r.steps || "…"}` + (r.eta != null && r.done ? ` · осталось ${C.fmtDur(r.eta)}` : "") :
+        r.segCached ? `Отрезок ${r.seg + 1}/${r.segs} · из кэша` :
+        r.phase === "up_input" ? `Апскейл · ${rn ? "участок " + rn : "отр. " + (r.seg + 1)}${chk(r.chunk, r.chunks)} · вход: ${inLbl || "…"} · ${pct}%` :
         r.phase === "decode" ? `Апскейл · отр. ${r.seg + 1} · декодирование · ${pct}%` :
-        u ? `Апскейл · отр. ${r.seg + 1}` + (u.wins > 1 ? ` · окно ${u.win}/${u.wins}` : "") + ` · шаг ${u.step}/${u.steps}` + (u.tiles > 1 ? ` · тайл ${u.tile || "…"}/${u.tiles}` : "") + ` · ${pct}%` + (u.eta != null ? ` · ETA ${C.fmtDur(u.eta)}` : "") :
+        u ? `Апскейл · отр. ${r.seg + 1}` + chk(u.chunk, u.chunks) + (u.wins > 1 ? ` · окно ${u.win}/${u.wins}` : "") + ` · шаг ${u.step}/${u.steps}` + (u.tiles > 1 ? ` · тайл ${u.tile || "…"}/${u.tiles}` : "") + ` · ${pct}%` + (u.eta != null ? ` · ETA ${C.fmtDur(u.eta)}` : "") :
         `Отрезок ${r.seg + 1}/${r.segs}` + (r.phase === "draft" ? " · черновик" : r.phase === "refine" ? " · доработка ↑" : r.phase === "upscale" ? " · апскейл ↑" : "") + ` · шаг ${r.step}/${r.steps || "…"}` + (r.eta != null && r.done ? ` · осталось ${C.fmtDur(r.eta)}` : "");
       $.runPill.querySelector("span").textContent = txt;
       $.runPill.title = r.queued ? "Запуск ждёт в очереди ComfyUI" : r.seg < 0 ? "Подготовка запуска" :
         `Отрезок ${r.seg + 1} из ${r.segs}` + (r.segCached ? " — берётся из кэша" : ` · шаг ${r.step} из ${r.steps || "?"}`) +
         `\nВсего шагов: ${r.done || 0} из ${r.total || "?"} (${pct}%)` + (r.elapsed != null ? `\nПрошло: ${C.fmtDur(r.elapsed)}` : "") + (eta ? `\nОсталось ≈ ${C.fmtDur(r.eta)}` : "") +
-        (u ? `\nАпскейл: сетка ${u.cols}×${u.rows}, ${u.ms} мс/тайл, до конца апскейла ≈ ${C.fmtDur(u.eta)}` : "");
+        (u ? `\nАпскейл${u.chunks > 1 ? ` (кусок ${u.chunk} из ${u.chunks})` : ""}: сетка ${u.cols}×${u.rows}, ${u.ms} мс/тайл, до конца апскейла ≈ ${C.fmtDur(u.eta)}` : "");
     }
     ($.clips || []).forEach((c, i) => {
       if (!c) return;
-      const running = !!r.active && r.seg === i && !r.segCached;
+      const running = !!r.active && r.seg === i && !r.segCached && !r.region;
       c.classList.toggle("running", running);
       c.classList.toggle("queued", !!r.active && !r.queued && i > r.seg && !!r.cached && !r.cached[i]);
       const bar = c.querySelector(".pg i");
@@ -1655,3 +1719,4 @@ installSettings(H3Editor, { C, h, ICON });
 installHelp(H3Editor, { C, h, ICON });
 installGallery(H3Editor, { C, h, ICON });
 installProjects(H3Editor, { C, h, ICON });
+installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurrent / compSource

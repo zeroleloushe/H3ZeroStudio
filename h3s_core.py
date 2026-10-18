@@ -85,7 +85,11 @@ DEFAULT_SETTINGS = {
     "upscale_method": "learned",
     "upscale_rev": 3,
     # «↑ Апскейл» (header: the whole video, clip: one clip): method / scale / sigma / RTX quality
-    "seg_upscale": {"method": "latent", "scale": 2.0},
+    "seg_upscale": {"method": "latent", "scale": 2.0},   # legacy multiplier, migrated to a megapixel target ("mp")
+    # upscale in temporal chunks (sequential, like ComfyUI-H3-WindowedRefine): approximate chunk length in seconds
+    # (snapped to 17k+5 frames; 0 = the whole clip in one piece) and the chunk overlap in H3 blocks (5o+2 latent frames)
+    "upscale_chunk_sec": 5.0,
+    "upscale_chunk_overlap": 1,
     # stage parameters ("" / 0 = as the main sampling parameters)
     "draft_sampler": "", "draft_scheduler": "", "draft_cfg": 0.0,
     "refine_sampler": "", "refine_scheduler": "", "refine_cfg": 0.0,
@@ -98,7 +102,7 @@ RUN_KINDS = ("draft", "refine", "full")
 GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "seg_upscale", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log")
@@ -114,7 +118,11 @@ REFINE_SIGMA_RANGE = (0.15, 0.8)
 UPSCALE_METHODS = ("learned", "rtx")   # nearest-exact / VAE-Lanczos were removed (garbage after the refine)
 # «Апскейл отрезка»: per-segment upscale + low-strength refine (see h3s_upscale.py)
 SEG_UPSCALE_METHODS = ("latent", "rtx", "tiles")
-SEG_UPSCALE_SCALES = (1.5, 2.0)
+SEG_UPSCALE_SCALES = (1.5, 2.0)                       # legacy multipliers (older projects; migrated to "mp")
+SEG_UPSCALE_MP_PRESETS = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)   # «Размер» presets, megapixels of the upscaled frame
+SEG_UPSCALE_MP_RANGE = (0.01, 8.5)
+UPSCALE_CHUNK_SEC_RANGE = (2.0, 30.0)
+UPSCALE_CHUNK_OVERLAP_RANGE = (1, 3)
 SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.35}   # default refine strength (start sigma) per method
 SEG_UPSCALE_SIGMA_RANGE = (0.1, 0.7)
 RTX_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA")
@@ -153,6 +161,24 @@ DEFAULT_SEGMENT = {
 }
 
 MAX_TAKES = 12
+
+# «✂ Участок»: regenerate a time range in the middle of the video (generated clips and footage alike). The range is
+# re-sampled inside a 17k+5 window of its scene with clean head/tail context frames on both sides (H3's native
+# per-token video/audio denoise mask), then spliced back frame-exactly (video) and sample-exactly (audio).
+DEFAULT_REGION = {
+    "id": "",
+    "name": "",
+    "start": 0,          # timeline pixel frames of the range to regenerate (snapped to the scene's 17-frame grid)
+    "end": 0,
+    "head": -1,          # clean context blocks before the range (17 frames each); -1 = the global overlap setting
+    "tail": -1,          # clean context after it (17·o + 5 frames); -1 = the global overlap setting
+    "prompt": "",
+    "refs": [],
+    "seed": 0,
+    "takes": [],         # [{id, key, sig, seed, created, snap{...}, result{...}}]
+    "active_take": None, # take applied to the video; None = the original
+}
+MAX_REGIONS = 16
 
 MARKER_EFFECTS = ("note", "prompt", "boost")
 DEFAULT_MARKER = {
@@ -338,7 +364,8 @@ def normalize_project(p):
         # «Длина: Фикс» (default): the marker stays where it was set, editing clips may leave an empty gap before
         # it; «Авто»: the marker follows the end of the last clip (end stays 0)
         "end_mode": "auto" if p.get("end_mode") == "auto" else "fixed",
-        "run": {"upto": -1, "only": -1, "kind": ""},
+        "run": {"upto": -1, "only": -1, "kind": "", "region": ""},
+        "regions": [],
         "stats": copy.deepcopy(p.get("stats")) if isinstance(p.get("stats"), dict) else None,
         "result": p.get("result") if isinstance(p.get("result"), dict) else None,
     }
@@ -355,6 +382,9 @@ def normalize_project(p):
     st["upscale_method"] = st.get("upscale_method") if st.get("upscale_method") in UPSCALE_METHODS else "learned"
     st["upscale_rev"] = 3   # any older value ("vae", "latent" = nearest-exact, …) became "learned" above
     st["seg_upscale"] = normalize_upscale(st.get("seg_upscale")) or normalize_upscale({"method": "latent", "scale": 2.0})
+    cs = _num(st.get("upscale_chunk_sec"), 5.0)
+    st["upscale_chunk_sec"] = 0.0 if cs <= 0 else _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1)
+    st["upscale_chunk_overlap"] = int(min(UPSCALE_CHUNK_OVERLAP_RANGE[1], max(UPSCALE_CHUNK_OVERLAP_RANGE[0], _num(st.get("upscale_chunk_overlap"), 1))))
     for k in ("draft", "refine"):
         st[k + "_sampler"] = str(st.get(k + "_sampler") or "")[:64]
         st[k + "_scheduler"] = str(st.get(k + "_scheduler") or "")[:64]
@@ -364,6 +394,14 @@ def normalize_project(p):
     out["run"]["only"] = int(_num((p.get("run") or {}).get("only", -1) if isinstance(p.get("run"), dict) else -1, -1))
     rk = (p.get("run") or {}).get("kind") if isinstance(p.get("run"), dict) else None
     out["run"]["kind"] = rk if rk in RUN_KINDS else ""
+    rr = (p.get("run") or {}).get("region") if isinstance(p.get("run"), dict) else None
+    out["run"]["region"] = str(rr) if isinstance(rr, str) else ""
+    for i, r in enumerate(p.get("regions") or [] if isinstance(p.get("regions"), list) else []):
+        if not isinstance(r, dict):
+            continue
+        rg = normalize_region(r, i)
+        if rg is not None and len(out["regions"]) < MAX_REGIONS:
+            out["regions"].append(rg)
     for i, m in enumerate(p.get("markers") or []):
         if not isinstance(m, dict):
             continue
@@ -433,6 +471,11 @@ def normalize_project(p):
         if seg["freeze"]:
             seg["frames"] = seg["freeze"]["frames"]
         out["segments"].append(seg)
+    # legacy upscale multipliers -> megapixel targets with the same canvas (cache keys unchanged: upscale_key_form)
+    rw, rh = resolution(out["settings"])
+    out["settings"]["seg_upscale"] = migrate_upscale(out["settings"]["seg_upscale"], rw, rh)
+    for seg in out["segments"]:
+        seg["upscale"] = migrate_upscale(seg["upscale"], rw, rh)
     return out
 
 
@@ -440,10 +483,13 @@ def normalize_upscale(u):
     if not isinstance(u, dict) or u.get("method") not in SEG_UPSCALE_METHODS:
         return None
     m = u["method"]
-    sc = _num(u.get("scale"), 2.0)
-    sc = min(SEG_UPSCALE_SCALES, key=lambda x: abs(x - sc))
     sg = round(min(SEG_UPSCALE_SIGMA_RANGE[1], max(SEG_UPSCALE_SIGMA_RANGE[0], _num(u.get("sigma"), SEG_UPSCALE_SIGMA[m]))), 3)
-    out = {"method": m, "scale": sc, "sigma": sg}
+    mp = _num(u.get("mp"), 0)
+    if mp > 0:   # megapixel target of the upscaled frame
+        out = {"method": m, "mp": _round(min(SEG_UPSCALE_MP_RANGE[1], max(SEG_UPSCALE_MP_RANGE[0], mp)), 4), "sigma": sg}
+    else:        # legacy multiplier (migrated by normalize_project, where the canvas is known)
+        sc = _num(u.get("scale"), 2.0)
+        out = {"method": m, "scale": min(SEG_UPSCALE_SCALES, key=lambda x: abs(x - sc)), "sigma": sg}
     if m == "rtx":
         q = str(u.get("quality") or "ULTRA").upper()
         out["quality"] = q if q in RTX_QUALITIES else "ULTRA"
@@ -463,9 +509,74 @@ def upscalable(seg):
     return bool(seg.get("upscale")) and not is_footage(seg) and not (seg.get("freeze") or {}).get("up")
 
 
-def upscale_canvas(w, h, scale):
-    """Target canvas of a segment upscale (snapped to 32)."""
-    return snap32(w * float(scale)), snap32(h * float(scale))
+def _round(x, d):
+    """Half-up rounding (same as the editor's Math.round based rounding)."""
+    return math.floor(float(x) * 10 ** d + 0.5) / 10 ** d
+
+
+def upscale_canvas(w, h, up):
+    """Target canvas of a segment upscale (snapped to 32). up: the upscale dict ({"mp"} megapixel target or a
+    legacy {"scale"}) or a plain multiplier. Same aspect as the clip; a target below the clip size is a resize."""
+    if isinstance(up, dict):
+        if _num(up.get("mp"), 0) > 0:
+            k = math.sqrt(float(up["mp"]) * 1e6 / (w * h))
+            return snap32(w * k), snap32(h * k)
+        up = _num(up.get("scale"), 2.0)
+    return snap32(w * float(up)), snap32(h * float(up))
+
+
+def mp_for_scale(w, h, scale):
+    """Megapixel target that gives exactly the canvas of a legacy multiplier."""
+    target = upscale_canvas(w, h, scale)
+    for d in (2, 3, 4):
+        mp = _round(w * h * scale * scale / 1e6, d)
+        if upscale_canvas(w, h, {"mp": mp}) == target:
+            return mp
+    return _round(target[0] * target[1] / 1e6, 4)
+
+
+def migrate_upscale(u, w, h):
+    """Legacy {"scale": 1.5|2} -> {"mp": …} with the same canvas (key order kept: method, mp, sigma, …)."""
+    if not u or "mp" in u or "scale" not in u:
+        return u
+    return {("mp" if k == "scale" else k): (mp_for_scale(w, h, v) if k == "scale" else v) for k, v in u.items()}
+
+
+def upscale_key_form(up, w, h):
+    """Cache-key form: an "mp" that reproduces an old ×1.5 / ×2 canvas hashes as that multiplier, so results made
+    before the megapixel picker stay cached (and the editor does not mark them changed)."""
+    if up and "mp" in up:
+        c = upscale_canvas(w, h, up)
+        for sc in SEG_UPSCALE_SCALES:
+            if upscale_canvas(w, h, sc) == c:
+                return {("scale" if k == "mp" else k): (sc if k == "mp" else v) for k, v in up.items()}
+    return up
+
+
+def chunk_starts(k, m, o):
+    """Starts (in blocks) of temporal windows of m blocks over k blocks with >= o blocks overlap
+    (plan_windows of ComfyUI-H3-WindowedRefine); [0] = one piece."""
+    m = max(1, min(int(m), k))
+    o = max(0, min(int(o), m - 1))
+    last = k - m
+    if last <= 0:
+        return [0]
+    n = max(2, min(math.ceil(last / (m - o)) + 1, last + 1))
+    return sorted({int(_round(i * last / (n - 1), 0)) for i in range(n)})
+
+
+def upscale_chunking(settings, frames):
+    """Temporal chunks of a clip's upscale: (count, chunk frames 17k+5 or 0 = off, overlap blocks)."""
+    sec = _num(settings.get("upscale_chunk_sec"), 0)
+    if sec <= 0:
+        return 1, 0, 0
+    cf = snap_frames(sec * FPS)
+    m = (latent_t(cf) - 2) // 5
+    o = max(1, min(int(_num(settings.get("upscale_chunk_overlap"), 1)), m - 1))
+    k = (latent_t(frames) - 2) // 5
+    # approximate length: a clip up to 2 blocks (≈1.4 s) longer than a chunk stays one piece
+    n = len(chunk_starts(k, m, o)) if frames > cf + 34 else 1
+    return n, cf, o
 
 
 def _normalize_freeze(f):
@@ -856,11 +967,12 @@ def estimate(project):
         warnings.append(f"{w}×{h} больше официальных 1344×768 — дольше и больше VRAM")
     steps = sum(seg_steps(project, it["index"]) for it in items)
     ups = [it["index"] for it in items if upscalable(project["segments"][it["index"]])]
-    steps += sum(pass_params(project, i, "refine")["steps"] for i in ups)
+    fr = {it["index"]: it["frames"] for it in items}
+    steps += sum(pass_params(project, i, "refine")["steps"] * upscale_chunking(project["settings"], fr[i])[0] for i in ups)
     if ups:
-        sc = max(project["segments"][i]["upscale"]["scale"] for i in ups)
-        uw, uh = upscale_canvas(w, h, sc)
-        warnings.append(f"апскейл отрезков: {len(ups)} → до {uw}×{uh}")
+        uw, uh = max((upscale_canvas(w, h, project["segments"][i]["upscale"]) for i in ups), key=lambda c: c[0] * c[1])
+        nch = max(upscale_chunking(project["settings"], fr[i])[0] for i in ups)
+        warnings.append(f"апскейл отрезков: {len(ups)} → до {uw}×{uh}" + (f" · до {nch} фрагм. по времени" if nch > 1 else ""))
     return {"segments": len(items), "frames": total, "seconds": round(total / FPS, 3), "width": w, "height": h,
             "steps_total": steps, "warnings": warnings, "kind": run_kind(project["settings"])}
 
@@ -937,11 +1049,14 @@ def upscale_keys(project, base_keys, kind=None, up_env=None):
             prev = None
             continue
         cont = it["link"] == "extend" and it["index"] > 0 and it["overlap"]
-        chain = prev[0] if prev and cont and prev[1] == up["scale"] else ""
-        k = _h({"v": SCHEMA_VERSION, "up": bk, "p": up, "env": (up_env or {}).get(up["method"], ""), "wh": list(upscale_canvas(w, h, up["scale"])),
-                "steps": pass_params(project, it["index"], "refine")["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {})})[:16]
+        wh = list(upscale_canvas(w, h, up))
+        chain = prev[0] if prev and cont and prev[1] == wh else ""
+        nch, cf, co = upscale_chunking(project["settings"], it["frames"])
+        k = _h({"v": SCHEMA_VERSION, "up": bk, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
+                "steps": pass_params(project, it["index"], "refine")["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {}),
+                **({"ch": [cf, co]} if nch > 1 else {})})[:16]
         out.append(k)
-        prev = (k, up["scale"])
+        prev = (k, wh)
     return out
 
 
@@ -968,3 +1083,133 @@ def _refine_keys(project, draft_keys, full_keys, up_env=""):
         keys.append(k)
         prev = k
     return keys
+
+
+# ---------------------------------------------------------------- «✂ Участок» (middle regeneration)
+def normalize_region(r, i=0):
+    rg = _merge(DEFAULT_REGION, {k: v for k, v in r.items() if k in DEFAULT_REGION})
+    rg["id"] = str(rg["id"] or f"r{i + 1}")
+    rg["name"] = str(rg["name"] or "")
+    rg["start"] = max(0, int(_num(rg["start"], 0)))
+    rg["end"] = max(0, int(_num(rg["end"], 0)))
+    if rg["end"] <= rg["start"]:
+        return None
+    for k in ("head", "tail"):
+        try:
+            rg[k] = max(-1, min(MAX_OVERLAP_BLOCKS, int(float(rg[k]))))
+        except (TypeError, ValueError):
+            rg[k] = -1
+    rg["prompt"] = str(rg["prompt"] or "")
+    rg["refs"] = [str(x) for x in (rg["refs"] if isinstance(rg["refs"], list) else [])]
+    rg["seed"] = max(0, int(_num(rg["seed"], 0)))
+    rg["takes"] = [t for t in (rg["takes"] if isinstance(rg["takes"], list) else []) if isinstance(t, dict) and t.get("key")][-MAX_TAKES:]
+    rg["active_take"] = None if rg["active_take"] is None else str(rg["active_take"])
+    return rg
+
+
+def scene_chains(items):
+    """Runs of items whose latents join into one valid 17k+5 / 5k+2 latent: a chain breaks where a clip does not
+    continue the previous one through an overlap (new scene, footage, last-frame-only extend). [(start, end, i0, i1)]"""
+    out = []
+    for it in items:
+        if not out or not (it["index"] and it["overlap"]):
+            out.append([it["start"], it["end"], it["index"], it["index"]])
+        else:
+            out[-1][1], out[-1][3] = it["end"], it["index"]
+    return [tuple(c) for c in out]
+
+
+def region_blocks(project, region, key):
+    v = int(region.get(key, -1))
+    if v < 0:
+        v = int(project["settings"].get("overlap_blocks", 1) or 0)
+    return max(0, min(MAX_OVERLAP_BLOCKS, v))
+
+
+def region_window(project, region, items=None):
+    """Sampling window of a region. The range snaps to its scene's 17-frame grid (a latent block); the window adds
+    `head` blocks of clean context before it and 17·tail + 5 clean frames after it (so it has 17k+5 frames and starts
+    on a standalone latent frame). A range reaching the scene end regenerates to the end (no tail).
+    Returns a dict (frames are timeline pixel frames) with "error" set when the range cannot be regenerated."""
+    items = items if items is not None else plan(limited_project(project))
+    out = {"error": "", "warnings": []}
+    st, en = int(region["start"]), int(region["end"])
+    ch = next((c for c in scene_chains(items) if c[0] <= st < c[1]), None)
+    if ch is None:
+        out["error"] = "участок вне отрезков таймлайна"
+        return out
+    cs, ce, i0, i1 = ch
+    if en > ce + 8:
+        out["error"] = "участок пересекает склейку (новая сцена / футаж / продление без перекрытия) — выделите внутри одной сцены"
+        return out
+    K = (ce - cs - 5) // 17   # whole blocks of the scene
+    a = cs + 17 * min(K, max(0, int(math.floor((st - cs) / 17.0 + 0.5))))
+    to_end = en >= ce - 8
+    if to_end:
+        b = ce
+        a = min(a, ce - 22)
+    else:
+        b = cs + 17 * min(K, max(0, int(math.floor((en - cs) / 17.0 + 0.5))))
+        if b < a + 17:
+            b = a + 17
+        if b > cs + 17 * K:
+            b = ce
+            to_end = True
+            a = min(a, ce - 22)
+    a = max(cs, a)
+    oh = min(region_blocks(project, region, "head"), (a - cs) // 17)
+    ws = a - 17 * oh
+    if to_end:
+        ot, we = 0, ce
+    else:
+        ot = min(region_blocks(project, region, "tail"), (ce - 5 - b) // 17)
+        we = b + 17 * ot + 5
+    frames = we - ws
+    out.update({"chain": [cs, ce], "i0": i0, "i1": i1, "ws": ws, "a": a, "b": b, "we": we, "frames": frames,
+                "head": a - ws, "tail": we - b, "head_blocks": oh, "tail_blocks": ot, "to_end": to_end,
+                "lat0": 5 * (ws - cs) // 17, "latent_t": latent_t(frames), "seg": marker_segment(items, a),
+                "segs": [it["index"] for it in items if it["start"] < we and it["end"] > ws]})
+    if frames > MAX_FRAMES:
+        out["error"] = f"окно {frames} кадров длиннее максимума {MAX_FRAMES} — выделите участок короче"
+    if oh == 0 and a > cs:
+        pass
+    if a == cs:
+        out["warnings"].append("участок у начала сцены — без контекста до него")
+    if to_end:
+        out["warnings"].append("участок до конца сцены — без контекста после него")
+    if frames < TRAINED_MIN_FRAMES or frames > TRAINED_MAX_FRAMES:
+        out["warnings"].append(f"окно {frames} кадров ({frames / FPS:.1f} с) вне обучающего диапазона H3 {TRAINED_MIN_FRAMES}–{TRAINED_MAX_FRAMES}")
+    return out
+
+
+def region_prompt(project, region):
+    s = project["settings"]
+    return "\n".join(t.strip() for t in (s.get("prompt") or "", region.get("prompt") or "") if t and t.strip())
+
+
+def region_refs(project, region):
+    return ordered_refs(project, {"refs": region.get("refs") or []})
+
+
+def region_params(project, region, win, kind):
+    """Sampling parameters of a region pass: those of the clip it starts in, with the region's own seed."""
+    p = pass_params(project, max(0, win.get("seg", 0)), kind)
+    p["seed"] = int(region.get("seed") or 0)
+    return p
+
+
+def region_key(project, region, win, seg_keys, ref_sigs=None, env_sig="", kind=None, wh=None):
+    """Cache key of a region pass: the source latents (keys of the clips under its window, chained), the window,
+    prompt, refs and parameters."""
+    ref_sigs = ref_sigs or {}
+    kind = kind or run_kind(project["settings"])
+    s = project["settings"]
+    cs = win["chain"][0]
+    return _h({"v": SCHEMA_VERSION, "region": 1, "env": env_sig, "kind": kind, "wh": list(wh or []),
+               "src": [seg_keys[i] for i in win["segs"] if i < len(seg_keys)],
+               "win": [win["ws"] - cs, win["a"] - cs, win["b"] - cs, win["we"] - cs, win["to_end"]],
+               "prompt": region_prompt(project, region), "neg": s.get("negative") or "",
+               "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in region_refs(project, region)],
+               "params": region_params(project, region, win, kind), "ref_size": s.get("ref_size"),
+               "actx": round(min(float(s.get("audio_context_sec", 0) or 0), AUDIO_CONTEXT_MAX), 2),
+               "track": [c for c in lock_clips(project)] if lock_clips(project) else None})[:16]

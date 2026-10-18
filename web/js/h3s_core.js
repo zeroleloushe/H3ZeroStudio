@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS = {
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 3, seg_upscale: { method: "latent", scale: 2 },
+  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 3, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
 };
 export const DRAFT_SCALES = [0.5, 0.67, 0.75];
@@ -37,17 +37,25 @@ export const REFINE_SIGMA_RANGE = [0.15, 0.8];
 export const UPSCALE_METHODS = ["learned", "rtx"];   // nearest-exact / VAE-Lanczos removed
 // «Апскейл отрезка» (see h3s_upscale.py)
 export const SEG_UPSCALE_METHODS = ["latent", "rtx", "tiles"];
-export const SEG_UPSCALE_SCALES = [1.5, 2.0];
+export const SEG_UPSCALE_SCALES = [1.5, 2.0];   // legacy multipliers (migrated to "mp")
+export const SEG_UPSCALE_MP_PRESETS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0];
+export const SEG_UPSCALE_MP_RANGE = [0.01, 8.5];
+export const UPSCALE_CHUNK_SEC_RANGE = [2.0, 30.0];
+export const UPSCALE_CHUNK_OVERLAP_RANGE = [1, 3];
+/** Half-up rounding (mirror of h3s_core._round). */
+export const roundHalf = (x, d) => Math.floor(Number(x) * 10 ** d + 0.5) / 10 ** d;
 export const SEG_UPSCALE_SIGMA = { latent: 0.4, rtx: 0.25, tiles: 0.35 };
 export const SEG_UPSCALE_SIGMA_RANGE = [0.1, 0.7];
 export const RTX_QUALITIES = ["LOW", "MEDIUM", "HIGH", "ULTRA"];
 export const UPSCALE_LABELS = { latent: "Латент + доработка", rtx: "RTX VSR → доработка", tiles: "Плитки (SyncTile)" };
 export function normalizeUpscale(u) {
   if (!u || typeof u !== "object" || !SEG_UPSCALE_METHODS.includes(u.method)) return null;
-  const m = u.method, sc0 = num(u.scale, 2.0);
-  const sc = SEG_UPSCALE_SCALES.reduce((a, b) => (Math.abs(b - sc0) < Math.abs(a - sc0) ? b : a));
+  const m = u.method;
   const sg = Math.round(Math.min(SEG_UPSCALE_SIGMA_RANGE[1], Math.max(SEG_UPSCALE_SIGMA_RANGE[0], num(u.sigma, SEG_UPSCALE_SIGMA[m]))) * 1000) / 1000;
-  const out = { method: m, scale: sc, sigma: sg };
+  const mp = num(u.mp, 0);
+  let out;
+  if (mp > 0) out = { method: m, mp: roundHalf(Math.min(SEG_UPSCALE_MP_RANGE[1], Math.max(SEG_UPSCALE_MP_RANGE[0], mp)), 4), sigma: sg };
+  else { const sc0 = num(u.scale, 2.0); out = { method: m, scale: SEG_UPSCALE_SCALES.reduce((a, b) => (Math.abs(b - sc0) < Math.abs(a - sc0) ? b : a)), sigma: sg }; }
   if (m === "rtx") { const q = String(u.quality || "ULTRA").toUpperCase(); out.quality = RTX_QUALITIES.includes(q) ? q : "ULTRA"; }
   if (m === "tiles") {
     const t = u.tile;
@@ -74,7 +82,47 @@ export function tileGrid(bw, bh, W, H, up) {
   const ys = tilePositions(lh, th, ovy), xs = tilePositions(lw, tw, ovx);
   return { rows: ys.length, cols: xs.length, tw: tw * 16, th: th * 16, ov: Math.min(ovx, ovy) * 16, ys, xs, lh, lw };
 }
-export const upscaleCanvas = (w, h, scale) => [snap32(w * scale), snap32(h * scale)];
+/** Target canvas of an upscale (mirror of h3s_core.upscale_canvas): {mp} megapixel target, legacy {scale} or a number. */
+export function upscaleCanvas(w, h, up) {
+  if (up && typeof up === "object") {
+    if (num(up.mp, 0) > 0) { const k = Math.sqrt(Number(up.mp) * 1e6 / (w * h)); return [snap32(w * k), snap32(h * k)]; }
+    up = num(up.scale, 2.0);
+  }
+  return [snap32(w * up), snap32(h * up)];
+}
+export function mpForScale(w, h, scale) {
+  const t = upscaleCanvas(w, h, scale);
+  for (const d of [2, 3, 4]) { const mp = roundHalf(w * h * scale * scale / 1e6, d), c = upscaleCanvas(w, h, { mp }); if (c[0] === t[0] && c[1] === t[1]) return mp; }
+  return roundHalf(t[0] * t[1] / 1e6, 4);
+}
+export function migrateUpscale(u, w, h) {
+  if (!u || "mp" in u || !("scale" in u)) return u;
+  const out = {}; for (const [k, v] of Object.entries(u)) { if (k === "scale") out.mp = mpForScale(w, h, v); else out[k] = v; }
+  return out;
+}
+/** Key / signature form: an mp reproducing an old ×1.5 / ×2 canvas hashes as that multiplier (mirror of upscale_key_form). */
+export function upscaleKeyForm(up, w, h) {
+  if (up && "mp" in up) {
+    const c = upscaleCanvas(w, h, up);
+    for (const sc of SEG_UPSCALE_SCALES) { const o = upscaleCanvas(w, h, sc); if (o[0] === c[0] && o[1] === c[1]) { const out = {}; for (const [k, v] of Object.entries(up)) { if (k === "mp") out.scale = sc; else out[k] = v; } return out; } }
+  }
+  return up;
+}
+/** Window starts (blocks) — plan_windows of ComfyUI-H3-WindowedRefine (mirror of h3s_core.chunk_starts). */
+export function chunkStarts(k, m, o) {
+  m = Math.max(1, Math.min(Math.trunc(m), k)); o = Math.max(0, Math.min(Math.trunc(o), m - 1));
+  const last = k - m; if (last <= 0) return [0];
+  const n = Math.max(2, Math.min(Math.ceil(last / (m - o)) + 1, last + 1)), out = new Set();
+  for (let i = 0; i < n; i++) out.add(roundHalf(i * last / (n - 1), 0));
+  return [...out].sort((a, b) => a - b);
+}
+/** Temporal chunks of a clip's upscale: [count, chunk frames (0 = off), overlap blocks] (mirror of upscale_chunking). */
+export function upscaleChunking(s, frames) {
+  const sec = num(s.upscale_chunk_sec, 0); if (sec <= 0) return [1, 0, 0];
+  const cf = snapFrames(sec * FPS), m = (latentT(cf) - 2) / 5;
+  const o = Math.max(1, Math.min(Math.trunc(num(s.upscale_chunk_overlap, 1)), m - 1)), k = (latentT(frames) - 2) / 5;
+  return [frames > cf + 34 ? chunkStarts(k, m, o).length : 1, cf, o];
+}
 /** The segment's upscale applies: set, not footage as is, not a take frozen after its upscale (freeze.up). */
 export const upscalable = (seg) => !!seg.upscale && !isFootage(seg) && !(seg.freeze && seg.freeze.up);
 export const STAGE_KEYS = ["draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg"];
@@ -83,7 +131,7 @@ export const RUN_KINDS = ["draft", "refine", "full"];
 export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "seg_upscale", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log"];
@@ -108,6 +156,9 @@ export const DEFAULT_SEGMENT = {
   takes: [], active_take: null, locked: false, freeze: null,
 };
 export const MAX_TAKES = 12;
+// «✂ Участок»: regenerate a time range in the middle of the video (mirror of h3s_core.DEFAULT_REGION)
+export const DEFAULT_REGION = { id: "", name: "", start: 0, end: 0, head: -1, tail: -1, prompt: "", refs: [], seed: 0, takes: [], active_take: null };
+export const MAX_REGIONS = 16;
 export const MARKER_EFFECTS = ["note", "prompt", "boost"];
 export const DEFAULT_MARKER = { id: "", frame: 0, label: "", color: 0, effect: "note", text: "", asset: "" };
 export const MARKER_PROMPT = "At {t}s: {text}";
@@ -173,7 +224,8 @@ export function normalizeProject(p) {
     markers: [],
     end: Math.max(0, Math.trunc(num(p.end, 0))),
     end_mode: p.end_mode === "auto" ? "auto" : "fixed",
-    run: { upto: -1, only: -1, kind: "" },
+    run: { upto: -1, only: -1, kind: "", region: "" },
+    regions: [],
     stats: p.stats && typeof p.stats === "object" && !Array.isArray(p.stats) ? clone(p.stats) : null,
     result: p.result && typeof p.result === "object" && !Array.isArray(p.result) ? clone(p.result) : null,
   };
@@ -188,13 +240,20 @@ export function normalizeProject(p) {
     st.upscale_method = UPSCALE_METHODS.includes(st.upscale_method) ? st.upscale_method : "learned";
     st.upscale_rev = 3;
     st.seg_upscale = normalizeUpscale(st.seg_upscale) || normalizeUpscale({ method: "latent", scale: 2 });
+    { const cs = num(st.upscale_chunk_sec, 5.0); st.upscale_chunk_sec = cs <= 0 ? 0 : roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1);
+      st.upscale_chunk_overlap = Math.trunc(Math.min(UPSCALE_CHUNK_OVERLAP_RANGE[1], Math.max(UPSCALE_CHUNK_OVERLAP_RANGE[0], num(st.upscale_chunk_overlap, 1)))); }
     for (const k of ["draft", "refine"]) {
       st[k + "_sampler"] = String(st[k + "_sampler"] || "").slice(0, 64);
       st[k + "_scheduler"] = String(st[k + "_scheduler"] || "").slice(0, 64);
       st[k + "_cfg"] = Math.round(Math.max(0, Math.min(30, num(st[k + "_cfg"], 0))) * 100) / 100;
     }
     st.settings_scope = st.settings_scope === "global" ? "global" : "project"; }   // older "vae" / "latent" (nearest-exact) → "learned"
-  { const u = Math.trunc(num(p.run?.upto, -1)); out.run.upto = u; out.run.only = Math.trunc(num(p.run?.only, -1)); out.run.kind = RUN_KINDS.includes(p.run?.kind) ? p.run.kind : ""; }
+  { const u = Math.trunc(num(p.run?.upto, -1)); out.run.upto = u; out.run.only = Math.trunc(num(p.run?.only, -1)); out.run.kind = RUN_KINDS.includes(p.run?.kind) ? p.run.kind : "";
+    out.run.region = typeof p.run?.region === "string" ? p.run.region : "";
+    (Array.isArray(p.regions) ? p.regions : []).forEach((r, i) => {
+      if (!r || typeof r !== "object" || Array.isArray(r)) return;
+      const rg = normalizeRegion(r, i); if (rg && out.regions.length < MAX_REGIONS) out.regions.push(rg);
+    }); }
   (Array.isArray(p.markers) ? p.markers : []).forEach((m, i) => {
     if (!m || typeof m !== "object" || Array.isArray(m)) return;
     const src = {}; for (const k of Object.keys(DEFAULT_MARKER)) if (k in m) src[k] = m[k];
@@ -251,6 +310,11 @@ export function normalizeProject(p) {
     if (seg.freeze) seg.frames = seg.freeze.frames;
     out.segments.push(seg);
   });
+  { // legacy upscale multipliers -> megapixel targets with the same canvas (keys unchanged: upscaleKeyForm)
+    const [rw, rh] = resolution(out.settings);
+    out.settings.seg_upscale = migrateUpscale(out.settings.seg_upscale, rw, rh);
+    for (const seg of out.segments) seg.upscale = migrateUpscale(seg.upscale, rw, rh);
+  }
   return out;
 }
 
@@ -523,10 +587,12 @@ export function estimate(project) {
   if (w * h > 1344 * 768 * 1.05) warnings.push(`${w}×${h} больше официальных 1344×768 — дольше и больше VRAM`);
   let steps = items.reduce((acc, it) => acc + segSteps(project, it.index), 0);
   const ups = items.map((it) => it.index).filter((i) => upscalable(project.segments[i]));
-  steps += ups.reduce((acc, i) => acc + passParams(project, i, "refine").steps, 0);
+  const fr = Object.fromEntries(items.map((it) => [it.index, it.frames]));
+  steps += ups.reduce((acc, i) => acc + passParams(project, i, "refine").steps * upscaleChunking(project.settings, fr[i])[0], 0);
   if (ups.length) {
-    const sc = Math.max(...ups.map((i) => project.segments[i].upscale.scale)), [uw, uh] = upscaleCanvas(w, h, sc);
-    warnings.push(`апскейл отрезков: ${ups.length} → до ${uw}×${uh}`);
+    const [uw, uh] = ups.map((i) => upscaleCanvas(w, h, project.segments[i].upscale)).reduce((a, b) => (b[0] * b[1] > a[0] * a[1] ? b : a));
+    const nch = Math.max(...ups.map((i) => upscaleChunking(project.settings, fr[i])[0]));
+    warnings.push(`апскейл отрезков: ${ups.length} → до ${uw}×${uh}` + (nch > 1 ? ` · до ${nch} фрагм. по времени` : ""));
   }
   return { segments: items.length, frames: total, seconds: Math.round(total / FPS * 1000) / 1000, width: w, height: h, steps_total: steps, warnings, kind: runKind(project.settings) };
 }
@@ -557,9 +623,11 @@ export function upscaleSigList(project, base, kind) {
     const seg = project.segments[it.index], up = seg.upscale;
     if (!upscalable(seg)) { out.push(null); prev = null; return; }
     const cont = it.link === "extend" && it.index > 0 && it.overlap;
-    const chain = prev && cont && prev[1] === up.scale ? prev[0] : "";
-    const sig = fnv(JSON.stringify(["up", base[j], up, upscaleCanvas(w, h, up.scale), passParams(project, it.index, "refine").steps, chain].concat(refineExtra(project.settings))));
-    out.push(sig); prev = [sig, up.scale];
+    const wh = upscaleCanvas(w, h, up), whs = wh.join("x");
+    const chain = prev && cont && prev[1] === whs ? prev[0] : "";
+    const [nch, cf, co] = upscaleChunking(project.settings, it.frames);
+    const sig = fnv(JSON.stringify(["up", base[j], upscaleKeyForm(up, w, h), wh, passParams(project, it.index, "refine").steps, chain].concat(refineExtra(project.settings), nch > 1 ? [["ch", cf, co]] : [])));
+    out.push(sig); prev = [sig, whs];
   });
   return out;
 }
@@ -619,4 +687,91 @@ export function fmtDur(sec) {
 
 export function newId(prefix = "") {
   return prefix + Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);
+}
+
+
+// ---------------------------------------------------------------- «✂ Участок» (mirror of h3s_core)
+export function normalizeRegion(r, i = 0) {
+  const src = {}; for (const k of Object.keys(DEFAULT_REGION)) if (k in r) src[k] = r[k];
+  const rg = merge(DEFAULT_REGION, src);
+  rg.id = String(rg.id || `r${i + 1}`);
+  rg.name = String(rg.name || "");
+  rg.start = Math.max(0, Math.trunc(num(rg.start, 0)));
+  rg.end = Math.max(0, Math.trunc(num(rg.end, 0)));
+  if (rg.end <= rg.start) return null;
+  for (const k of ["head", "tail"]) { const v = rg[k] == null ? NaN : Math.trunc(Number(rg[k])); rg[k] = Number.isFinite(v) ? Math.max(-1, Math.min(MAX_OVERLAP_BLOCKS, v)) : -1; }
+  rg.prompt = String(rg.prompt || "");
+  rg.refs = (Array.isArray(rg.refs) ? rg.refs : []).map(String);
+  rg.seed = Math.max(0, Math.trunc(num(rg.seed, 0)));
+  rg.takes = (Array.isArray(rg.takes) ? rg.takes : []).filter((t) => t && typeof t === "object" && !Array.isArray(t) && t.key).slice(-MAX_TAKES);
+  rg.active_take = rg.active_take === null || rg.active_take === undefined ? null : String(rg.active_take);
+  return rg;
+}
+
+export function sceneChains(items) {
+  const out = [];
+  for (const it of items) {
+    if (!out.length || !(it.index && it.overlap)) out.push([it.start, it.end, it.index, it.index]);
+    else { out[out.length - 1][1] = it.end; out[out.length - 1][3] = it.index; }
+  }
+  return out;
+}
+
+export function regionBlocks(project, region, key) {
+  let v = Math.trunc(Number(region[key] ?? -1));
+  if (!(v >= 0)) v = Math.trunc(Number(project.settings.overlap_blocks || 0));
+  return Math.max(0, Math.min(MAX_OVERLAP_BLOCKS, v));
+}
+
+const pyRound = (x) => Math.floor(x + 0.5);
+
+/** Sampling window of a region (see h3s_core.region_window). */
+export function regionWindow(project, region, items = null) {
+  items = items || plan(limitedProject(project));
+  const out = { error: "", warnings: [] };
+  const st = Math.trunc(region.start), en = Math.trunc(region.end);
+  const ch = sceneChains(items).find((c) => c[0] <= st && st < c[1]);
+  if (!ch) { out.error = "участок вне отрезков таймлайна"; return out; }
+  const [cs, ce, i0, i1] = ch;
+  if (en > ce + 8) { out.error = "участок пересекает склейку (новая сцена / футаж / продление без перекрытия) — выделите внутри одной сцены"; return out; }
+  const K = Math.floor((ce - cs - 5) / 17);
+  let a = cs + 17 * Math.min(K, Math.max(0, pyRound((st - cs) / 17)));
+  let toEnd = en >= ce - 8, b;
+  if (toEnd) { b = ce; a = Math.min(a, ce - 22); }
+  else {
+    b = cs + 17 * Math.min(K, Math.max(0, pyRound((en - cs) / 17)));
+    if (b < a + 17) b = a + 17;
+    if (b > cs + 17 * K) { b = ce; toEnd = true; a = Math.min(a, ce - 22); }
+  }
+  a = Math.max(cs, a);
+  const oh = Math.min(regionBlocks(project, region, "head"), Math.floor((a - cs) / 17));
+  const ws = a - 17 * oh;
+  let ot, we;
+  if (toEnd) { ot = 0; we = ce; }
+  else { ot = Math.min(regionBlocks(project, region, "tail"), Math.floor((ce - 5 - b) / 17)); we = b + 17 * ot + 5; }
+  const frames = we - ws;
+  Object.assign(out, { chain: [cs, ce], i0, i1, ws, a, b, we, frames, head: a - ws, tail: we - b, head_blocks: oh, tail_blocks: ot, to_end: toEnd,
+    lat0: Math.floor(5 * (ws - cs) / 17), latent_t: latentT(frames), seg: markerSegment(items, a),
+    segs: items.filter((it) => it.start < we && it.end > ws).map((it) => it.index) });
+  if (frames > MAX_FRAMES) out.error = `окно ${frames} кадров длиннее максимума ${MAX_FRAMES} — выделите участок короче`;
+  if (a === cs) out.warnings.push("участок у начала сцены — без контекста до него");
+  if (toEnd) out.warnings.push("участок до конца сцены — без контекста после него");
+  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(`окно ${frames} кадров (${(frames / FPS).toFixed(1)} с) вне обучающего диапазона H3 ${TRAINED_MIN_FRAMES}–${TRAINED_MAX_FRAMES}`);
+  return out;
+}
+
+export function regionPrompt(project, region) {
+  return [project.settings.prompt || "", region.prompt || ""].map((t) => t.trim()).filter(Boolean).join("\n");
+}
+
+/** Editor signature of a region take (staleness): the window, its source clips' sigs, prompt, refs, params. */
+export function regionSig(project, region, kind = null) {
+  project = limitedProject(project);
+  kind = kind || runKind(project.settings);
+  const win = regionWindow(project, region); if (win.error) return "";
+  const sigs = baseSigs(project, kind), cs = win.chain[0];
+  const p = passParams(project, Math.max(0, win.seg), kind); p.seed = region.seed | 0;
+  return fnv(JSON.stringify(["region", kind, win.ws - cs, win.a - cs, win.b - cs, win.we - cs, win.to_end, win.segs.map((i) => sigs[i] || ""),
+    regionPrompt(project, region), project.settings.negative || "", orderedRefs(project, { refs: region.refs || [] }).map((a) => [a.id, a.file, a.subfolder]), p,
+    Math.round(Math.min(Number(project.settings.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100, lockClips(project)]));
 }

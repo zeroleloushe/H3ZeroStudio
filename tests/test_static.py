@@ -103,6 +103,19 @@ PROJECTS = [
                   "seg_upscale": {"method": "rtx", "scale": 1.5}},
      "run": {"upto": 1, "only": 1, "kind": "draft"}, "segments": [{"frames": 124, "upscale": {"method": "latent"}}, {"frames": 124}]},
     {"settings": {"draft_scheduler": 5, "refine_sampler": None, "settings_scope": "x"}, "run": {"kind": "zz"}, "segments": [{"frames": 124}]},
+    # «✂ Участок»: regions (normalization, windows on the scene grid, cuts / footage / scene end)
+    {"settings": {"overlap_blocks": 2}, "run": {"region": "r2"},
+     "assets": [{"id": "v", "file": "v.mp4", "category": "video"}, {"id": "c", "file": "c.png", "category": "character"}],
+     "regions": [{"id": "r1", "start": 50, "end": 80}, {"id": "r2", "start": "100.6", "end": 170, "head": "3", "tail": 0, "refs": ["c", 5], "seed": "7",
+                 "takes": [{"key": "k1", "id": "t"}, {}], "active_take": 3}, {"start": 200, "end": 260}, {"start": 10, "end": 5}, "bad",
+                 {"id": "r5", "start": 400, "end": 470, "head": 9, "tail": "x"}, {"id": "r6", "start": 3, "end": 9999}],
+     "segments": [{"frames": 124}, {"frames": 124}, {"frames": 90, "link": "cut"}, {"frames": 124, "source": {"asset": "v"}}, {"frames": 158}]},
+    {"run": {"region": 5}, "regions": "bad", "segments": [{"frames": 56}]},
+    # upscale: legacy multipliers migrate to mp (same canvas), mp targets, chunk settings
+    {"settings": {"aspect": "16:9", "megapixels": 1.0, "seg_upscale": {"method": "rtx", "scale": 1.4}, "upscale_chunk_sec": 3.25, "upscale_chunk_overlap": 9},
+     "segments": [{"frames": 362, "upscale": {"method": "latent", "scale": 2}}, {"frames": 158, "upscale": {"method": "tiles", "mp": 3.33333, "tile_ov": 7}},
+                  {"frames": 124, "upscale": {"method": "latent", "mp": "0.1"}}, {"frames": 600, "upscale": {"method": "rtx", "mp": 99, "quality": "low"}}]},
+    {"settings": {"upscale_chunk_sec": 0, "seg_upscale": {"method": "latent", "mp": 2.5}}, "segments": [{"frames": 600, "upscale": {"method": "latent", "mp": 2.5}}]},
 ]
 
 JS_DRIVER = textwrap.dedent("""
@@ -124,7 +137,11 @@ JS_DRIVER = textwrap.dedent("""
                pp: ["draft", "refine", "full"].map((k) => p.segments.map((_, i) => C.passParams(p, i, k))),
                ssteps: p.segments.map((_, i) => C.segSteps(p, i)), dsigs: C.segmentSigs(p, "draft").length,
                ups: C.upscaleSigList(C.limitedProject(p), C.baseSigs(p), C.runKind(p.settings)).map((x) => !!x),
-               ucv: p.segments.map((s) => (s.upscale ? C.upscaleCanvas(...C.workResolution(p.settings), s.upscale.scale) : null)) };
+               ucv: p.segments.map((s) => (s.upscale ? C.upscaleCanvas(...C.workResolution(p.settings), s.upscale) : null)),
+               rwin: p.regions.map((r) => C.regionWindow(p, r)), chains: C.sceneChains(C.plan(p)),
+               chunks: [39, 124, 141, 158, 175, 226, 362, 600, 957].map((f) => C.upscaleChunking(p.settings, f)),
+               mpsc: [[960, 544], [1344, 768], [832, 480], [1280, 720]].map(([w, hh]) => [C.mpForScale(w, hh, 1.5), C.mpForScale(w, hh, 2), C.upscaleCanvas(w, hh, { mp: 3 })]),
+               keyform: p.segments.map((s) => C.upscaleKeyForm(s.upscale, ...C.workResolution(p.settings))) };
     });
     process.stdout.write(JSON.stringify(out));
 """)
@@ -161,7 +178,7 @@ def test_core_parity(h3s, tmp_path):
         assert [core.marker_segment(core.plan(p), m["frame"]) for m in p["markers"]] == j["mseg"]
         assert [[a["id"] for a in core.video_refs(p, s)] for s in p["segments"]] == j["vrefs"]
         assert [bool(x) for x in core.upscale_keys(p, core.segment_keys(p))] == j["ups"]
-        assert [list(core.upscale_canvas(*core.work_resolution(p["settings"]), s["upscale"]["scale"])) if s["upscale"] else None
+        assert [list(core.upscale_canvas(*core.work_resolution(p["settings"]), s["upscale"])) if s["upscale"] else None
                 for s in p["segments"]] == j["ucv"]
         assert core.run_kind(p["settings"]) == j["kind"]
         assert list(core.work_resolution(p["settings"])) == j["wres"] and list(core.work_resolution(p["settings"], "draft")) == j["dres"]
@@ -170,6 +187,12 @@ def test_core_parity(h3s, tmp_path):
         assert len(core.segment_keys(p, kind="draft")) == j["dsigs"]
         assert [core.is_footage(s) for s in p["segments"]] == j["foot"]
         assert [core.fmt_sec10(x) for x in (0, 1, 3, 6, 11, 12, 13, 36, 124, 2399)] == j["fmt"]
+        assert json.loads(json.dumps([core.region_window(p, r) for r in p["regions"]])) == j["rwin"]
+        assert [list(c) for c in core.scene_chains(core.plan(p))] == j["chains"]
+        assert [list(core.upscale_chunking(p["settings"], f)) for f in (39, 124, 141, 158, 175, 226, 362, 600, 957)] == j["chunks"]
+        assert [[core.mp_for_scale(w, hh, 1.5), core.mp_for_scale(w, hh, 2), list(core.upscale_canvas(w, hh, {"mp": 3}))]
+                for w, hh in ((960, 544), (1344, 768), (832, 480), (1280, 720))] == j["mpsc"]
+        assert [core.upscale_key_form(s["upscale"], *core.work_resolution(p["settings"])) for s in p["segments"]] == j["keyform"]
 
 
 def test_tooltips(h3s):

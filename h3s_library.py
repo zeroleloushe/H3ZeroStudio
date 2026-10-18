@@ -17,7 +17,7 @@ import zipfile
 
 ROOT = "h3zerostudio"
 SPECIAL = {"_projects", "_exports", "_thumbs", "export", "_import"}
-KINDS = ("take", "draft", "refine", "upscale", "final")
+KINDS = ("take", "draft", "refine", "upscale", "region", "final")
 _LOCK = threading.RLock()
 
 
@@ -92,7 +92,18 @@ def segment_entry(pid, pname, sub, res, seg, index, kind):
             "video": res.get("video"), "poster": res.get("poster"), "strip": res.get("strip"),
             "frames": res.get("frames"), "wh": res.get("wh"), "seed": res.get("seed"),
             "prompt": str(seg.get("prompt") or "")[:2000], "seg_id": seg.get("id"), "seg_name": seg.get("name") or "",
-            "seg_index": index, "upscale": res.get("upscale"), "base_key": res.get("base_key"), "created": res.get("created")}
+            "seg_index": index, "upscale": res.get("upscale"), "base_key": res.get("base_key"), "draft_key": res.get("draft_key"),
+            "up_input": res.get("up_input"), "created": res.get("created")}
+
+
+def region_entry(pid, pname, res, region, seg, index, base_key=None):
+    """Gallery entry of a region regeneration (the spliced window), stacked with the segment it belongs to."""
+    return {"id": f"reg_{res['key']}", "pid": pid, "project": pname, "kind": "region", "key": res["key"],
+            "video": res.get("video"), "poster": res.get("poster"), "strip": res.get("strip"),
+            "frames": res.get("frames"), "wh": res.get("wh"), "seed": res.get("seed"),
+            "prompt": str(region.get("prompt") or seg.get("prompt") or "")[:2000], "seg_id": seg.get("id"), "seg_name": seg.get("name") or "",
+            "seg_index": index, "region_id": region.get("id"), "region_name": region.get("name") or "", "region_kind": res.get("kind"),
+            "base_key": base_key, "created": res.get("created")}
 
 
 def final_entry(pid, pname, full, poster, prompt):
@@ -174,11 +185,12 @@ def gallery_delete(pid, eid):
     """Delete a gallery item: its mp4 / poster / filmstrip and (segments) its cached latent. Frozen copies stay
     (unfreeze the segment first). Returns the removed file count."""
     d = project_root(pid)
-    m = re.fullmatch(r"(seg|full)_([0-9a-f]{8,64})", str(eid or ""))
+    m = re.fullmatch(r"(seg|full|reg)_([0-9a-f]{8,64})", str(eid or ""))
     if not m:
         raise ValueError("недопустимый элемент")
     kind, key = m.groups()
-    names = [f"full_{key}.mp4"] if kind == "full" else [f"seg_{key}.mp4", f"seg_{key}_tiles.jpg", f"seg_{key}_poster.jpg", os.path.join("cache", f"seg_{key}.pt")]
+    names = [f"full_{key}.mp4"] if kind == "full" else \
+        [f"seg_r{key}.mp4", f"seg_r{key}_tiles.jpg", f"seg_r{key}_poster.jpg", os.path.join("cache", f"region_{key}.pt")] if kind == "reg" else [f"seg_{key}.mp4", f"seg_{key}_tiles.jpg", f"seg_{key}_poster.jpg", os.path.join("cache", f"seg_{key}.pt")]
     n = 0
     for name in names:
         p = os.path.join(d, name)

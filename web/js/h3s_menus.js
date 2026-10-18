@@ -70,6 +70,7 @@ export function installMenus(Editor, { C, h, ICON }) {
         { icon: ICON.dice, label: "Ещё дубль (новый сид)", fn: () => this.newTake(i), dis: !st.ok },
         !st.ok && !busy && !s.freeze ? { why: st.why } : null,
         takes.length > 1 ? { label: `Дубли (${this.takeIndex(s, s.active_take) + 1}/${takes.length})`, sub: takes } : null,
+        { label: "↻ Перегенерировать участок…", title: "Выделить часть ролика вокруг этого места и пересоздать только её (контекст до и после сохраняется). Основной способ — кнопка «✂ Участок» над таймлайном", fn: () => this.regionAt(f), dis: busy || !s.result?.video && !C.isFootage(s) },
         s.freeze ? { label: "🔓 Разморозить", fn: () => this.unfreezeSeg(i) } : { label: "🔒 Зафиксировать", fn: () => this.freezeSeg(i), dis: busy || stale },
         ...this.stageMenuEntries(i),
         ...this.finalMenuEntries(i),

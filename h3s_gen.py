@@ -1346,9 +1346,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         have_draft = use_cache and os.path.isfile(seg_pt_path(d, dkeys[i]))
         return core.pass_steps(s, n, "refine") + (0 if have_draft else core.pass_steps(s, n, "draft"))
     todo_steps = sum(_steps(i) for i, c in enumerate(cached) if not c and i >= first)
+    # «✂ Участок»: regions generated (run.region) or applied (their chosen take) in this run
+    from . import h3s_region as region
+    reg_plans = region.plan_regions(proj, all_items, items, first, keys, dkeys or keys, ref_sigs, env, kind, (run_w, run_h),
+                                    core.work_resolution(s, "draft"), upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "",
+                                    d, use_cache) if proj.get("regions") else []
+    todo_steps += sum(rp["steps"] for rp in reg_plans)
     up_cached = [bool(uk) and use_cache and os.path.isfile(seg_pt_path(d, uk)) for uk in ukeys]
-    todo_steps += sum(core.pass_params(proj, i, "refine")["steps"] for i, uk in enumerate(ukeys)
-                      if uk and not up_cached[i] and i >= first)
+    todo_steps += sum(core.pass_params(proj, i, "refine")["steps"] * core.upscale_chunking(s, items[i]["frames"])[0]
+                      for i, uk in enumerate(ukeys) if uk and not up_cached[i] and i >= first)
     pbar = comfy.utils.ProgressBar(max(1, todo_steps))
     t0 = time.perf_counter()
     done_steps = [0]
@@ -1530,7 +1536,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 pcb_u = LivePreview(notify, model, i, settings=s, audio_vae=None, out_dir=d, sub=sub)
                 def up_prog(_i=i, **kw):
                     if kw.get("phase"):
-                        notify("phase", seg=_i, phase="up_input", input=kw.get("input"))
+                        notify("phase", seg=_i, phase="up_input", input=kw.get("input"), chunk=kw.get("chunk", 1), chunks=kw.get("chunks", 1))
                         return
                     el = time.perf_counter() - t0
                     notify("uptile", seg=_i, done=done_steps[0], total=todo_steps, elapsed=round(el, 1), **kw)
@@ -1541,7 +1547,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 log(f"segment {i + 1}: upscale done in {time.perf_counter() - t_up:.1f}s -> {uinfo['wh'][0]}x{uinfo['wh'][1]} ({uinfo['input']})")
             notify("phase", seg=i, phase="decode")
             t_dec = time.perf_counter()
-            frames = decode_video(vae, uv.to(comfy.model_management.intermediate_device()))
+            frames = upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1]))   # chunk by chunk when chunked
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}
             rk, rwh = uk, [int(uv.shape[-1]) * 16, int(uv.shape[-2]) * 16]
@@ -1561,6 +1567,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         res = segment_media(d, sub, rk, frames, a, audio_vae, audio, proj, it, fps)
         res.update({"index": i, "key": rk, "cached": hit, "frames": int(frames.shape[0]), "kind": kind, "wh": rwh,
                     "seed": core.effective_params(proj, i)["seed"], "created": int(time.time())})
+        if kind == "refine" and dkeys and i < len(dkeys):
+            res["draft_key"] = dkeys[i]   # gallery lineage: this final was made from that draft
         if uk:
             res.update({"base_key": k, "upscale": dict(seg_i["upscale"]), "base_wh": [run_w, run_h]})
             if uinfo:
@@ -1582,6 +1590,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     # upscaled latents only when every clip has them on one canvas (else the base latents)
     cw_ = max(int(f.shape[2]) for f in seg_frames)
     ch_ = max(int(f.shape[1]) for f in seg_frames)
+    base_v = list(seg_v)   # the generation chain (regions are cut from it)
     if all(u is not None for u in seg_up) and len({tuple(u.shape[-2:]) for u in seg_up}) == 1:
         seg_v = list(seg_up)
     elif any(u is not None for u in seg_up):
@@ -1616,13 +1625,98 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         sr_ = tl_audio["sample_rate"]
         tl_audio = {"waveform": tl_audio["waveform"][..., int(round(items[first]["start"] / fps * sr_)):], "sample_rate": sr_}
     out_audio = full_audio(audio_vae, tl_audio, lat_a, images.shape[0], fps, seg_a, run_items, seam)
+    reg_results = []
+    for rp in reg_plans:
+        rg, win = rp["rg"], rp["win"]
+        name = rg.get("name") or rg["id"]
+        si = max(0, win["seg"])
+        t_r = time.perf_counter()
+        hit_r = rp["cached"]
+        if hit_r:
+            rd = torch.load(rp["pt"], map_location="cpu", weights_only=True)
+            rv, ra = rd["v"], rd["a"]
+            log(f"region «{name}»: from cache {rp['key']}")
+        else:
+            notify("phase", seg=si, phase="region", region=rg["id"])
+
+            def r_step(step, total, _si=si):
+                done_steps[0] += 1
+                pbar.update_absolute(done_steps[0], max(1, todo_steps))
+                el = time.perf_counter() - t0
+                rate = el / max(1, done_steps[0])
+                notify("step", seg=_si, step=step + 1, steps=total, done=done_steps[0], total=todo_steps,
+                       elapsed=round(el, 1), eta=round(rate * (todo_steps - done_steps[0]), 1), region=rg["id"])
+                vlog(f"[{text_bar(step + 1, total)}] region «{name}» step {step + 1}/{total} · {done_steps[0]}/{todo_steps}")
+            pcb_r = LivePreview(notify, model, si, settings=s, audio_vae=None, out_dir=d, sub=sub)
+            refs_r = [load_asset_image(x) for x in core.region_refs(proj, rg)]
+            cv, ca = region.chain_latents(items, base_v, seg_a, win["i0"], max(win["segs"]))
+            sv, sa, a0 = region.window_latents(win, cv, ca)
+            ha = round(win["head"] / core.FPS * core.AUDIO_LATENT_FPS)
+            ext = core.audio_context_extra(proj, ha, a0) if ha else 0
+            ctx = (ca[..., a0 - ext:a0 + ha], ext) if ext else None
+            if kind == "refine":
+                dpt = os.path.join(d, "cache", f"region_{rp['dkey']}.pt")
+                if use_cache and os.path.isfile(dpt):
+                    dd = torch.load(dpt, map_location="cpu", weights_only=True)
+                    rdv, rda = dd["v"], dd["a"]
+                    log(f"region «{name}»: draft from cache {rp['dkey']}")
+                else:
+                    dv_l = [get_draft(j)["v"] for j in range(win["i0"], max(win["segs"]) + 1)]
+                    da_l = [get_draft(j)["a"] for j in range(win["i0"], max(win["segs"]) + 1)]
+                    dcv, dca = region.chain_latents(items, dv_l, da_l, win["i0"], max(win["segs"]), base=win["i0"])
+                    dsv, dsa, da0 = region.window_latents(win, dcv, dca)
+                    dctx = (dca[..., da0 - ext:da0 + ha], ext) if ext else None
+                    notify("phase", seg=si, phase="region_draft", region=rg["id"])
+                    rdv, rda = region.sample_region(model, clip, vae, proj, rg, win, dsv, dsa, "draft", refs_r, dctx, audio_z, audio_cov, r_step, pcb_r)
+                    torch.save({"v": rdv, "a": rda}, dpt + ".part")
+                    media.replace_file(dpt + ".part", dpt)
+                um = s.get("upscale_method", "learned")
+                notify("phase", seg=si, phase="up_input", input=upscale.effective_input(um) or um, region=rg["id"])
+                dfr = decode_video(vae, rdv.to(dev0))
+                up = upscale_video_latent(vae, rdv, run_w, run_h, um, frames=dfr)
+                notify("phase", seg=si, phase="region", region=rg["id"])
+                rv, ra = region.sample_region(model, clip, vae, proj, rg, win, sv, sa, "refine", refs_r, None, None, None, r_step, pcb_r, refine=(up, rda))
+            else:
+                rv, ra = region.sample_region(model, clip, vae, proj, rg, win, sv, sa, kind, refs_r, ctx, audio_z, audio_cov, r_step, pcb_r)
+            torch.save({"v": rv, "a": ra, "win": {k: win[k] for k in ("ws", "a", "b", "we", "to_end")}}, rp["pt"] + ".part")
+            media.replace_file(rp["pt"] + ".part", rp["pt"])
+            log(f"region «{name}»: done in {time.perf_counter() - t_r:.1f}s")
+        fr_w = decode_video(vae, rv.to(dev0))
+        images, n_rep = region.splice_frames(images, fr_w, win)
+        sinfo = {}
+        if out_audio is not None and audio_vae is not None:
+            try:
+                wr = decode_audio(audio_vae, ra.to(dev0), normalize=False)["waveform"][0].cpu()
+                out_audio = {"waveform": region.splice_audio(out_audio["waveform"][0].float(), out_audio["sample_rate"], wr, win, fps, sinfo)[None],
+                             "sample_rate": out_audio["sample_rate"]}
+            except Exception as e:
+                log(f"region «{name}»: audio splice failed ({e}); the video part is replaced, the sound stays")
+        log(f"region «{name}»: frames {win['a']}-{win['a'] + n_rep} replaced (frame-exact)"
+            + (f"; audio spliced sample-exactly: offset {sinfo['lag_ms']} ms, corr head {sinfo['corr_head']} / tail {sinfo['corr_tail']}, "
+               f"gain {sinfo['gain']}, seams at {sinfo['head_at_s']}s / {sinfo['tail_at_s']}s" if sinfo else ""))
+        rres = segment_media(d, sub, "r" + rp["key"], fr_w, ra, audio_vae, audio, proj, {"frames": int(fr_w.shape[0])}, fps)
+        rres.update({"region": rg["id"], "key": rp["key"], "cached": hit_r, "frames": int(fr_w.shape[0]), "kind": kind,
+                     "ws": win["ws"], "a": win["a"], "b": win["b"], "we": win["we"], "seed": int(rg.get("seed") or 0),
+                     "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "created": int(time.time()), "generated": rp["gen"]})
+        reg_results.append(rres)
+        try:   # gallery: the region's take, stacked with the segment it was cut from
+            from . import h3s_library
+            host = next((it for it in items if it["start"] <= win["a"] < it["end"]), None) or next((it for it in items if it["index"] in win["segs"]), None)
+            if host is not None:
+                h3s_library.gallery_add(d, h3s_library.region_entry(proj["id"], proj.get("name"), rres, rg, proj["segments"][host["index"]], host["index"],
+                                                                    host.get("key") if isinstance(host.get("key"), str) else None))
+        except Exception as e:
+            log(f"gallery: {e}")
+        if rp["gen"]:
+            notify("region_done", region=rg["id"], result=rres)
     end = int(proj.get("end") or 0)
     if 0 < end < images.shape[0] and len(items) == len(all_items):   # video end marker: exact cut
         images = images[:end]
         if out_audio is not None:
             out_audio = {"waveform": out_audio["waveform"][..., :int(round(end / fps * out_audio["sample_rate"]))],
                          "sample_rate": out_audio["sample_rate"]}
-    full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}").encode()).hexdigest()[:16]
+    full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}"
+                               + "".join(f"|R{r['key']}" for r in reg_results)).encode()).hexdigest()[:16]
     full_name = f"full_{full_key}.mp4"
     full_path = os.path.join(d, full_name)
     if not os.path.isfile(full_path):
@@ -1642,7 +1736,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         except Exception as e:
             log(f"gallery: {e}")
     total = time.perf_counter() - t0
-    notify("done", elapsed=round(total, 1), full=full, segments=results, audio_source=src_info)
+    notify("done", elapsed=round(total, 1), full=full, segments=results, audio_source=src_info, regions=reg_results)
     n_gen = len(run_items) - sum(cached[first:])
     log(f"finished in {total:.1f}s: {images.shape[0]} frames ({images.shape[0] / fps:.2f}s) · generated {n_gen}, cached {sum(cached[first:])}"
         + (f", untouched {first}" if first else "")
@@ -1650,7 +1744,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     if out_audio is None:
         out_audio = {"waveform": torch.zeros(1, 2, int(images.shape[0] / fps * 44100)), "sample_rate": 44100}
     return images, out_audio, latent, {"segments": results, "full": full, "keys": keys, "estimate": est,
-                                       "audio_source": src_info}
+                                       "audio_source": src_info, "regions": reg_results}
 
 
 def segment_media(d, sub, key, frames, a, audio_vae, audio, proj, it, fps):

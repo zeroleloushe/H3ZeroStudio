@@ -1,5 +1,6 @@
 // H3ZeroStudio: «Апскейл отрезка» — per-segment upscale + low-strength refine (backend: h3s_upscale.py).
-// The upscale is a segment field ({method, scale, sigma, quality}); it is part of the take snapshot, so an upscaled
+// The upscale is a segment field ({method, mp, sigma, quality}; mp = megapixels of the upscaled frame, older
+// projects stored a ×1.5/×2 multiplier — migrated to the mp with the same canvas); it is part of the take snapshot, so an upscaled
 // result is a new take and choosing an older take brings back its state. Header «↑ Апскейл» = the whole video,
 // the clip menu / button = this clip; method and size come from «Настройки» → «Апскейл».
 export function installUpscale(Editor, { C, h, ICON }) {
@@ -22,8 +23,21 @@ export function installUpscale(Editor, { C, h, ICON }) {
     },
 
     upDefault() { return C.normalizeUpscale(this.p.settings.seg_upscale) || C.normalizeUpscale({ method: "latent", scale: 2 }); },
-    upText(u) { return u ? `${LBL[u.method]} ×${u.scale}` : ""; },
-    upCanvas(u) { const [w, hh] = C.workResolution(this.p.settings); return C.upscaleCanvas(w, hh, u.scale); },
+    upText(u) { return u ? `${LBL[u.method]} · ${this.upMpVal(u)} Мп` : ""; },
+    /** Megapixels of the upscaled frame (the real snapped canvas). */
+    upMpVal(u) { const [w, hh] = this.upCanvas(u); return (w * hh / 1e6).toFixed(1); },
+    upCanvas(u) { const [w, hh] = C.workResolution(this.p.settings); return C.upscaleCanvas(w, hh, u); },
+    /** Size choices (the same everywhere: settings, header and clip menus): MP presets + own value. */
+    upSizeChoices(u) {
+      const [bw, bh] = C.workResolution(this.p.settings), base = bw * bh / 1e6;
+      return C.SEG_UPSCALE_MP_PRESETS.map((mp) => { const c = C.upscaleCanvas(bw, bh, { mp }); return { mp, w: c[0], h: c[1], small: c[0] * c[1] <= bw * bh, on: !!u && Math.abs((u.mp || 0) - mp) < 1e-9 }; }).concat([{ base }]);
+    },
+    upAskMp(cur) {
+      const [bw, bh] = C.workResolution(this.p.settings);
+      const v = prompt(`Размер после апскейла в мегапикселях (сейчас кадр ${bw}×${bh} = ${(bw * bh / 1e6).toFixed(2)} Мп; итог кратен 32, пропорции те же)`, String(cur?.mp ?? 2));
+      const x = Number(String(v ?? "").replace(",", "."));
+      return v != null && x > 0 ? Math.min(C.SEG_UPSCALE_MP_RANGE[1], Math.max(C.SEG_UPSCALE_MP_RANGE[0], x)) : null;
+    },
 
     /** Why segment i cannot be upscaled ("" = it can). */
     upWhy(i) {
@@ -66,7 +80,9 @@ export function installUpscale(Editor, { C, h, ICON }) {
       for (let i = 0; i < this.genCount(); i++) { const s = this.seg(i); if (!C.isFootage(s) && !s.freeze?.up) out.push(i); }
       return out;
     },
-    upMp(u) { const [w, hh] = this.upCanvas(u); return `${w}×${hh} · ${(w * hh / 1e6).toFixed(1)} Мп`; },
+    upMp(u) { const [w, hh] = this.upCanvas(u); return `${w}×${hh}`; },   // the Мп are in upText
+    /** «≈N фрагм. по времени» note for a clip length (temporal chunks of the upscale). */
+    upChunkNote(frames) { const [n] = C.upscaleChunking(this.p.settings, frames); return n > 1 ? `${n} фрагм. по времени` : ""; },
 
     /** Header «↑ Апскейл»: the whole video — every clip upscaled with the settings (or `up`), one run; per-segment
      *  windows and keys, so ready clips come from the cache and an interrupted run resumes. */
@@ -82,9 +98,11 @@ export function installUpscale(Editor, { C, h, ICON }) {
     },
     upOverrideSub(fn) {
       const d = this.upDefault(), sub = [{ label: `По настройкам: ${this.upText(d)} → ${this.upMp(d)}`, fn: () => fn(d) }, "sep"];
-      for (const m of C.SEG_UPSCALE_METHODS) for (const sc of C.SEG_UPSCALE_SCALES) {
-        const u = C.normalizeUpscale({ method: m, scale: sc });
-        sub.push({ label: `${LBL[m]} ×${sc} → ${this.upMp(u)}`, title: this.upInputLabel(m), fn: () => fn(u) });
+      for (const m of C.SEG_UPSCALE_METHODS) {
+        const mk = (mp) => C.normalizeUpscale({ ...(m === d.method ? d : {}), method: m, mp, sigma: m === d.method ? d.sigma : C.SEG_UPSCALE_SIGMA[m] });
+        const items = this.upSizeChoices(m === d.method ? d : null).filter((c) => c.mp).map((c) => ({ label: `${c.mp.toFixed(1)} Мп → ${c.w}×${c.h}` + (c.small ? " · не больше кадра" : ""), dis: c.small, fn: () => fn(mk(c.mp)) }));
+        items.push("sep", { label: "Свой размер, Мп…", fn: () => { const x = this.upAskMp(d); if (x) fn(mk(x)); } });
+        sub.push({ label: LBL[m], title: this.upInputLabel(m), sub: items });
       }
       return sub;
     },
@@ -109,7 +127,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
     upClipTags(clip, i) {
       const s = this.seg(i);
       const box = h("div", { class: "h3z-uptags" });
-      if (s.upscale && C.upscalable(s)) box.append(h("span", { class: "up" + (s.result?.upscale && !this.isStale(i) ? " done" : ""), title: `Апскейл: ${this.upText(s.upscale)}` + (s.result?.upscale && !this.isStale(i) ? " · готов" : " · будет сделан при генерации") }, `↑×${s.upscale.scale}`));
+      if (s.upscale && C.upscalable(s)) box.append(h("span", { class: "up" + (s.result?.upscale && !this.isStale(i) ? " done" : ""), title: `Апскейл: ${this.upText(s.upscale)}` + (s.result?.upscale && !this.isStale(i) ? " · готов" : " · будет сделан при генерации") }, `↑${this.upMpVal(s.upscale)}Мп`));
       else if (s.freeze?.up) box.append(h("span", { class: "up done", title: "Зафиксирован после апскейла" }, "↑"));
       if (box.children.length) clip.append(box);
     },
@@ -172,17 +190,39 @@ export function installUpscale(Editor, { C, h, ICON }) {
       const methods = h("div", { class: "h3z-pills" }, ...C.SEG_UPSCALE_METHODS.map((m) => pill(f.method === m, LBL[m],
         { latent: "Обученный латентный апскейлер H3 (быстро, без декода/энкода) → доработка σ 0.4", rtx: "RTX VSR по кадрам → VAE энкод → бережная доработка σ 0.25 (качество)", tiles: "Апскейл → синхронные плитки (SyncTile): каждая плитка видит промпт и референсы отрезка" }[m] + ` · вход: ${this.upInputLabel(m)}`,
         () => put({ method: m, sigma: C.SEG_UPSCALE_SIGMA[m] }))));
-      const scales = h("div", { class: "h3z-pills" }, ...C.SEG_UPSCALE_SCALES.map((sc) => pill(f.scale === sc, (() => { const [w, hh] = this.upCanvas({ scale: sc }); return `${(w * hh / 1e6).toFixed(1)} Мп · ${w}×${hh} (×${sc})`; })(), "Итоговый размер (мегапиксели кадра)", () => put({ scale: sc }))));
+      const [bw, bh] = C.workResolution(g), [cw, chh] = this.upCanvas(f);
+      const choices = this.upSizeChoices(f).filter((c) => c.mp), custom = !choices.some((c) => c.on);
+      const size = h("select", { class: "h3z-sel", title: "Размер кадра после апскейла в мегапикселях. Пропорции — как у проекта, стороны кратны 32" },
+        choices.map((c) => h("option", { value: c.mp, selected: c.on, disabled: c.small || undefined }, `${c.mp.toFixed(1)} Мп → ${c.w}×${c.h}` + (c.small ? " (не больше кадра)" : ""))),
+        h("option", { value: "custom", selected: custom }, custom ? `свой · ${f.mp} Мп → ${cw}×${chh}` : "свой размер, Мп…"));
+      size.onchange = () => {
+        if (size.value !== "custom") return put({ mp: Number(size.value) });
+        const x = this.upAskMp(f); if (x) put({ mp: x }); else put({});
+      };
+      const scales = h("div", null, size, h("div", { class: "h3z-note" }, `Кадр проекта ${bw}×${bh} (${(bw * bh / 1e6).toFixed(2)} Мп) → `, h("b", null, `${cw}×${chh}`), ` (${(cw * chh / 1e6).toFixed(2)} Мп, ×${(cw / bw).toFixed(2)})`));
+      // temporal chunks (sequential, like ComfyUI-H3-WindowedRefine): approximate length + overlap
+      const cs = Number(g.upscale_chunk_sec) || 0, co = Number(g.upscale_chunk_overlap) || 1;
+      const SECS = [0, 3, 4, 5, 6, 8, 10, 15];
+      const chunkSel = h("select", { class: "h3z-sel", title: "Длинный клип увеличивается по кускам: каждый кусок — свой апскейл и доработка, затем VRAM освобождается. Меньше кусок — меньше VRAM, но больше перекрытий (дольше). Длина прилипает к сетке H3 (17k+5 кадров)" },
+        SECS.concat(SECS.includes(cs) ? [] : [cs]).sort((a, b) => a - b).map((x) => h("option", { value: x, selected: x === cs }, x ? `≈${x} с → ${C.snapFrames(x * C.FPS)} кадр. (${(C.snapFrames(x * C.FPS) / C.FPS).toFixed(2)} с)` + (x === 5 ? " · по умолчанию" : "") : "весь клип одним куском")));
+      chunkSel.onchange = () => set("upscale_chunk_sec", Number(chunkSel.value));
+      const ovSel = h("select", { class: "h3z-sel", title: "Перекрытие соседних кусков: следующий кусок продолжает чистый хвост предыдущего (как продление), стык смешивается при декодировании" },
+        [1, 2, 3].map((o) => h("option", { value: o, selected: o === co }, `${17 * o + 5} кадр. ≈ ${((17 * o + 5) / C.FPS).toFixed(2)} с` + (o === 1 ? " · по умолчанию" : ""))));
+      ovSel.disabled = !cs;
+      ovSel.onchange = () => set("upscale_chunk_overlap", Number(ovSel.value));
+      const ex = cs ? [124, 241, 362].map((fr) => `${(fr / C.FPS).toFixed(0)} с → ${C.upscaleChunking(g, fr)[0]}`).join(" · ") : "";
+      const chunks = h("div", null, h("div", { class: "h3z-grid2" }, chunkSel, ovSel),
+        h("div", { class: "h3z-note" }, cs ? `Кусков на клип: ${ex}. Плитки (если включены) работают внутри каждого куска.` : "Клип целиком за один проход — нужно больше VRAM."));
       const sig = h("select", { class: "h3z-sel", title: "Сила доработки (σ старта): меньше — бережнее, больше — больше новых деталей" },
         [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6].map((v) => h("option", { value: v, selected: Math.abs(f.sigma - v) < 1e-6 }, `σ ${v.toFixed(2)}` + (Math.abs(C.SEG_UPSCALE_SIGMA[f.method] - v) < 1e-6 ? " · по умолчанию" : ""))));
       sig.onchange = () => put({ sigma: Number(sig.value) });
       const q = f.method === "rtx" ? h("select", { class: "h3z-sel", title: "Качество RTX VSR" }, C.RTX_QUALITIES.map((x) => h("option", { value: x, selected: f.quality === x }, x))) : null;
       if (q) q.onchange = () => put({ quality: q.value });
       return h("details", { class: "h3z-det" }, h("summary", null, "Апскейл"), h("div", { class: "in" },
-        this.field("Метод", methods), this.field("Размер", scales), h("div", { class: "h3z-grid2" }, this.field("Сила доработки", sig), q ? this.field("RTX VSR", q) : h("div")),
+        this.field("Метод", methods), this.field("Размер", scales), this.field("Куски по времени", chunks), h("div", { class: "h3z-grid2" }, this.field("Сила доработки", sig), q ? this.field("RTX VSR", q) : h("div")),
         f.method === "tiles" ? this.field("Плитки", this.upTileSettings(f, put)) : null,
         !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,
-        h("div", { class: "h3z-note" }, "«↑ Апскейл» в шапке — весь ролик (каждый отрезок своим окном, звук 1:1, готовые из кэша). ↑ на клипе или в его меню — только этот клип. Результат — новый дубль, старый можно вернуть.")));
+        h("div", { class: "h3z-note" }, "«↑ Апскейл» в шапке — весь ролик (каждый отрезок своим окном, длинные — по кускам, звук 1:1, готовые из кэша). ↑ на клипе или в его меню — только этот клип. Результат — новый дубль, старый можно вернуть.")));
     },
   });
 }

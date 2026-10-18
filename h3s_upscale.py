@@ -18,6 +18,13 @@ into synchronized crops evaluated on every model call and ramp-blended (latent s
     shared noise, one decode; every tile is conditioned like MiniMaxH3ReferenceToVideo with the segment's prompt and
     character refs. Here the tiles' x0 predictions are blended inside each model call (same result as one Euler
     step per tile + blend, and it works with any sampler); no external node is needed.
+Temporal chunks (sequential mode, logic of the author's ComfyUI-H3-WindowedRefine): a clip longer than the chunk
+length («Настройки → Апскейл»: ≈ seconds, snapped to 17k+5 frames) is processed piece by piece — each chunk is
+5m+2 latent frames starting at a block boundary, gets its own upscale input (learned upscaler on the latent slice, or
+RTX VSR on its frames -> VAE encode) and its own refine pass (with spatial tiles inside when the method is «Плитки»).
+Neighbouring chunks overlap by >= 5o+2 latent frames; the overlap of a chunk is the previous chunk's refined result,
+kept clean (video denoise mask 0 + x0 lock), so the chunk continues it exactly like an extension; the decode
+crossfades the overlap frames. VRAM is freed between chunks, so the peak is one chunk instead of the whole clip.
 Audio is kept 1:1 through H3's native audio denoise mask (all rows clean); the overlap with the previous
 upscaled clip is kept the same way on the video side (video denoise mask 0 + x0 lock), so seams match.
 """
@@ -215,6 +222,52 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA"):
             if px is not None:
                 return vae.encode(px).float().cpu(), "rtx"
     raise UpscaleUnavailable(UNAVAILABLE)
+
+
+# ---------------------------------------------------------------- temporal chunks
+def chunk_plan(settings, T, A):
+    """Sequential temporal chunks [(v0, v1, a0, a1)] of an upscale (one piece when chunking is off / not needed).
+    Same count as core.upscale_chunking (estimate, cache key, progress)."""
+    n, cf, o = core.upscale_chunking(settings, frames_for_latent_t(T))
+    if n <= 1 or T < 2 or (T - 2) % 5:
+        return [(0, T, 0, A)]
+    m = (core.latent_t(cf) - 2) // 5
+    starts = core.chunk_starts((T - 2) // 5, m, o)
+    L = 5 * m + 2
+    alen = min(A, audio_len_for_frames(frames_for_latent_t(L)))
+    out = []
+    for st in starts:
+        a0 = max(0, min(round(17 * st * 5 / 3), A - alen))
+        out.append((5 * st, min(T, 5 * st + L), a0, a0 + alen))
+    v0, _, a0, _ = out[-1]
+    out[-1] = (v0, T, a0, A)
+    return out
+
+
+def decode_chunks(vae, v, chunks):
+    """Decode an upscaled latent chunk by chunk (VRAM: one chunk at a time) and crossfade the overlap frames
+    (the latents there are identical; the fade hides VAE boundary effects)."""
+    from .h3s_gen import decode_video
+    if len(chunks) <= 1:
+        return decode_video(vae, v.to(comfy.model_management.intermediate_device()))
+    total = frames_for_latent_t(v.shape[2])
+    out, prev_end = None, 0
+    for v0, v1, _, _ in chunks:
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        fr = decode_video(vae, v[:, :, v0:v1].to(comfy.model_management.intermediate_device()))
+        p0 = 17 * (v0 // 5)
+        if out is None:
+            out = torch.zeros((total,) + tuple(fr.shape[1:]), dtype=fr.dtype)
+        n = min(fr.shape[0], total - p0)
+        ov = max(0, min(prev_end - p0, n))
+        if ov:
+            w = (torch.arange(1, ov + 1, dtype=torch.float32) / (ov + 1)).view(-1, 1, 1, 1)
+            out[p0:p0 + ov] = out[p0:p0 + ov] * (1 - w) + fr[:ov] * w
+        out[p0 + ov:p0 + n] = fr[ov:n]
+        prev_end = p0 + n
+        del fr
+        comfy.model_management.soft_empty_cache()
+    return out
 
 
 # ---------------------------------------------------------------- crop planning
@@ -434,9 +487,10 @@ class TileClock:
     """Progress of a crop-wise pass: one line per crop evaluation (window i/N, step s/S, tile t/T, time per tile,
     ETA, VRAM) in the console and an "uptile" event for the editor (status pill, progress, tile overlay)."""
 
-    def __init__(self, crops, steps, seg, progress=None, lh=0, lw=0):
+    def __init__(self, crops, steps, seg, progress=None, lh=0, lw=0, chunk=1, chunks=1, spent_before=0.0):
         from . import h3s_gen as gen
         self.gen, self.crops, self.steps, self.seg, self.progress = gen, crops, max(1, steps), seg, progress
+        self.chunk, self.chunks, self.spent_before = chunk, max(1, chunks), spent_before   # temporal chunk i/N
         self.n = len(crops)
         self.wins = sorted({c["t"] for c in crops})
         self.ys, self.xs = sorted({c["y"] for c in crops}), sorted({c["x"] for c in crops})
@@ -463,17 +517,24 @@ class TileClock:
         total = per * self.steps
         left = max(0, total - self.done)
         eta = avg * left
-        frac = min(0.999, self.done / max(1, total))
+        frac_c = min(0.999, self.done / max(1, total))
+        frac = min(0.999, (self.chunk - 1 + frac_c) / self.chunks)    # of the whole clip (all chunks)
+        if self.chunks > 1:   # remaining chunks: as long as this one (or the measured average of the finished ones)
+            per_chunk = (self.spent_before / (self.chunk - 1)) if self.chunk > 1 else avg * total
+            eta += per_chunk * (self.chunks - self.chunk)
         cr = self.crops[ci]
         win = self.wins.index(cr["t"]) + 1
         tile_in = (self.k - 1) % self.n + 1
         g = self.gen
         vr = g.vram()
-        self.gen.log(f"[{g.text_bar(self.done, total)}] seg {self.seg + 1} upscale · window {win}/{len(self.wins)} · step {min(self.step + 1, self.steps)}/{self.steps}"
+        self.gen.log(f"[{g.text_bar(round(frac * 1000), 1000)}] {frac * 100:4.1f}% seg {self.seg + 1} upscale"
+                     + (f" · chunk {self.chunk}/{self.chunks}" if self.chunks > 1 else "")
+                     + (f" · window {win}/{len(self.wins)}" if len(self.wins) > 1 else "") + f" · step {min(self.step + 1, self.steps)}/{self.steps}"
                      f" · tile {tile_in}/{self.n} · {dt * 1000:.0f} ms/tile · ETA {g.fmt_s(eta)}" + (" · " + vr if vr else ""))
         if self.progress is not None:
             try:
-                self.progress(win=win, wins=len(self.wins), step=min(self.step + 1, self.steps), steps=self.steps, tile=tile_in, tiles=self.n,
+                self.progress(win=win, wins=len(self.wins), chunk=self.chunk, chunks=self.chunks,
+                              step=min(self.step + 1, self.steps), steps=self.steps, tile=tile_in, tiles=self.n,
                               ms=round(dt * 1000), eta=round(eta, 1), frac=round(frac, 4),
                               rect=[cr["y"][0], cr["y"][1], cr["x"][0], cr["x"][1]], lh=self.lh, lw=self.lw,
                               rows=len(self.ys), cols=len(self.xs))
@@ -485,7 +546,7 @@ class TileClock:
             self.per_step = self.k
         self.step += 1
         el = time.perf_counter() - self.t0
-        self.gen.log(f"  upscale step {self.step}/{self.steps} blended ({self.k} tile evaluation(s)) · {el:.1f}s elapsed")
+        self.gen.log(f"  upscale" + (f" chunk {self.chunk}/{self.chunks}" if self.chunks > 1 else "") + f" step {self.step}/{self.steps} blended ({self.k} tile evaluation(s)) · {el:.1f}s elapsed")
         self.k = 0
 
 
@@ -502,69 +563,111 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     it = items[index]
     p = core.pass_params(project, index, "refine")
     bw, bh = v.shape[-1] * 16, v.shape[-2] * 16
-    W, H = core.upscale_canvas(bw, bh, up["scale"])
+    W, H = core.upscale_canvas(bw, bh, up)
     method = up["method"]
     want = "rtx" if method == "rtx" else "learned"
-    t_in = time.perf_counter()
-    log(f"segment {index + 1} upscale input: {effective_input(want) or want} {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP) …")
-    if progress is not None:
-        progress(phase="input", input=effective_input(want) or want)
-    uv, used = upscale_input(vae, v, W, H, want, frames, up.get("quality", "ULTRA"))
-    log(f"segment {index + 1} upscale input done in {time.perf_counter() - t_in:.1f}s ({used})")
-    T, A = uv.shape[2], a.shape[-1]
-    lock_v = w_v = None
-    vmask = torch.ones([1, 1, T, H // 16, W // 16])
-    ov_t = 0
-    if prev_up is not None and it["link"] == "extend" and it["overlap"] and prev_up["v"].shape[-2:] == uv.shape[-2:]:
-        ov_t = core.latent_t(it["overlap"])
-        uv[:, :, :ov_t] = prev_up["v"][:, :, -ov_t:].float()
-        vmask[:, :, :ov_t] = 0.0
-        lock_v = uv.clone()
-        w_v = torch.zeros(T)
-        w_v[:ov_t] = 1.0
-    crops = plan_crops(T, A, H // 16, W // 16, method, v.shape[-2], v.shape[-1], tile=up.get("tile"), tile_ov=up.get("tile_ov"))
-    cw = crops[0]["x"][1] - crops[0]["x"][0]
-    ch = crops[0]["y"][1] - crops[0]["y"][0]
-    nt = len({c["t"] for c in crops})
-    ns = len(crops) // max(1, nt)
-    rows, cols = len({c["y"] for c in crops}), len({c["x"] for c in crops})
-    tov = (up.get("tile_ov") or max(4, min(16, min(cw, ch) // 3))) if method == "tiles" else 0
-    log(f"segment {index + 1} [upscale {core.UPSCALE_LABELS_LOG.get(method, method)} x{up['scale']}]: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {used}, "
-        f"grid {cols}x{rows} tile {cw * 16}x{ch * 16}" + (f" overlap {tov * 16}px ({tov} cells)" if method == "tiles" else "") +
-        f", {nt} window(s), {p['steps']} steps from sigma {up['sigma']} ({p['sampler']}/{p['scheduler']}, cfg {p['cfg']}), "
-        f"{len(crops)} crop(s) per model call, overlap lock {ov_t} latent fr, audio kept 1:1")
+    T, A = v.shape[2], a.shape[-1]
+    chunks = chunk_plan(s, T, A)
+    nch = len(chunks)
+    log(f"segment {index + 1} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
+        + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T))[1]} frames each, processed one by one): "
+           + ", ".join(f"{frames_for_latent_t(v0) if v0 else 0}-{frames_for_latent_t(v1)}" for v0, v1, _, _ in chunks) if nch > 1 else ""))
     prompt = core.compose_prompt(project, index)
-    pos = gen.encode_cond(clip, vae, prompt, list(ref_images), cw * 16, ch * 16, s.get("ref_size", "match"), ref_audios)
-    neg = pos if p["cfg"] == 1.0 else gen.encode_cond(clip, vae, s.get("negative") or "", list(ref_images), cw * 16, ch * 16,
-                                                      s.get("ref_size", "match"), ref_audios)
-    m = gen.apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
-    clock = TileClock(crops, p["steps"], index, progress, H // 16, W // 16)
-    wrapper = CropWrapper(crops, lock_v, w_v, clock=clock)
-    m.set_model_unet_function_wrapper(wrapper)
-    amask = torch.zeros([1, 1, 2, A])   # the whole sound is kept
-    noise_mask = comfy.nested_tensor.NestedTensor((vmask, amask))
-    dev = comfy.model_management.intermediate_device()
-    samples = comfy.nested_tensor.NestedTensor((uv.to(dev), a.float().to(dev)))
-    noise = comfy.sample.prepare_noise(samples, p["seed"])
-    sigmas = gen.refine_sigmas(m, p["steps"], p["scheduler"], up["sigma"])
-    if hasattr(preview_cb, "set_sigmas"):
-        preview_cb.audio_scale = gen.sampler_audio_scale(m) or 1.0
-        preview_cb.set_sigmas([float(x) for x in sigmas.tolist()])
-
-    def cb(step, x0, x, total):
+    pos = neg = None
+    sigmas = None
+    out_v = None
+    used_all, crops_n, spent = set(), 0, 0.0
+    for ci, (v0, v1, a0, a1) in enumerate(chunks):
         comfy.model_management.throw_exception_if_processing_interrupted()
-        clock.step_done()
-        if preview_cb is not None:
-            try:
-                preview_cb(step, x0, x, total)
-            except Exception:
-                pass
-        if step_cb is not None:
-            step_cb(step, total)
+        t_c = time.perf_counter()
+        tag = f"segment {index + 1}" + (f" chunk {ci + 1}/{nch}" if nch > 1 else "")
+        if progress is not None:
+            progress(phase="input", input=effective_input(want) or want, chunk=ci + 1, chunks=nch)
+        fc = None
+        if frames is not None:
+            p0 = 17 * (v0 // 5)
+            fc = frames[p0:p0 + frames_for_latent_t(v1 - v0)]
+        t_in = time.perf_counter()
+        uv, used = upscale_input(vae, v[:, :, v0:v1], W, H, want, fc, up.get("quality", "ULTRA"))
+        used_all.add(used)
+        log(f"{tag} upscale input done in {time.perf_counter() - t_in:.1f}s ({used})")
+        Tc, Ac = uv.shape[2], a1 - a0
+        lock_v = w_v = None
+        vmask = torch.ones([1, 1, Tc, H // 16, W // 16])
+        ov_t = 0
+        if ci == 0 and prev_up is not None and it["link"] == "extend" and it["overlap"] and prev_up["v"].shape[-2:] == uv.shape[-2:]:
+            ov_t = min(Tc, core.latent_t(it["overlap"]))      # the previous clip's upscaled tail
+            uv[:, :, :ov_t] = prev_up["v"][:, :, -ov_t:].float()
+        elif ci > 0:
+            ov_t = min(Tc, chunks[ci - 1][1] - v0)          # the previous chunk's refined result
+            uv[:, :, :ov_t] = out_v[:, :, v0:v0 + ov_t]
+        if ov_t:
+            vmask[:, :, :ov_t] = 0.0
+            lock_v = uv.clone()
+            w_v = torch.zeros(Tc)
+            w_v[:ov_t] = 1.0
+        crops = plan_crops(Tc, Ac, H // 16, W // 16, method, v.shape[-2], v.shape[-1], tile=up.get("tile"), tile_ov=up.get("tile_ov"))
+        crops_n = max(crops_n, len(crops))
+        cw = crops[0]["x"][1] - crops[0]["x"][0]
+        ch = crops[0]["y"][1] - crops[0]["y"][0]
+        nt = len({c["t"] for c in crops})
+        rows, cols = len({c["y"] for c in crops}), len({c["x"] for c in crops})
+        tov = (up.get("tile_ov") or max(4, min(16, min(cw, ch) // 3))) if method == "tiles" else 0
+        log(f"{tag} [upscale {core.UPSCALE_LABELS_LOG.get(method, method)} {W}x{H}]: latent frames {v0}-{v1}, input {used}, "
+            f"grid {cols}x{rows} tile {cw * 16}x{ch * 16}" + (f" overlap {tov * 16}px ({tov} cells)" if method == "tiles" else "") +
+            f", {nt} window(s), {p['steps']} steps from sigma {up['sigma']} ({p['sampler']}/{p['scheduler']}, cfg {p['cfg']}), "
+            f"{len(crops)} crop(s) per model call, overlap lock {ov_t} latent fr, audio kept 1:1")
+        if pos is None:   # the conditioning (prompt + refs at the tile size) is the same for every chunk
+            pos = gen.encode_cond(clip, vae, prompt, list(ref_images), cw * 16, ch * 16, s.get("ref_size", "match"), ref_audios)
+            neg = pos if p["cfg"] == 1.0 else gen.encode_cond(clip, vae, s.get("negative") or "", list(ref_images), cw * 16, ch * 16,
+                                                              s.get("ref_size", "match"), ref_audios)
+        m = gen.apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
+        clock = TileClock(crops, p["steps"], index, progress, H // 16, W // 16, chunk=ci + 1, chunks=nch, spent_before=spent)
+        wrapper = CropWrapper(crops, lock_v, w_v, clock=clock)
+        m.set_model_unet_function_wrapper(wrapper)
+        amask = torch.zeros([1, 1, 2, Ac])   # the whole sound is kept
+        noise_mask = comfy.nested_tensor.NestedTensor((vmask, amask))
+        dev = comfy.model_management.intermediate_device()
+        ac = a[..., a0:a1].float()
+        samples = comfy.nested_tensor.NestedTensor((uv.to(dev), ac.to(dev)))
+        noise = comfy.sample.prepare_noise(samples, p["seed"] + ci)
+        if sigmas is None:
+            sigmas = gen.refine_sigmas(m, p["steps"], p["scheduler"], up["sigma"])
+        if hasattr(preview_cb, "set_sigmas"):
+            preview_cb.audio_scale = gen.sampler_audio_scale(m) or 1.0
+            preview_cb.set_sigmas([float(x) for x in sigmas.tolist()])
 
-    out = comfy.sample.sample(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
-                              denoise=1.0, callback=cb, disable_pbar=True, seed=p["seed"], noise_mask=noise_mask, sigmas=sigmas)
-    ov_, oa_ = out.unbind()
-    err = float((oa_.float().cpu() - a.float().cpu()).abs().max())
-    log(f"  upscale audio check: max |out - original| = {err:.2e}" + ("" if err < 1e-2 else "  <-- NOT KEPT"))
-    return ov_.float().cpu(), a.float().cpu(), {"input": used, "wh": [W, H], "crops": len(crops)}
+        def cb(step, x0, x, total, _clock=clock):
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            _clock.step_done()
+            if preview_cb is not None:
+                try:
+                    preview_cb(step, x0, x, total)
+                except Exception:
+                    pass
+            if step_cb is not None:
+                step_cb(step, total)
+
+        out = comfy.sample.sample(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
+                                  denoise=1.0, callback=cb, disable_pbar=True, seed=p["seed"] + ci, noise_mask=noise_mask, sigmas=sigmas)
+        ov_, oa_ = out.unbind()
+        ov_ = ov_.float().cpu()
+        err = float((oa_.float().cpu() - ac.cpu()).abs().max())
+        log(f"  {tag} upscale audio check: max |out - original| = {err:.2e}" + ("" if err < 1e-2 else "  <-- NOT KEPT"))
+        if out_v is None:
+            out_v = torch.zeros(list(ov_.shape[:2]) + [T] + list(ov_.shape[3:]), dtype=torch.float32)
+        if ci > 0 and ov_t:
+            kept = float((ov_[:, :, :ov_t] - out_v[:, :, v0:v0 + ov_t]).abs().max())
+            log(f"  {tag} overlap with chunk {ci}: {ov_t} latent fr kept clean (max diff {kept:.2e})")
+            out_v[:, :, v0 + ov_t:v1] = ov_[:, :, ov_t:]
+        else:
+            out_v[:, :, v0:v1] = ov_
+        del out, ov_, oa_, samples, noise, uv, lock_v, m, wrapper
+        if nch > 1:
+            comfy.model_management.soft_empty_cache()   # free VRAM before the next chunk
+        dt = time.perf_counter() - t_c
+        spent += dt
+        if nch > 1:
+            log(f"{tag} done in {dt:.1f}s · {(ci + 1) / nch * 100:.0f}% of the clip" + (" · " + gen.vram() if gen.vram() else ""))
+    used = "+".join(sorted(used_all))
+    return out_v, a.float().cpu(), {"input": used, "wh": [W, H], "crops": crops_n, "chunks": nch}
