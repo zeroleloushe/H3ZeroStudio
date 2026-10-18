@@ -36,12 +36,33 @@ export function installPolish(Editor, { C, h, ICON }) {
         hv.lastChild.textContent = `${C.fmtTime((it.start + f) / C.FPS)} · отрезок ${i + 1}`;
         hv.style.left = Math.max(8, Math.min(window.innerWidth - W - 16, e.clientX - W / 2)) + "px";
         hv.style.top = r.top - H - 34 + "px";
-        hv.style.display = "block";
+        this.showHover(hv, clip);
       });
       clip.addEventListener("pointerleave", () => this.hideHover());
     },
 
-    hideHover() { if (this.$.hover) this.$.hover.style.display = "none"; },
+    /** Show a hover popup for target. Safeguard: it hides by itself once the target is gone (clip deleted, timeline
+     *  re-rendered, editor closed) or no longer under the cursor; also on Esc, context menu, window blur, tab switch. */
+    showHover(hv, target) {
+      hv.style.display = "block"; this._hoverT = target;
+      if (!this._hoverGuards) {
+        this._hoverGuards = true;
+        const hide = () => this.hideHover();
+        window.addEventListener("blur", hide);
+        document.addEventListener("visibilitychange", hide);
+        window.addEventListener("contextmenu", hide, true);
+        window.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); }, true);
+        window.addEventListener("pointerdown", hide, true);
+      }
+      if (!this._hoverIv) this._hoverIv = setInterval(() => {
+        const t = this._hoverT;
+        if (!t || !t.isConnected || !this.root?.isConnected || !t.matches(":hover")) this.hideHover();
+      }, 150);
+    },
+    hideHover() {
+      if (this.$?.hover) this.$.hover.style.display = "none";
+      this._hoverT = null; clearInterval(this._hoverIv); this._hoverIv = 0;
+    },
 
     clipMenu(e, i) {
       e.preventDefault(); e.stopPropagation();

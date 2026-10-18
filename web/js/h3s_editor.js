@@ -1033,6 +1033,7 @@ export class H3Editor {
     $.tscroll.append($.tinner);
     $.tl.append(h("div", { class: "h3z-tl-main" }, $.heads, $.tscroll));
     this.syncZoomUI();
+    $.tscroll.addEventListener("pointerleave", () => this.hideHover?.());
     $.tscroll.addEventListener("wheel", (e) => {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.setZoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX); }
       else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { $.tscroll.scrollLeft += e.deltaY; e.preventDefault(); }
@@ -1143,6 +1144,7 @@ export class H3Editor {
 
   renderTimeline() {
     const $ = this.$; if (!$.tinner) return;
+    queueMicrotask(() => { if (this._hoverT && !this._hoverT.isConnected) this.hideHover?.(); });   // its clip was re-built / removed
     const its = this.items(), sigs = this.sigs(), nGen = sigs.length;
     const vEnd = this.totalFrames(), hasEnd = this.p.end > 0;
     const total = Math.max(this.contentFrames(), vEnd, 24 * 5);
@@ -1425,6 +1427,7 @@ export class H3Editor {
 
   deleteSeg(i) {
     if (i < 0 || !this.seg(i)) return;
+    this.hideHover?.();
     this.mutate((p) => { p.segments.splice(i, 1); }, { render: "none" });
     this.sel = Math.min(i, this.p.segments.length - 1);
     this.renderAll(); this.toast("Отрезок удалён · Ctrl+Z — вернуть");
