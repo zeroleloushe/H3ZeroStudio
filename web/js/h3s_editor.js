@@ -169,8 +169,10 @@ export class H3Editor {
     // «Длина: Фикс»: a placed marker never moves by itself. A marker not placed yet (end 0 — it sits at the end
     // of the last clip) is pinned at that end as soon as clips shrink/are deleted, so that leaves a gap
     const n0 = this.p.segments.length, unset = this.p.end_mode !== "auto" && !this.p.end && n0 > 0, c0 = unset ? this.contentFrames() : 0;
+    const regAnch = (this.p.regions || []).length ? this.regionAnchors() : null;
     fn(this.p);
     this.p = C.normalizeProject(this.p);
+    if (regAnch) this.regionsRebase(regAnch);
     if (unset && this.p.end_mode !== "auto" && !this.p.end && this.p.segments.length && this.contentFrames() < c0) this.p.end = c0;
     // «Фикс»: the marker never moves by itself (only the user drags/sets it). A clip that landed past it is
     // pointed out with a one-click «Маркер → конец» instead (see pastMarkerHint)
@@ -300,7 +302,7 @@ export class H3Editor {
     this._key = (e) => this.onKey(e);
     this._keyup = (e) => { if (this.root) e.stopPropagation(); };
     this._paste = (e) => this.onPaste(e);
-    this._resize = () => { if (this.root) { this.applyLayout(); this.renderTimeline(); this.layoutStage(); } };
+    this._resize = () => { if (this._rsz) return; this._rsz = requestAnimationFrame(() => { this._rsz = 0; if (this.root) { this.applyLayout(); this.renderTimeline(); this.layoutStage(); } }); };
     window.addEventListener("keydown", this._key, true);
     window.addEventListener("keyup", this._keyup, true);
     document.addEventListener("paste", this._paste, true);
@@ -319,6 +321,15 @@ export class H3Editor {
   }
 
   // ------------------------------------------------------------------ header
+  async freeMemory(btn) {
+    if (btn) { btn.disabled = true; btn.style.opacity = ".6"; }
+    try {
+      await this.host.freeMemory();
+      this.toast(this.run?.active ? "Память будет освобождена сразу после текущей генерации" : "Модели выгружены из видеопамяти и ОЗУ — следующая генерация загрузит их заново");
+    } catch (e) { this.toast("Не удалось очистить память: " + (e.message || e), true); }
+    finally { if (btn) { btn.disabled = false; btn.style.opacity = ""; } }
+  }
+
   renderHeader() {
     const $ = this.$, est = C.estimate(this.p), kind = C.runKind(this.p.settings);
     $.head.innerHTML = "";
@@ -351,7 +362,9 @@ export class H3Editor {
     }
     $.head.append(
       h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
-      name, chips, undo, redo, ...action.filter(Boolean),
+      name, chips, undo, redo,
+      h("button", { class: "h3z-btn", html: ICON.broom + "<span>Очистить память</span>", title: "Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)", onclick: (e) => this.freeMemory(e.currentTarget) }),
+      ...action.filter(Boolean),
       h("button", { class: "h3z-btn icon", title: "Свернуть (Esc)", html: ICON.close, onclick: () => this.close() }));
     this.updateRunUI();
   }
@@ -452,7 +465,7 @@ export class H3Editor {
     drop.onclick = () => fileIn.click();
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const fs = [...(e.dataTransfer?.files || [])].filter((f) => isImage(f) || isAudio(f) || isVideo(f)); if (fs.length) this.uploadFiles(fs); });
+    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const all = [...(e.dataTransfer?.files || [])], fs = all.filter((f) => isImage(f) || isAudio(f) || isVideo(f)); if (all.length > fs.length) this.toast(`Формат не поддерживается: ${all.filter((f) => !fs.includes(f)).map((f) => f.name).join(", ")}`, true); if (fs.length) this.uploadFiles(fs); });
     const used = new Set(this.seg()?.refs || []);
     const list = this.p.assets.filter((a) => a.category !== "audio" && a.category !== "video" && (this.filter === "all" || a.category === this.filter));
     const audioTiles = (this.filter === "all" || this.filter === "audio" ? this.audioTiles(used) : []).concat(this.filter === "all" || this.filter === "video" ? this.videoTiles(used) : []);
@@ -501,6 +514,7 @@ export class H3Editor {
     const video = files.filter((f) => isVideo(f) && !(f.type || "").startsWith("audio/"));
     const audio = files.filter((f) => isAudio(f) && !isImage(f) && !video.includes(f));
     files = files.filter((f) => isImage(f));
+    if (video.length) this.toast(`Загрузка видео: ${video.length}… (большие файлы — до минуты)`);
     if (video.length) await this.uploadVideoAssets(video);
     if (audio.length) await this.uploadAudioAssets(audio);
     if (!files.length) return;
@@ -1469,7 +1483,7 @@ export class H3Editor {
     if (ctrl || e.altKey) return;
     const map = {
       Space: () => this.togglePlay(), KeyS: () => (this.selAudio ? this.splitAudio() : this.split()),
-      Delete: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
+      Delete: () => (this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
       KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), KeyR: () => this.toggleRegionMode(), KeyF: () => this.toggleMainFullscreen(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
       ArrowLeft: () => this.seek(Math.round(this.playhead) - (e.shiftKey ? 24 : 1)), ArrowRight: () => this.seek(Math.round(this.playhead) + (e.shiftKey ? 24 : 1)),
       BracketLeft: () => this.jumpSeg(-1), BracketRight: () => this.jumpSeg(1),
@@ -1480,7 +1494,7 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ run
   /** upto: -1 = whole project, i = only segments 0..i (cached ones are reused). */
-  async generate({ upto = -1, only = -1, kind = "", region = "" } = {}) {
+  async generate({ upto = -1, only = -1, kind = "", region = "", audio = null } = {}) {
     if (this.run.active) return;
     if (!this.p.segments.length) return this.toast("Добавьте хотя бы один отрезок", true);
     const hard = C.estimate(this.p).warnings.filter((w) => w.includes("максимум"));
@@ -1488,7 +1502,7 @@ export class H3Editor {
     // kind: one stage for this run only (✎ Черновик / ✦ Чистовик of a clip, «↑ Финал»), the project mode stays
     if (region && !this.region(region)) region = "";
     // region: the whole project runs (cached clips are reused) and this «✂ Участок» is sampled anew
-    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region };
+    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, ...(audio ? { audio } : {}) };
     this.flushSave();
     this.pendingSigs = C.segmentSigs(this.p, this.p.run.kind || null);
     this.pendingRegionSig = Object.fromEntries((this.p.regions || []).map((r) => [r.id, C.regionSig(this.p, r, this.p.run.kind || null)]));

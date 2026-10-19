@@ -174,7 +174,13 @@ def edit_video(path, ops):
                 vs = out.add_stream(codec, rate=rate)
                 vs.width, vs.height, vs.pix_fmt = w, h, "yuv420p"
                 if codec == "libx264":
-                    vs.options = {"crf": "17", "preset": "medium", "movflags": "+faststart"}
+                    vs.options = {"crf": "17", "preset": "veryfast", "movflags": "+faststart"}
+                try:
+                    vs.thread_type = "AUTO"
+                except Exception:
+                    pass
+                # resolution-only change: let swscale scale the frame (much faster than PIL per frame)
+                fast = not (ops.get("rotate") or ops.get("mirror") or ops.get("crop"))
                 astream = None
                 if audio is not None and audio.shape[1]:
                     layout = "stereo" if audio.shape[0] >= 2 else "mono"
@@ -192,10 +198,15 @@ def edit_video(path, ops):
                         continue
                     if t1 is not None and t >= t1 - 1e-6:
                         break
-                    img = transform(Image.fromarray(fr.to_ndarray(format="rgb24")), ops)
-                    if img.size != (w, h):
-                        img = img.resize((w, h), Image.LANCZOS)
-                    for p in vs.encode(av.VideoFrame.from_ndarray(np.asarray(img), format="rgb24")):
+                    if fast:
+                        arr = fr.to_ndarray(width=w, height=h, format="rgb24", interpolation="AREA") if (fr.width, fr.height) != (w, h) \
+                            else fr.to_ndarray(format="rgb24")
+                    else:
+                        img = transform(Image.fromarray(fr.to_ndarray(format="rgb24")), ops)
+                        if img.size != (w, h):
+                            img = img.resize((w, h), Image.BILINEAR)
+                        arr = np.asarray(img)
+                    for p in vs.encode(av.VideoFrame.from_ndarray(np.ascontiguousarray(arr), format="rgb24")):
                         out.mux(p)
                     n += 1
                 for p in vs.encode():

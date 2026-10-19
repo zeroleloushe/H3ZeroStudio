@@ -572,7 +572,7 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     log(f"segment {index + 1} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
         + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T), method)[1]} frames each, processed one by one): "
            + ", ".join(f"{frames_for_latent_t(v0) if v0 else 0}-{frames_for_latent_t(v1)}" for v0, v1, _, _ in chunks) if nch > 1 else ""))
-    prompt = core.compose_prompt(project, index)
+    prompt = core.compose_prompt(project, index, video=False)
     pos = neg = None
     sigmas = None
     out_v = None

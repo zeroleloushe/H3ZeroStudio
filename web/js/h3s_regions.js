@@ -70,7 +70,7 @@ export function installRegions(Editor, { C, h, ICON }) {
         window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
         const d = moved ? this._regDraft : { start: f0 - 17, end: f0 + 17 };
         this._regDraft = null;
-        if (d) this.addRegion(Math.max(0, d.start), d.end);
+        if (d && this.addRegion(Math.max(0, d.start), d.end)) this.toggleRegionMode(false);   // one range per «✂» press
         else this.renderTimeline();
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
@@ -93,6 +93,28 @@ export function installRegions(Editor, { C, h, ICON }) {
     },
     /** Clip menu «↻ Перегенерировать участок»: a range around the clicked frame. */
     regionAt(f) { return this.addRegion(Math.max(0, f - 17), f + 17); },
+
+    /** Regions are stored in absolute frames; when clips are deleted / resized / reordered they must follow the clip
+     *  they were made on (by segment id + offset), and vanish together with it. */
+    regionAnchors() {
+      const its = this.items(), layout = its.map((it) => ({ id: this.p.segments[it.index]?.id, start: it.start, end: it.end }));
+      const regs = (this.p.regions || []).map((r) => { const l = layout.find((x) => x.start <= r.start && r.start < x.end); return { id: r.id, sid: l?.id, off: l ? r.start - l.start : 0, start: r.start }; });
+      return { key: JSON.stringify(layout), layout, regs };
+    },
+    regionsRebase(a) {
+      const its = this.items(), layout = its.map((it) => ({ id: this.p.segments[it.index]?.id, start: it.start, end: it.end }));
+      if (JSON.stringify(layout) === a.key) return;
+      let gone = 0;
+      for (const x of a.regs) {
+        const r = (this.p.regions || []).find((q) => q.id === x.id); if (!r || !x.sid) continue;
+        const l = layout.find((q) => q.id === x.sid);
+        if (!l) { this.p.regions = this.p.regions.filter((q) => q.id !== x.id); gone++; continue; }
+        const d = l.start + Math.min(x.off, Math.max(0, l.end - l.start - 1)) - x.start;
+        if (d) { r.start += d; r.end += d; }
+      }
+      if (this.selRegion && !(this.p.regions || []).some((q) => q.id === this.selRegion)) this.selRegion = null;
+      if (gone) setTimeout(() => this.toast(`Удалено участков: ${gone} (их клип убран)`), 0);
+    },
 
     deleteRegion(id) {
       this.mutate((p) => { p.regions = (p.regions || []).filter((r) => r.id !== id); }, { render: "none" });

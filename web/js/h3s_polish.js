@@ -1,4 +1,5 @@
 // H3ZeroStudio: CapCut-style frame thumbnails on clips, hover scrubbing, clip context menu, live sampling preview.
+import { splitGlyph } from "./h3s_menus.js";
 export function installPolish(Editor, { C, h, ICON }) {
   const CLIP_H = 110;
   Object.assign(Editor.prototype, {
@@ -71,7 +72,7 @@ export function installPolish(Editor, { C, h, ICON }) {
       const s = this.seg(i), stale = this.isStale(i), busy = !!this.run.active;
       const f = Math.round(this.frameAt(e.clientX));
       const item = (icon, label, fn, { dis = false, danger = false, hint = "" } = {}) => {
-        const el = h("div", { class: "it" + (dis ? " dis" : "") + (danger ? " danger" : ""), html: (icon || "") + `<span>${String(label).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</span>` + (hint ? `<kbd>${hint}</kbd>` : "") });
+        const el = h("div", { class: "it" + (dis ? " dis" : "") + (danger ? " danger" : ""), html: (() => { const [ic, lb] = splitGlyph(icon, label); label = lb; return `<i class="ic">${icon ? ic : String(ic).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</i>`; })() + `<span class="lb">${String(label).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</span>` + (hint ? `<kbd>${hint}</kbd>` : "") });
         if (!dis) el.onclick = () => { this.closeMenu(); fn(); };
         return el;
       };

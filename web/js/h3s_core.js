@@ -295,6 +295,8 @@ export function normalizeProject(p) {
     st.settings_scope = st.settings_scope === "global" ? "global" : "project"; }   // older "vae" / "latent" (nearest-exact) → "learned"
   { const u = Math.trunc(num(p.run?.upto, -1)); out.run.upto = u; out.run.only = Math.trunc(num(p.run?.only, -1)); out.run.kind = RUN_KINDS.includes(p.run?.kind) ? p.run.kind : "";
     out.run.region = typeof p.run?.region === "string" ? p.run.region : "";
+    if (p.run?.audio && typeof p.run.audio === "object") { const a = p.run.audio;   // «Улучшить звук»
+      out.run.audio = { steps: Math.max(1, Math.min(50, Math.trunc(num(a.steps, 6)))), denoise: Math.max(0.05, Math.min(1, num(a.denoise, 0.45))), video_denoise: Math.max(0, Math.min(1, num(a.video_denoise, 0))) }; }
     (Array.isArray(p.regions) ? p.regions : []).forEach((r, i) => {
       if (!r || typeof r !== "object" || Array.isArray(r)) return;
       const rg = normalizeRegion(r, i); if (rg && out.regions.length < MAX_REGIONS) out.regions.push(rg);

@@ -171,7 +171,7 @@ export function installProjects(Editor, { C, h, ICON }) {
         finally { go.disabled = false; }
       };
       const box = h("div", { class: "h3z-save h3z-glass" }, h("div", { class: "hd" }, h("b", null, `⇩ Экспорт «${p.name || p.id}» в zip`), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: close }, "✕")),
-        this.field("Папка", folder), ct, info, h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: close }, "Закрыть"), go));
+        this.field("Папка", this.folderPicker(folder)), ct, info, h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: close }, "Закрыть"), go));
       const modal = this.$.saveModal = h("div", { class: "h3z-modal" }, box);
       modal.addEventListener("pointerdown", (x) => { if (x.target === modal) close(); });
       box.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") close(); });

@@ -775,14 +775,17 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         images.append(prev["last_frame"])
     if len(images) > core.MAX_REF_IMAGES:
         raise ValueError(f"H3ZeroStudio: отрезок {index + 1}: {len(images)} референсов, максимум {core.MAX_REF_IMAGES}")
-    prompt = core.compose_prompt(project, index)
+    if kind == "refine":   # final-from-draft ignores video references (slow, VRAM-hungry): the draft already has the motion
+        ref_videos = None
+    prompt = core.compose_prompt(project, index, video=(kind != "refine"))
     if VERBOSE[0]:
         seg = project["segments"][index]
         labels = [f"<Picture {j + 1}>={a.get('name') or a.get('file')}" for j, a in enumerate(core.ordered_refs(project, seg))]
         if cont and core.continuity_picture(project, index):
             labels.append(f"<Picture {len(labels) + 1}>=last frame of segment {index}")
         labels += [f"<Audio {j + 1}>={a.get('name') or a.get('id')}" for j, a in enumerate(core.audio_refs(project, seg))]
-        labels += [f"<Video {k + 1}>={a.get('name')}" for k, a in enumerate(core.video_refs(project, seg)[:core.MAX_REF_VIDEOS])]
+        if kind != "refine":
+            labels += [f"<Video {k + 1}>={a.get('name')}" for k, a in enumerate(core.video_refs(project, seg)[:core.MAX_REF_VIDEOS])]
         vlog(f"  mode {'vid2vid denoise ' + str(p['denoise']) if init is not None else 'refine from sigma ' + str(p['sigma0']) if refine is not None else kind} · {w}x{h} · start {it['start'] / core.FPS:.2f}s · link {it['link']} · refs: {', '.join(labels) or 'none'}")
         vlog(f"  prompt: {prompt[:220]}{'…' if len(prompt) > 220 else ''}")
     log(f"segment {index + 1}{' [' + kind + ']' if kind != 'full' else ''}: {it['frames']} frames, {len(images)} ref(s), overlap {it['overlap']} fr, "
@@ -833,6 +836,55 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         sel = w_a > 0.999
         err = float((oa_.float().cpu()[..., sel] - audio.float().cpu()[..., sel]).abs().max())
         log(f"  audio lock check: kept frames reproduced, max |out - kept| = {err:.2e}" + ("" if err < 1e-2 else "  <-- NOT KEPT"))
+    return ov_.float().cpu(), oa_.float().cpu()
+
+
+def audio_refine_key(base_key, steps, denoise, video_denoise, seed):
+    """Cache key of an audio-refined copy of a segment (alphanumeric, like every segment key)."""
+    h = hashlib.sha1(json.dumps([steps, round(denoise, 3), round(video_denoise, 3), seed, "ar1"]).encode()).hexdigest()[:10]
+    return f"{base_key}A{h}"
+
+
+def refine_audio(model, clip, vae, project, index, items, v, a, ar, ref_images, ref_audios=None, step_cb=None):
+    """«Улучшить звук»: extra sampler steps over the SOUND of a finished segment (own implementation of the
+    H3-AudioRefine idea). The video latent is frozen by the noise mask (video_denoise 0 -> bit-identical),
+    the audio latent is re-noised by `denoise` (0.3-0.6 keeps the sound and adds detail, 1.0 = new sound) and
+    re-sampled with the segment's own prompt / cfg / sampler / scheduler / shift.
+    ar = dict(steps, denoise, video_denoise). Returns (video_latent, audio_latent) on CPU."""
+    s = project["settings"]
+    p = core.pass_params(project, index, "full")
+    steps, den, vden = int(ar["steps"]), float(ar["denoise"]), float(ar["video_denoise"])
+    h, w = int(v.shape[-2]) * 16, int(v.shape[-1]) * 16
+    A = int(a.shape[-1])
+    dev = comfy.model_management.intermediate_device()
+    video, audio = v.to(dev).float().clone(), a.to(dev).float().clone()
+    images = list(ref_images)[:core.MAX_REF_IMAGES]
+    prompt = core.compose_prompt(project, index, video=True)
+    pos = encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), ref_audios, None)
+    neg = pos if p["cfg"] == 1.0 else encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), ref_audios, None)
+    m = apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
+    # noise mask: 1 = re-sampled, 0 = kept exactly
+    vmask = torch.full([1, 1] + list(video.shape[2:]), max(0.0, min(1.0, vden)))
+    amask = torch.ones([1, 1, 2, A])
+    noise_mask = comfy.nested_tensor.NestedTensor((vmask, amask))
+    samples = comfy.nested_tensor.NestedTensor((video, audio))
+    seed = int(p["seed"])
+    noise = comfy.sample.prepare_noise(samples, seed)
+    log(f"segment {index + 1} [audio refine]: {steps} steps, audio denoise {den}, video denoise {vden}, "
+        f"cfg {p['cfg']} {p['sampler']}/{p['scheduler']}, {A / core.AUDIO_LATENT_FPS:.2f}s of sound")
+
+    def cb(step, x0, x, total):
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        if step_cb is not None:
+            step_cb(step, total)
+
+    out = comfy.sample.sample(m, noise, steps, p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
+                              denoise=den, callback=cb, disable_pbar=True, seed=seed, noise_mask=noise_mask)
+    ov_, oa_ = out.unbind()
+    if vden <= 0:
+        err = float((ov_.float().cpu() - v.float()).abs().max())
+        log(f"  audio refine: video frozen check max |out - in| = {err:.2e}" + ("" if err < 1e-2 else "  <-- VIDEO CHANGED"))
+        ov_ = v.to(ov_.dtype).to(ov_.device)   # bit-identical picture regardless of numeric noise
     return ov_.float().cpu(), oa_.float().cpu()
 
 
@@ -1114,8 +1166,9 @@ def freeze_segment(project_id, key):
     return out
 
 
-def video_asset_info(ref):
-    """Info + poster of an uploaded video file (for the Assets panel); posters cached in output/h3zerostudio/_thumbs."""
+def video_asset_info(ref, strip=True):
+    """Info + poster of an uploaded video file (for the Assets panel); posters cached in output/h3zerostudio/_thumbs.
+    strip=False skips the filmstrip (the editor asks for it lazily, so importing / editing stays fast)."""
     import folder_paths
     path = asset_path({"file": ref.get("filename", ""), "subfolder": ref.get("subfolder", ""), "type": ref.get("type", "input"),
                        "name": ref.get("filename")})
@@ -1124,12 +1177,16 @@ def video_asset_info(ref):
     tdir = os.path.join(folder_paths.get_output_directory(), "h3zerostudio", "_thumbs")
     os.makedirs(tdir, exist_ok=True)
     name = f"v_{tag}.jpg"
+    fps = 24
     if not os.path.isfile(os.path.join(tdir, name)):
         tw = 320
         th = max(16, int(round(tw * info["height"] / max(1, info["width"]))))
-        fr = media.load_video_frames(path, min(info["frames"] // 10, 48), 1, tw, th, mode="stretch")
-        media.write_poster(os.path.join(tdir, name), torch.from_numpy(fr[0]), max_width=tw)
+        fr = media.sample_video_frames(path, [min(info["frames"] // 10, 48) / fps], tw, th)
+        media.write_poster(os.path.join(tdir, name), torch.from_numpy(fr[0].astype(np.float32) / 255.0), max_width=tw)
     info["poster"] = view_ref("h3zerostudio/_thumbs", name)
+    if not strip:
+        info["strip"], info["strip_n"] = None, 0
+        return info
     # filmstrip for the footage clip on the timeline: tiles evenly over the WHOLE file (the clip maps its in-point/
     # length onto it), about 2 per second, so trimmed clips still show the right frames
     n_all = max(1, int(info["frames"]))
@@ -1138,9 +1195,9 @@ def video_asset_info(ref):
     if not os.path.isfile(os.path.join(tdir, sname)):
         th = 72
         tw = max(8, int(round(th * info["width"] / max(1, info["height"]))))
-        idx = [min(n_all - 1, int((j + 0.5) * n_all / count)) for j in range(count)]
-        frs = np.concatenate([media.load_video_frames(path, k, 1, tw, th, mode="stretch") for k in idx])
-        media.write_strip(os.path.join(tdir, sname), torch.from_numpy(frs), count=count, height=th)
+        times = [min(n_all - 1, int((j + 0.5) * n_all / count)) / fps for j in range(count)]
+        frs = media.sample_video_frames(path, times, tw, th)
+        media.write_strip(os.path.join(tdir, sname), torch.from_numpy(frs.astype(np.float32) / 255.0), count=count, height=th)
     info["strip"] = view_ref("h3zerostudio/_thumbs", sname)
     info["strip_n"] = count
     return info
@@ -1339,6 +1396,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 first = j + 1
         if first:
             log(f"only segment {only + 1}: segments 1-{first} are not touched (out of date ones stay as they are)")
+    ar_run = (proj.get("run") or {}).get("audio") or None   # «Улучшить звук»: audio-only pass over cached segments
+    ar_only = only
+    if ar_run:
+        if audio_vae is None:
+            raise ValueError("H3ZeroStudio: «Улучшить звук» требует вход audio_vae (звук нужно декодировать после доработки).")
+        miss = [j + 1 for j in range(len(items)) if (ar_only < 0 or ar_only == j) and j >= first and not cached[j]
+                and not core.is_footage(proj["segments"][j])]
+        if miss:
+            raise ValueError(f"H3ZeroStudio: «Улучшить звук»: у отрезков {', '.join(map(str, miss))} нет готового результата "
+                             f"в кэше. Сначала сгенерируйте их.")
     def _steps(i):
         if kind != "refine" or core.is_footage(proj["segments"][i]):
             return core.seg_steps(proj, i)
@@ -1346,6 +1413,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         have_draft = use_cache and os.path.isfile(seg_pt_path(d, dkeys[i]))
         return core.pass_steps(s, n, "refine") + (0 if have_draft else core.pass_steps(s, n, "draft"))
     todo_steps = sum(_steps(i) for i, c in enumerate(cached) if not c and i >= first)
+    if ar_run:
+        todo_steps += int(ar_run["steps"]) * sum(1 for j in range(len(items)) if j >= first and (ar_only < 0 or ar_only == j)
+                                                  and not core.is_footage(proj["segments"][j]))
     # «✂ Участок»: regions generated (run.region) or applied (their chosen take) in this run
     from . import h3s_region as region
     reg_plans = region.plan_regions(proj, all_items, items, first, keys, dkeys or keys, ref_sigs, env, kind, (run_w, run_h),
@@ -1444,6 +1514,30 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             v_frozen = v if frozen[i] else None
             if frozen[i]:
                 v = fit_canvas(v, run_w, run_h, f"segment {i + 1} (frozen)")
+            if ar_run and not core.is_footage(seg_i) and (ar_only < 0 or ar_only == i):
+                ak = audio_refine_key(k, ar_run["steps"], ar_run["denoise"], ar_run["video_denoise"], core.effective_params(proj, i)["seed"])
+                apt = seg_pt_path(d, ak)
+                if use_cache and os.path.isfile(apt):
+                    v, a = [torch.load(apt, map_location="cpu", weights_only=True)[x] for x in ("v", "a")]
+                    log(f"segment {i + 1}: audio refine from cache {ak}")
+                else:
+                    notify("phase", seg=i, phase="audio_refine")
+                    refs_ar = [load_asset_image(x) for x in core.ordered_refs(proj, seg_i)]
+                    ra_ar = ref_audio_latents(audio_vae, proj, seg_i, sources)
+
+                    def ar_step(step, total, _i=i):
+                        done_steps[0] += 1
+                        pbar.update_absolute(done_steps[0], max(1, todo_steps))
+                        el = time.perf_counter() - t0
+                        notify("step", seg=_i, step=step + 1, steps=total, done=done_steps[0], total=todo_steps,
+                               elapsed=round(el, 1), eta=round(el / max(1, done_steps[0]) * (todo_steps - done_steps[0]), 1))
+                    t_ar = time.perf_counter()
+                    v, a = refine_audio(model, clip, vae, proj, i, items, v, a, ar_run, refs_ar, ra_ar, ar_step)
+                    torch.save({"v": v, "a": a}, apt + ".part")
+                    media.replace_file(apt + ".part", apt)
+                    log(f"segment {i + 1}: audio refined in {time.perf_counter() - t_ar:.1f}s -> {ak}")
+                k = ak
+                v_frozen = None
         elif core.is_footage(seg_i):
             w_, h_ = run_w, run_h
             asset = by_id[seg_i["source"]["asset"]]
@@ -1485,7 +1579,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     pcb.extra = None
             live_box.append(pcb)
             ra = ref_audio_latents(audio_vae, proj, proj["segments"][i], sources)
-            rv = [ref_video_frames(x, it["frames"]) for x in core.video_refs(proj, seg_i)[:core.MAX_REF_VIDEOS]]
+            rv = [] if kind == "refine" else [ref_video_frames(x, it["frames"]) for x in core.video_refs(proj, seg_i)[:core.MAX_REF_VIDEOS]]   # no video refs when upscaling a draft
             init = None
             if kind == "refine":
                 dr = get_draft(i, step_cb, pcb)
@@ -1551,7 +1645,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             frames = upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"]))   # chunk by chunk when chunked
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}
-            rk, rwh = uk, [int(uv.shape[-1]) * 16, int(uv.shape[-2]) * 16]
+            rk, rwh = uk + k[len(keys[i]):], [int(uv.shape[-1]) * 16, int(uv.shape[-2]) * 16]   # + audio-refine suffix
             hit = hit and hit_up
             seg_up.append(uv)
         elif frozen[i] and hit and v_frozen is not None and tuple(v_frozen.shape[-2:]) != tuple(v.shape[-2:]) \

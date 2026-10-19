@@ -108,8 +108,19 @@ def register():
         ref = {"filename": q.get("filename", ""), "subfolder": q.get("subfolder", ""), "type": q.get("type", "input")}
         try:
             import asyncio
-            info = await asyncio.get_running_loop().run_in_executor(None, h3s_gen.video_asset_info, ref)
+            info = await asyncio.get_running_loop().run_in_executor(None, h3s_gen.video_asset_info, ref, q.get("strip", "1") != "0")
             return web.json_response({"ok": True, "info": info})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.post("/h3zero/pick_folder")
+    async def pick_folder(request):
+        """Native «choose folder» dialog on the machine ComfyUI runs on (tkinter in a child process)."""
+        body = await request.json()
+        try:
+            import asyncio
+            path = await asyncio.get_running_loop().run_in_executor(None, _pick_folder, str(body.get("initial") or ""))
+            return web.json_response({"ok": True, "path": path})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
 
@@ -132,7 +143,7 @@ def register():
             import asyncio
             r = await asyncio.get_running_loop().run_in_executor(None, h3s_assets.run, body, h3s_gen.asset_path)
             if r.get("file") and body.get("kind") == "video" and body.get("action", "edit") == "edit":
-                r["info"]["poster"] = h3s_gen.video_asset_info(r["file"])["poster"]
+                r["info"].update({k: v for k, v in h3s_gen.video_asset_info(r["file"], strip=False).items() if k in ("poster", "strip", "strip_n")})
             return web.json_response({"ok": True, **r})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
@@ -263,3 +274,63 @@ def register():
 
 
 _PEAKS = {}
+
+_PICK_SCRIPT = """
+import sys
+import tkinter as tk
+from tkinter import filedialog
+r = tk.Tk(); r.withdraw()
+try:
+    r.attributes("-topmost", True)
+except Exception:
+    pass
+p = filedialog.askdirectory(title="Папка для сохранения", initialdir=sys.argv[1] or None, mustexist=False)
+sys.stdout.write(p or "")
+"""
+
+
+_PS_SCRIPT = (
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+    "Add-Type -AssemblyName System.Windows.Forms;"
+    "$o=New-Object System.Windows.Forms.Form;$o.TopMost=$true;$o.ShowInTaskbar=$false;$o.Opacity=0;"
+    "$o.StartPosition='CenterScreen';$o.Show();"
+    "$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description='Папка для сохранения';$f.ShowNewFolderButton=$true;"
+    "if($env:H3_INIT){$f.SelectedPath=$env:H3_INIT};"
+    "if($f.ShowDialog($o) -eq 'OK'){[Console]::Out.Write($f.SelectedPath)};$o.Close()")
+
+
+def _pick_folder(initial):
+    """tkinter (child process) -> on Windows PowerShell's folder dialog (portable ComfyUI's Python has no tkinter)
+    -> macOS osascript -> zenity / kdialog."""
+    import subprocess
+    import sys
+    import folder_paths
+    ini = os.path.expanduser(initial.strip().strip('"')) if initial.strip() else ""
+    if ini and not os.path.isabs(ini):
+        ini = os.path.join(folder_paths.get_output_directory(), ini)
+    while ini and not os.path.isdir(ini):
+        ini = os.path.dirname(ini)
+    ini = ini or folder_paths.get_output_directory()
+    env = dict(os.environ, H3_INIT=ini)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    attempts = [[sys.executable, "-c", _PICK_SCRIPT, ini]]
+    if sys.platform == "win32":
+        attempts.append(["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT])
+    elif sys.platform == "darwin":
+        attempts.append(["osascript", "-e", 'POSIX path of (choose folder with prompt "Папка для сохранения")'])
+    else:
+        attempts += [["zenity", "--file-selection", "--directory", "--filename=" + ini + "/"], ["kdialog", "--getexistingdirectory", ini]]
+    errs = []
+    for cmd in attempts:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, encoding="utf-8", errors="replace", env=env, creationflags=flags)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("диалог выбора папки не был закрыт")
+        except OSError as e:
+            errs.append(f"{os.path.basename(cmd[0])}: {e}")
+            continue
+        out = r.stdout.strip()
+        if r.returncode == 0:
+            return os.path.normpath(out) if out else ""   # empty = cancelled
+        errs.append(f"{os.path.basename(cmd[0])}: {(r.stderr or '').strip().splitlines()[-1:] or r.returncode}")
+    raise RuntimeError("не удалось открыть диалог выбора папки (" + "; ".join(errs)[:300] + ") — введите путь вручную")

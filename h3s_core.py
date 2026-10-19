@@ -403,6 +403,11 @@ def normalize_project(p):
     out["run"]["kind"] = rk if rk in RUN_KINDS else ""
     rr = (p.get("run") or {}).get("region") if isinstance(p.get("run"), dict) else None
     out["run"]["region"] = str(rr) if isinstance(rr, str) else ""
+    ra = (p.get("run") or {}).get("audio") if isinstance(p.get("run"), dict) else None
+    if isinstance(ra, dict):   # «Улучшить звук»: audio-only refine pass over the cached segments
+        out["run"]["audio"] = {"steps": int(max(1, min(50, _num(ra.get("steps"), 6)))),
+                               "denoise": round(max(0.05, min(1.0, _num(ra.get("denoise"), 0.45))), 3),
+                               "video_denoise": round(max(0.0, min(1.0, _num(ra.get("video_denoise"), 0.0))), 3)}
     for i, r in enumerate(p.get("regions") or [] if isinstance(p.get("regions"), list) else []):
         if not isinstance(r, dict):
             continue
@@ -820,8 +825,9 @@ def uses_continuity(project, index):
     return seg["link"] == "extend" and not is_footage(seg)
 
 
-def compose_prompt(project, index):
-    """Global prompt + segment prompt (+ continuity phrase for extended segments)."""
+def compose_prompt(project, index, video=True):
+    """Global prompt + segment prompt (+ continuity phrase for extended segments).
+    video=False: the pass ignores video references (upscale / final-from-draft) — no <Video k> tags or phrase."""
     s = project["settings"]
     seg = project["segments"][index]
     parts = [t.strip() for t in (s.get("prompt") or "", seg.get("prompt") or "") if t and t.strip()]
@@ -844,12 +850,15 @@ def compose_prompt(project, index):
     if n:
         phrase = (s.get("continuity_phrase") or "").strip() or "<Picture {n}>"
         text = (text + "\n" if text else "") + phrase.replace("{n}", str(n))
-    nv = min(MAX_REF_VIDEOS, len(video_refs(project, seg)))
+    nv = min(MAX_REF_VIDEOS, len(video_refs(project, seg))) if video else 0
     if nv and "<Video" not in text:
         text = (text + "\n" if text else "") + VIDEO_REF_PHRASE.replace("{tags}", ", ".join(f"<Video {k + 1}>" for k in range(nv)))
     na = min(MAX_REF_AUDIOS, len(audio_refs(project, seg)))
     if na and "<Audio" not in text:
         text = (text + "\n" if text else "") + AUDIO_REF_PHRASE.replace("{tags}", ", ".join(f"<Audio {j + 1}>" for j in range(na)))
+    if not video:
+        text = re.sub(r"[ \t]*<Video\s*\d+>", "", text)
+        text = re.sub(r"[ \t]+\n", "\n", text).strip()
     return text
 
 

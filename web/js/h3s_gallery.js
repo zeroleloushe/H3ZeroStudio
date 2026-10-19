@@ -307,7 +307,7 @@ export function installGallery(Editor, { C, h, ICON }) {
         finally { go.disabled = false; }
       };
       const box = h("div", { class: "h3z-save h3z-glass" }, h("div", { class: "hd" }, h("b", null, "💾 Сохранить из галереи"), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: close }, "✕")),
-        this.field("Папка", folder), this.field("Имя файла (.mp4)", name), info, h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: close }, "Закрыть"), go));
+        this.field("Папка", this.folderPicker(folder)), this.field("Имя файла (.mp4)", name), info, h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: close }, "Закрыть"), go));
       const modal = this.$.saveModal = h("div", { class: "h3z-modal" }, box);
       modal.addEventListener("pointerdown", (x) => { if (x.target === modal) close(); });
       box.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") close(); if (x.key === "Enter") go.click(); });

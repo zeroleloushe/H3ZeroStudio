@@ -105,10 +105,41 @@ export function installSettings(Editor, { C, h, ICON }) {
         h("button", { class: "h3z-btn sm", disabled: !st.ok || undefined, title: st.ok ? this.stageTip("draft") : st.why, onclick: () => this.stageClip(i, "draft") }, "✎ Черновик"),
         h("button", { class: "h3z-btn sm", disabled: !st.ok || undefined, title: st.ok ? this.stageTip("final") : st.why, onclick: () => this.stageClip(i, "final") }, "✦ Чистовик"));
     },
+    /** ♪ Улучшить звук: extra sampler steps over the sound of a ready clip only (video frozen by the noise mask). */
+    audioRefine(i) {
+      const s = this.seg(i);
+      if (this.run.active) { this.toast("Сейчас идёт генерация — дождитесь окончания", true); return; }
+      if (!s?.result?.video || this.isStale(i)) { this.toast(`Отрезок ${i + 1}: сначала сгенерируйте клип (результат должен быть актуальным)`, true); return; }
+      let sv = {}; try { sv = JSON.parse(localStorage.getItem("h3z_audio_refine") || "{}"); } catch (e) { /* ignore */ }
+      const v = { steps: sv.steps ?? 6, denoise: sv.denoise ?? 0.45, video_denoise: sv.video_denoise ?? 0 };
+      const inp = (key, min, max, step, tip) => h("input", { type: "number", min, max, step, value: v[key], title: tip, class: "h3z-num", style: "width:90px",
+        oninput: (e) => { v[key] = parseFloat(e.target.value); } });
+      const row = (label, el, tip) => h("div", { class: "h3z-row", title: tip, style: "justify-content:space-between;gap:12px;margin:6px 0" }, h("span", {}, label), el);
+      const close = () => modal.remove();
+      const go = () => {
+        v.steps = Math.max(1, Math.min(50, Math.trunc(v.steps) || 6)); v.denoise = Math.max(0.05, Math.min(1, v.denoise || 0.45)); v.video_denoise = Math.max(0, Math.min(1, v.video_denoise || 0));
+        try { localStorage.setItem("h3z_audio_refine", JSON.stringify(v)); } catch (e) { /* ignore */ }
+        close(); this.sel = i;
+        this.generate({ upto: i, only: i, audio: { ...v } });
+        this.toast(`Отрезок ${i + 1}: улучшение звука · ${v.steps} шаг., сила ${v.denoise}${v.video_denoise ? `, видео ${v.video_denoise}` : ", видео заморожено"}`);
+      };
+      const box = h("div", { class: "h3z-glass", style: "padding:16px 18px;min-width:340px;max-width:440px" },
+        h("div", { style: "font-weight:600;margin-bottom:8px" }, `♪ Улучшить звук — отрезок ${i + 1}`),
+        row("Шаги", inp("steps", 1, 50, 1, "Число шагов уточнения звука (по умолчанию 6)"), "Число шагов уточнения звука (по умолчанию 6)"),
+        row("Сила звука", inp("denoise", 0.05, 1, 0.05, "0.3–0.6: сохраняет звук и добавляет детали; 1.0: звук с нуля"), "0.3–0.6: сохраняет почти весь звук и добавляет детали; 1.0: звук генерируется с нуля"),
+        row("Сила видео", inp("video_denoise", 0, 1, 0.05, "0 — картинка не меняется"), "0 — видео заморожено (картинка остаётся такой же); больше нуля разрешает частично менять видео"),
+        h("div", { class: "hint", style: "margin:8px 0" }, "Сэмплер, cfg, расписание, промпт и референсы — как у отрезка. Нужен вход audio_vae. Исходный клип не затирается: звук сохраняется отдельной копией."),
+        h("div", { class: "h3z-row", style: "justify-content:flex-end;gap:8px" },
+          h("button", { class: "h3z-btn sm", onclick: close }, "Отмена"), h("button", { class: "h3z-btn primary sm", onclick: go }, "Улучшить")));
+      const modal = h("div", { class: "h3z-modal" }, box);
+      modal.addEventListener("pointerdown", (e) => { if (e.target === modal) close(); });
+      this.root.append(modal);
+    },
     stageMenuEntries(i) {
       const st = this.segGenState(i);
       return [{ label: "✎ Черновик этого клипа", title: this.stageTip("draft"), fn: () => this.stageClip(i, "draft"), dis: !st.ok },
-        { label: "✦ Чистовик этого клипа", title: this.stageTip("final"), fn: () => this.stageClip(i, "final"), dis: !st.ok }];
+        { label: "✦ Чистовик этого клипа", title: this.stageTip("final"), fn: () => this.stageClip(i, "final"), dis: !st.ok },
+        { label: "♪ Улучшить звук", title: "Дополнительные шаги семплера только по звуку клипа; картинка не меняется", fn: () => this.audioRefine(i), dis: !st.ok || this.run.active || !this.seg(i)?.result?.video || this.isStale(i) }];
     },
 
     // ---------------------------------------------------------------- the tab
@@ -207,11 +238,18 @@ export function installSettings(Editor, { C, h, ICON }) {
         row(this.opts.tiny_vaes ? taeh3 : null, "taeh3 — живое превью", taeh3 ? (this.opts.tiny_vaes || []).filter((x) => /taeh3/i.test(x)).join(", ") : "нет — превью latent2rgb"),
         (paths.vae_approx || []).length ? h("div", { class: "h3z-note mono" }, (paths.vae_approx || []).join("\n")) : null,
         h("div", { class: "h3z-note" }, "Папки — стандартные ComfyUI (и extra_model_paths.yaml). После установки модели перезапустите ComfyUI."));
-      const body = h("div", { class: "h3z-scroll h3z-setbody" }, scope, stages, st1, st2, this.upscaleSection(g, set), ext, cache, pv, models);
+      const upS = this.upscaleSection(g, set);
+      const TABS = [["gen", "⚙ Генерация", [stages, st1, st2, upS]], ["ext", "🔗 Продление и звук", [ext]], ["prev", "👁 Превью и кэш", [pv, cache]], ["mod", "📦 Модели", [models]]];
+      const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
+      if (this._setOpen) { const t = TABS.find(([, , ds]) => ds.some((d) => titleOf(d) === this._setOpen)); if (t) this._setTab = t[0]; }
+      const cur = TABS.find((t) => t[0] === this._setTab) || TABS[0];
+      this._setTab = cur[0];
+      const tabs = h("div", { class: "h3z-settabs" }, ...TABS.map(([id, label]) => h("div", { class: "h3z-settab" + (id === cur[0] ? " on" : ""), onclick: () => { if (this._setTab === id) return; this._setTab = id; this.renderLeft(); } }, label)));
+      cur[2].forEach((d) => { d.open = true; });   // inside a tab the sections start open (a stored collapse still wins)
+      const body = h("div", { class: "h3z-scroll h3z-setbody" }, scope, tabs, ...cur[2]);
       L.append(head, body);
       this._setOpen = null;
       this.keepDetails(L);
-      if (!L.querySelector("details.h3z-det[open]")) stages.open = true;
     },
   });
 }

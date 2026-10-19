@@ -188,13 +188,55 @@ def video_info(path, fps=24):
             dur = float(st.duration * st.time_base)
         elif c.duration:
             dur = c.duration / 1_000_000
-        if not dur:   # no header duration: count frames
-            n, rate = 0, float(st.average_rate or fps)
-            for _ in c.decode(st):
-                n += 1
+        if not dur:   # no header duration: count packets (demux only, no decoding)
+            n, rate = 0, float(st.average_rate or st.guessed_rate or fps)
+            for pk in c.demux(st):
+                if pk.size:
+                    n += 1
             dur = n / rate
         return {"duration": round(dur, 3), "frames": int(dur * fps + 1e-6), "width": int(st.codec_context.width),
                 "height": int(st.codec_context.height), "src_fps": float(st.average_rate or 0), "has_audio": bool(c.streams.audio)}
+
+
+def sample_video_frames(path, times, w, h):
+    """Frames nearest-before each time (seconds, ascending) scaled to w x h (stretch) -> uint8 [N,h,w,3].
+    One open + (mostly) one forward pass; seeks only across gaps > 2 s. Scaling is done by swscale on the frame."""
+    import av
+
+    def conv(fr):
+        try:
+            return fr.to_ndarray(width=w, height=h, format="rgb24")
+        except TypeError:
+            from PIL import Image
+            return np.asarray(Image.fromarray(fr.to_ndarray(format="rgb24")).resize((w, h), Image.BILINEAR))
+
+    out = []
+    with av.open(path) as c:
+        st = c.streams.video[0]
+        st.thread_type = "AUTO"
+        it = pend = best = None
+        last_t = -1e9
+        for tg in times:
+            if it is None or tg - last_t > 2.0:
+                try:
+                    c.seek(int(max(0.0, tg) / st.time_base), stream=st, backward=True)
+                except Exception:
+                    c.seek(0)
+                it, pend, best, last_t = c.decode(st), None, None, -1e9
+            while True:
+                if pend is None:
+                    pend = next(it, None)
+                    if pend is None:
+                        break
+                t = float(pend.pts * st.time_base) if pend.pts is not None else 0.0
+                if best is None or t <= tg + 1e-6:
+                    best, pend, last_t = pend, None, t
+                    continue
+                break
+            if best is None:
+                raise ValueError(f"не удалось прочитать кадры из {os.path.basename(path)}")
+            out.append(conv(best))
+    return np.stack(out)
 
 
 def _fit(arr, w, h, mode):

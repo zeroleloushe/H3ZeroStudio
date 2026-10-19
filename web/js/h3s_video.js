@@ -16,9 +16,10 @@ export function installVideo(Editor, { C, h, ICON }) {
       if (!a) return null;
       if (a.strip && a.strip_n) return a;
       this._stripReq = this._stripReq || {};
-      if (!this._stripReq[a.id] && a.file && this.host.videoInfo) {
-        this._stripReq[a.id] = true;
-        this.host.videoInfo({ filename: a.file, subfolder: a.subfolder, type: a.type || "input" }).then((inf) => {
+      const rk = a.id + "|" + a.file;
+      if (!this._stripReq[rk] && a.file && this.host.videoInfo) {
+        this._stripReq[rk] = true;
+        this.host.videoInfo({ filename: a.file, subfolder: a.subfolder, type: a.type || "input" }, true).then((inf) => {
           if (!inf?.strip) return;
           const x = this.p.assets.find((k) => k.id === a.id); if (!x) return;
           x.strip = inf.strip; x.strip_n = inf.strip_n; if (!x.frames) x.frames = inf.frames; if (!x.poster) x.poster = inf.poster;
@@ -45,7 +46,7 @@ export function installVideo(Editor, { C, h, ICON }) {
           const r = await this.host.upload(f);
           const ref = { filename: r.name, subfolder: r.subfolder || "", type: r.type || "input" };
           let info = {};
-          try { info = await this.host.videoInfo(ref); } catch (e) { this.toast(`${f.name}: не удалось прочитать видео (${e.message || e})`, true); continue; }
+          try { info = await this.host.videoInfo(ref, false); } catch (e) { this.toast(`${f.name}: не удалось прочитать видео (${e.message || e})`, true); continue; }
           const id = C.newId("vd");
           this.mutate((p) => { p.assets.push({ id, name: (f.name || r.name).replace(/\.[^.]+$/, ""), file: r.name, subfolder: ref.subfolder, type: ref.type, category: "video",
             duration: info.duration, frames: info.frames, width: info.width, height: info.height, has_audio: info.has_audio, poster: info.poster, strip: info.strip || null, strip_n: info.strip_n || 0, frozen: "" }); }, { render: "none" });

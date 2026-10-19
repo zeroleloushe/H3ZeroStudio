@@ -49,7 +49,7 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
       $.rot = btn("↻", "Повернуть на 90° (R)", () => { st.ops.rotate = ((st.ops.rotate || 0) + 90) % 360; if (!st.ops.rotate) delete st.ops.rotate; delete st.ops.crop; this.aeUpdate(); });
       $.mir = btn("⇄ Зеркало", "Отразить по горизонтали", () => { st.ops.mirror = !st.ops.mirror; if (!st.ops.mirror) delete st.ops.mirror; this.aeUpdate(); });
       $.cropB = btn("⌗ Обрезка", "Рамка обрезки: тяните углы и саму рамку (двойной клик — сбросить)", () => { st.crop = !st.crop; if (st.crop && !st.ops.crop) st.ops.crop = this.aeFitAspect([0.1, 0.1, 0.8, 0.8]); this.aeUpdate(); });
-      const head = h("div", { class: "hd" }, h("b", { html: (ICON.cut || "✂") + `<span>${a.name}</span>` }), h("i", { class: "grow" }),
+      const head = h("div", { class: "hd" }, h("b", { html: (ICON.cut || "✂") + `<span>${String(a.name ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</span>` }), h("i", { class: "grow" }),
         pic ? $.rot : null, pic ? $.mir : null, pic ? $.cropB : null, pic ? $.aspect : null, pic ? $.size : null, pic ? $.dims : null,
         btn("✕", "Закрыть (Esc)", close, "icon"));
       // ---- stage

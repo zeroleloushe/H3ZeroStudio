@@ -1,10 +1,26 @@
 // Context menus (clips, audio clips, assets) and «Сохранить видео» (server-side export to a chosen folder).
 // labels are text, never HTML: "<Video>" in a label used to become a real <video> element (a big blurred block)
+// a leading glyph/emoji of a label («✎ Черновик», «🔒 Зафиксировать») goes into the icon slot, so all labels line up
+const GLYPH = /^((?:\p{Extended_Pictographic}|\p{S}|\uFE0F|\u200D)+)\s+(.+)$/u;
+export const splitGlyph = (icon, label) => { if (icon) return [icon, String(label ?? "")]; const g = GLYPH.exec(String(label ?? "")); return g ? [g[1], g[2]] : ["", String(label ?? "")]; };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 export function installMenus(Editor, { C, h, ICON }) {
   Object.assign(Editor.prototype, {
     /** Generic menu: entries = {icon, label, fn, dis, danger, hint, why, sub:[entries]} | "sep" | {el} | null. */
+    /** Folder input + «📁 Обзор…' (native dialog on the ComfyUI computer). */
+    folderPicker(input) {
+      const btn = h("button", { class: "h3z-btn sm", type: "button", title: "Выбрать папку в окне проводника (на компьютере, где запущен ComfyUI)", html: "<span>📁 Обзор…</span>" });
+      btn.onclick = async () => {
+        btn.disabled = true; btn.style.opacity = ".6";
+        try { const p = await this.host.pickFolder(input.value); if (p) { input.value = p; input.dispatchEvent(new Event("change")); } }
+        catch (e) { this.toast(String(e.message || e), true); }
+        finally { btn.disabled = false; btn.style.opacity = ""; }
+      };
+      input.style.flex = "1 1 auto"; input.style.minWidth = "0";
+      return h("div", { class: "h3z-row", style: { gap: "6px" } }, input, btn);
+    },
+
     openMenu(e, title, entries) {
       e.preventDefault(); e.stopPropagation();
       this.closeMenu();
@@ -17,7 +33,7 @@ export function installMenus(Editor, { C, h, ICON }) {
           if (it.el) { m.append(it.el); continue; }
           if (it.why) { m.append(h("div", { class: "why" }, it.why)); continue; }
           const el = h("div", { class: "it" + (it.dis ? " dis" : "") + (it.danger ? " danger" : "") + (it.sub ? " has-sub" : "") + (it.on ? " on" : ""), title: it.title || null,
-            html: `<i class="ic">${it.icon || ""}</i>` + `<span class="lb">${esc(it.label)}</span>` + (it.hint ? `<kbd>${esc(it.hint)}</kbd>` : "") + (it.sub ? "<b class='ar'>›</b>" : "") });
+            html: (() => { const [ic, lb] = splitGlyph(it.icon ? it.icon : "", it.label); return `<i class="ic">${it.icon ? ic : esc(ic)}</i>` + `<span class="lb">${esc(lb)}</span>`; })() + (it.hint ? `<kbd>${esc(it.hint)}</kbd>` : "") + (it.sub ? "<b class='ar'>›</b>" : "") });
           if (it.sub) {
             let sm = null;
             el.addEventListener("pointerenter", () => {
@@ -140,7 +156,7 @@ export function installMenus(Editor, { C, h, ICON }) {
         { label: "Дорожка", sub: [[0, "🔒 Дорожка 1 (фиксация)"], [1, "🔒 Дорожка 2 (фиксация)"], [2, "♫ Музыка (поверх видео)"]].map(([l, lb]) => ({ label: lb, on: c.lane === l, fn: () => { this.mutate((p) => { p.audio.clips.find((k) => k.id === id).lane = l; }); } })) },
         { icon: ICON.cut, label: "Разрезать здесь", hint: "S", fn: () => { this.playhead = Math.round(t * C.FPS); this.selAudio = id; this.splitAudio(); } },
         { icon: ICON.copy, label: "Дублировать", fn: () => { const nid = C.newId("ac"); this.mutate((p) => { p.audio.clips.push({ ...JSON.parse(JSON.stringify(c)), id: nid, start: Math.round((sp.end) * 1000) / 1000 }); p.audio.clips.sort((x, y) => x.start - y.start || x.lane - y.lane); }); this.selAudio = nid; } },
-        { label: "✎ Редактировать файл…", fn: () => this.openAssetEditor(c.asset), dis: c.asset === C.AUDIO_INPUT_ID },
+        { label: "✎ Посмотреть / изменить файл…", fn: () => this.openAssetEditor(c.asset), dis: c.asset === C.AUDIO_INPUT_ID },
         { label: "⚙ Параметры клипа", fn: () => this.selectAudio(id) },
         "sep",
         { icon: ICON.trash, label: "Удалить", hint: "Del", danger: true, fn: () => this.deleteAudio(id) },
@@ -153,7 +169,7 @@ export function installMenus(Editor, { C, h, ICON }) {
       const seg = this.seg(), inSeg = !!seg?.refs.includes(a.id);
       const pics = ["character", "location", "other"];
       this.openMenu(e, a.name, [
-        { label: "✎ Редактировать…", title: kind === "image" ? "Обрезка, поворот, зеркало, уменьшение" : kind === "audio" ? "Обрезка, громкость, нормализация, фейды" : "Обрезка по времени, уменьшение, кадрирование, кадр/звук в ассеты", fn: () => this.openAssetEditor(a.id), dis: !!a.virtual, hint: "2×клик" },
+        { label: "✎ Посмотреть / изменить…", title: kind === "image" ? "Обрезка, поворот, зеркало, уменьшение" : kind === "audio" ? "Обрезка, громкость, нормализация, фейды" : "Обрезка по времени, уменьшение, кадрирование, кадр/звук в ассеты", fn: () => this.openAssetEditor(a.id), dis: !!a.virtual, hint: "2×клик" },
         seg ? { icon: inSeg ? ICON.minus || "" : ICON.plus, label: inSeg ? `Убрать из референсов отрезка ${this.sel + 1}` : `В референсы отрезка ${this.sel + 1}` + (kind === "video" ? ` (<Video ${C.videoRefs(this.p, seg).length + 1}>)` : kind === "audio" ? ` (<Audio ${C.audioRefs(this.p, seg).length + 1}>)` : " (<Picture>)"),
           title: (seg.name ? `«${seg.name}»: ` : "") + (inSeg ? "убрать этот ассет из референсов выбранного отрезка" : "добавить ассет в референсы выбранного отрезка"), fn: () => this.toggleRef(this.sel, a.id) } : null,
         kind === "video" ? { icon: ICON.film || "", label: "На таймлайн (футаж)", fn: () => this.addFootage(a.id) } : null,
@@ -239,7 +255,7 @@ export function installMenus(Editor, { C, h, ICON }) {
       const box = h("div", { class: "h3z-save h3z-glass" },
         h("div", { class: "hd" }, h("b", null, "💾 Сохранить видео"), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: () => this.closeSaveDialog() }, "✕")),
         this.field("Что сохранить", pills), rowR, rowC,
-        this.field("Папка", folder), this.field("Имя файла (.mp4)", name),
+        this.field("Папка", this.folderPicker(folder)), this.field("Имя файла (.mp4)", name),
         music ? mixT : null, info,
         h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: () => this.closeSaveDialog() }, "Закрыть"), go));
       if (this._exportMix !== false) mixT.classList.add("on");
