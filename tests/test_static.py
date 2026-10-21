@@ -364,7 +364,7 @@ def test_fill_trailing_area_moves_the_end_marker(tmp_path):
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
-I18N_SKIP = {"h3s_help.js", "h3s_i18n.js", "h3s_i18n_en.js"}     # help stays Russian for now
+I18N_SKIP = {"h3s_i18n.js", "h3s_i18n_en.js", "h3s_help_ru.js"}   # the dictionary and the Russian help text (the sources)
 I18N_ALLOW = {"H3ZeroStudio · Таймлайн", "максимум"}              # matched against Russian text on purpose
 
 
@@ -448,7 +448,7 @@ def test_ui_strings_are_translated():
             continue
         src = open(os.path.join(JS, f), encoding="utf-8").read()
         for kind, text, at in _js_strings(src):
-            if not CYR.search(text):
+            if not CYR.search(text.replace("Русский", "")):   # the language's own name is shown as is
                 continue
             line = src.count("\n", 0, at) + 1
             if kind == "tpl":
@@ -486,3 +486,32 @@ def test_i18n_runtime(tmp_path):
     assert o["ru"] == "Отрезок 3" and o["ruPl"] == "отрезка" and o["en"] == "Segment 3" and o["miss"] == "Нет такой строки 1"
     assert o["enPl"] == ["a", "c"] and o["srv"] == "Card “Ann” already exists — choose another name"
     assert o["srv2"].startswith("Not created: No VAE:") and o["plain"] == "CUDA out of memory"
+
+
+@need_node
+def test_help_has_english_version(tmp_path):
+    """The English help mirrors the Russian one section by section and contains no Russian (except the language name)."""
+    js = tmp_path / "h.mjs"
+    js.write_text(textwrap.dedent(f"""
+        const R = await import({json.dumps(pathlib.Path(JS, "h3s_help_ru.js").as_uri())});
+        const E = await import({json.dumps(pathlib.Path(JS, "h3s_help_en.js").as_uri())});
+        console.log(JSON.stringify({{ ru: R.HELP_RU.map((x) => x[0]), en: E.HELP_EN.map((x) => x[0]),
+          cyr: E.HELP_EN.flatMap(([id, t, html]) => (t + html).replaceAll("Русский", "").match(/[А-Яа-яЁё]+/g) || []) }}));
+    """))
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["ru"] == o["en"] and len(o["en"]) > 20
+    assert not o["cyr"], o["cyr"][:20]
+
+
+def test_node_texts_are_english_with_russian_locale():
+    """nodes.py speaks English (class keys and input names untouched); locales/ru/nodeDefs.json covers the same fields."""
+    src = open(os.path.join(ROOT, "nodes.py"), encoding="utf-8").read()
+    assert not CYR.search(src)
+    assert '"ZL_H3ZeroStudio"' in src and '"ZL_H3Studio"' in src
+    ru = json.load(open(os.path.join(ROOT, "locales", "ru", "nodeDefs.json"), encoding="utf-8"))
+    for nid in ("ZL_H3ZeroStudio", "ZL_H3Studio"):
+        d = ru[nid]
+        assert d["display_name"] == "H3ZeroStudio · Таймлайн" and CYR.search(d["description"])
+        assert set(d["inputs"]) == {"project", "model", "clip", "vae", "audio_vae", "audio"} and set(d["outputs"]) == {"0", "1", "2"}

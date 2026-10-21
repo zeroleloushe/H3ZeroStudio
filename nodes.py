@@ -11,28 +11,28 @@ class ZL_H3ZeroStudio:
         return {
             "required": {
                 "project": ("STRING", {"default": "", "multiline": False,
-                                       "tooltip": "Проект H3ZeroStudio (JSON). Редактируется в полноэкранном редакторе, хранится внутри workflow."}),
+                                       "tooltip": "H3ZeroStudio project (JSON). Edited in the full-screen editor, stored inside the workflow."}),
             },
             "optional": {
                 # optional since the model & LoRA presets: a connected input always wins over the preset's file
-                "model": ("MODEL", {"tooltip": "Модель MiniMax H3 (Ref2VA, можно с turbo LoRA). Необязательно, если выбран пресет моделей; подключённый провод важнее пресета (LoRA пресета ложатся поверх)."}),
-                "clip": ("CLIP", {"tooltip": "Текстовый энкодер H3 (Qwen3-VL): кодирует промпт отрезка вместе с референсами. Необязательно, если энкодер задан в пресете; провод важнее."}),
-                "vae": ("VAE", {"tooltip": "Видео-VAE H3: кодирует референсы, декодирует отрезки. Необязательно, если VAE задан в пресете проекта; провод важнее."}),
-                "audio_vae": ("VAE", {"tooltip": "Аудио-VAE H3 (minimax_h3_audio_vae). Нужен для звука в превью и на выходе AUDIO, и для аудиодорожки."}),
-                "audio": ("AUDIO", {"tooltip": "Аудиодорожка таймлайна: режим «референс» (<Audio 1> в каждом отрезке) или «основная» (звук не меняется, видео под него). Нужен audio_vae."}),
+                "model": ("MODEL", {"tooltip": "MiniMax H3 model (Ref2VA, turbo LoRA optional). Optional when a model preset is selected; a wired model wins over the preset (the preset's LoRAs are applied on top)."}),
+                "clip": ("CLIP", {"tooltip": "H3 text encoder (Qwen3-VL): encodes the segment prompt together with the references. Optional when the preset sets an encoder; a wire wins."}),
+                "vae": ("VAE", {"tooltip": "H3 video VAE: encodes references, decodes segments. Optional when the project's preset sets a VAE; a wire wins."}),
+                "audio_vae": ("VAE", {"tooltip": "H3 audio VAE (minimax_h3_audio_vae). Needed for sound in the preview and the AUDIO output, and for the audio track."}),
+                "audio": ("AUDIO", {"tooltip": "Timeline audio track: “reference” mode (<Audio 1> in every segment) or “main” (the sound stays as is, video follows it). Needs audio_vae."}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("IMAGE", "AUDIO", "LATENT")
     RETURN_NAMES = ("images", "audio", "latent")
-    OUTPUT_TOOLTIPS = ("Все кадры склеенного ролика (24 fps).",
-                       "Звук ролика (из аудио-VAE, иначе входное аудио, иначе тишина).",
-                       "AV-латент H3 склеенного ролика (видео + аудио). При «склейке» без продления длина не 5k+2.")
+    OUTPUT_TOOLTIPS = ("All frames of the assembled video (24 fps).",
+                       "The video's sound (from the audio VAE, else the input audio, else silence).",
+                       "H3 AV latent of the assembled video (video + audio). With hard cuts (no extension) the length is not 5k+2.")
     FUNCTION = "run"
     CATEGORY = "MiniMax H3/H3ZeroStudio"
-    DESCRIPTION = ("H3ZeroStudio: полноэкранный редактор таймлайна для MiniMax H3. Отрезки с промптами и референсами, "
-                   "продление с сохранением персонажей, кэш готовых отрезков. Нажмите «Развернуть» на ноде.")
+    DESCRIPTION = ("H3ZeroStudio: a full-screen timeline editor for MiniMax H3. Segments with their own prompts and references, "
+                   "continuation that keeps characters consistent, a cache of finished segments. Click “Expand” on the node.")
 
     def run(self, project, model=None, clip=None, vae=None, audio_vae=None, audio=None, unique_id=None):
         from . import h3s_gen
@@ -50,5 +50,6 @@ class ZL_H3StudioLegacy(ZL_H3ZeroStudio):
 
 
 NODE_CLASS_MAPPINGS = {NODE_ID: ZL_H3ZeroStudio, LEGACY_NODE_ID: ZL_H3StudioLegacy}
-# same title for both ids; the legacy node (hidden from search by DEPRECATED) offers «⇪ Обновить ноду» in its compact view
-NODE_DISPLAY_NAME_MAPPINGS = {NODE_ID: "H3ZeroStudio · Таймлайн", LEGACY_NODE_ID: "H3ZeroStudio · Таймлайн"}
+# same title for both ids; the legacy node (hidden from search by DEPRECATED) offers an "upgrade node" button in its compact view.
+# English here; ComfyUI shows locales/ru/nodeDefs.json to users with a Russian ComfyUI (Comfy.Locale = ru).
+NODE_DISPLAY_NAME_MAPPINGS = {NODE_ID: "H3ZeroStudio · Timeline", LEGACY_NODE_ID: "H3ZeroStudio · Timeline"}

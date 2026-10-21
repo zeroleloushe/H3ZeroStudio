@@ -1,5 +1,12 @@
 // H3ZeroStudio English UI strings, keyed by the Russian source text (see h3s_i18n.js). Generated from the code; edit freely.
 export default {
+  "Поиск по справке…": "Search help…",
+  "Развернуть все": "Expand all",
+  "Свернуть все": "Collapse all",
+  "Справка H3ZeroStudio": "H3ZeroStudio help",
+  "Для новичков: что есть в студии и как этим пользоваться. Слева — оглавление и поиск.": "For beginners: what the studio has and how to use it. Contents and search are on the left.",
+  "Закрыть справку": "Close help",
+  "Папка для сохранения": "Save folder",
   "отрезок": "segment",
   "отрезка": "segments",
   "отрезков": "segments",

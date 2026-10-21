@@ -239,7 +239,7 @@ def register():
         body = await request.json()
         try:
             import asyncio
-            path = await asyncio.get_running_loop().run_in_executor(None, _pick_folder, str(body.get("initial") or ""))
+            path = await asyncio.get_running_loop().run_in_executor(None, _pick_folder, str(body.get("initial") or ""), str(body.get("title") or ""))
             return web.json_response({"ok": True, "path": path})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
@@ -461,7 +461,8 @@ try:
     r.attributes("-topmost", True)
 except Exception:
     pass
-p = filedialog.askdirectory(title="Папка для сохранения", initialdir=sys.argv[1] or None, mustexist=False)
+import os
+p = filedialog.askdirectory(title=os.environ.get("H3_TITLE") or "Save folder", initialdir=sys.argv[1] or None, mustexist=False)
 sys.stdout.write(p or "")
 """
 
@@ -471,12 +472,12 @@ _PS_SCRIPT = (
     "Add-Type -AssemblyName System.Windows.Forms;"
     "$o=New-Object System.Windows.Forms.Form;$o.TopMost=$true;$o.ShowInTaskbar=$false;$o.Opacity=0;"
     "$o.StartPosition='CenterScreen';$o.Show();"
-    "$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description='Папка для сохранения';$f.ShowNewFolderButton=$true;"
+    "$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description=$env:H3_TITLE;$f.ShowNewFolderButton=$true;"
     "if($env:H3_INIT){$f.SelectedPath=$env:H3_INIT};"
     "if($f.ShowDialog($o) -eq 'OK'){[Console]::Out.Write($f.SelectedPath)};$o.Close()")
 
 
-def _pick_folder(initial):
+def _pick_folder(initial, title=""):
     """tkinter (child process) -> on Windows PowerShell's folder dialog (portable ComfyUI's Python has no tkinter)
     -> macOS osascript -> zenity / kdialog."""
     import subprocess
@@ -488,13 +489,14 @@ def _pick_folder(initial):
     while ini and not os.path.isdir(ini):
         ini = os.path.dirname(ini)
     ini = ini or folder_paths.get_output_directory()
-    env = dict(os.environ, H3_INIT=ini)
+    title = (title or "Save folder").replace('"', "").replace("\n", " ")[:120]   # the UI sends it in its language
+    env = dict(os.environ, H3_INIT=ini, H3_TITLE=title)
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     attempts = [[sys.executable, "-c", _PICK_SCRIPT, ini]]
     if sys.platform == "win32":
         attempts.append(["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT])
     elif sys.platform == "darwin":
-        attempts.append(["osascript", "-e", 'POSIX path of (choose folder with prompt "Папка для сохранения")'])
+        attempts.append(["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")'])
     else:
         attempts += [["zenity", "--file-selection", "--directory", "--filename=" + ini + "/"], ["kdialog", "--getexistingdirectory", ini]]
     errs = []

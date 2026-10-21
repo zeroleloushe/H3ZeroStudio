@@ -104,7 +104,7 @@ function makeHost(node) {
     },
     inputLinked: (name) => { const i = node.inputs?.find((x) => x.name === name); return i ? i.link != null : undefined; },
     videoInfo: async (ref, strip = true) => { const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", strip: strip ? "1" : "0" }); const r = await api.fetchApi("/h3zero/video_info?" + q.toString()); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.info; },
-    pickFolder: async (initial) => { const r = await api.fetchApi("/h3zero/pick_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: initial || "" }) }); const j = await r.json().catch(() => ({ ok: false, error: r.status + "" })); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.path; },
+    pickFolder: async (initial) => { const r = await api.fetchApi("/h3zero/pick_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: initial || "", title: T("Папка для сохранения") }) }); const j = await r.json().catch(() => ({ ok: false, error: r.status + "" })); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.path; },
     freeMemory: async () => { const r = await api.fetchApi("/free", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) }); if (r.status !== 200) throw new Error(r.status + " " + r.statusText); },
     exportVideo: async (body) => { const r = await api.fetchApi("/h3zero/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
     assetEdit: async (body) => { const r = await api.fetchApi("/h3zero/asset_edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
@@ -164,7 +164,7 @@ export function upgradeLegacy(old) {
   const n = LiteGraph.createNode("ZL_H3ZeroStudio"); if (!n) return null;
   n.pos = [...old.pos]; n.size = [...old.size];
   const title = String(old.title || "").replace(OLD_TITLE, "");
-  if (title && title !== "H3ZeroStudio · Таймлайн") n.title = title;
+  if (title && !["H3ZeroStudio · Таймлайн", "H3ZeroStudio · Timeline"].includes(title)) n.title = title;   // default titles: old RU / current
   for (const w of old.widgets || []) { const nw = n.widgets?.find((x) => x.name === w.name); if (nw && w.value !== undefined) nw.value = w.value; }
   g.add(n);
   const ins = (old.inputs || []).map((inp) => { const l = inp.link != null ? linkOf(g, inp.link) : null; return l && { name: inp.name, from: l.origin_id, slot: l.origin_slot }; }).filter(Boolean);

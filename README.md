@@ -97,7 +97,7 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 Дальше:
 - **Зависимости ставить не нужно.** Используются torch, numpy, Pillow, PyAV и aiohttp, которые уже есть в ComfyUI (`requirements.txt` пустой, там только опции).
 - **Нужен ComfyUI с нативной поддержкой MiniMax H3**, то есть свежая версия.
-- **Перезапустите ComfyUI.** Нода появится в категории `MiniMax H3/H3ZeroStudio` под именем **«H3ZeroStudio · Таймлайн»**.
+- **Перезапустите ComfyUI.** Нода появится в категории `MiniMax H3/H3ZeroStudio` под именем **«H3ZeroStudio · Timeline»** (в русском интерфейсе ComfyUI — **«H3ZeroStudio · Таймлайн»**).
 
 <details>
 <summary>Windows (portable / Easy-Install), embedded Python</summary>
@@ -127,7 +127,7 @@ rem опционально, для RTX VSR:
 ## 🚀 Как пользоваться
 
 1. **Соберите граф.**
-   - Добавьте ноду **«H3ZeroStudio · Таймлайн»**.
+   - Добавьте ноду **«H3ZeroStudio · Timeline»** («Таймлайн» в русском ComfyUI).
    - Подключите `model` (можно с turbo LoRA: 4–8 шагов, CFG 1), `clip`, `vae` и `audio_vae`.
    - Вход `audio` необязателен: свой звук можно загрузить и в ассеты.
 2. Нажмите **«Развернуть»** (или двойной клик по ноде). Редактор откроется на всё окно.
@@ -164,7 +164,7 @@ rem опционально, для RTX VSR:
 <tr><td><sub><b>«Настройки»:</b> этапы, параметры прохода, продление, кэш, превью, модели</sub></td><td><sub><b>«Апскейл»:</b> метод, итоговые Мп, σ; для плиток — сетка 3×3 и перекрытие</sub></td></tr>
 </table>
 
-**Язык интерфейса** — русский или английский: «Настройки» → 🌐 «Язык интерфейса» («Авто» — как в ComfyUI). Справка пока только на русском.
+**Язык интерфейса** — русский или английский: «Настройки» → 🌐 «Язык интерфейса» («Авто» — как в ComfyUI).
 
 В правой панели собрано то, что меняется часто: отрезок, общий промпт, негатив, разрешение и сид. Всё остальное — во вкладке **«Настройки»**. Глобальные настройки хранятся в `output/h3zerostudio/_settings.json`. Есть два режима: «Для всех проектов» и «Только этот проект».
 
@@ -349,7 +349,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 
 **H3ZeroStudio** is a CapCut-style timeline editor node for **MiniMax H3** in ComfyUI.
 
-The interface is available in English and Russian: «Settings» → 🌐 *Interface language* (Auto follows ComfyUI's language). The built-in help is in Russian for now.
+The interface is available in English and Russian: «Settings» → 🌐 *Interface language* (Auto follows ComfyUI's language). The node is **“H3ZeroStudio · Timeline”**; with ComfyUI set to Russian, its name and tooltips are shown in Russian.
 
 - **Segments.** Build a long video from segments, each with its own prompt and reference images. *Extend* continues the previous segment: its latent tail is pinned and audio continues through H3's native denoise masks. *New scene* is a hard cut.
 - **Takes.** Keep up to 12 takes per segment. Only changed segments are re-generated, thanks to a content-hash cache.
