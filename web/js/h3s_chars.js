@@ -29,6 +29,7 @@ export function installChars(Editor, { C, h, ICON }) {
         let d = null, err = "";
         try { d = await this.host.get("/h3zero/chars"); } catch (e) { err = e.message || String(e); }
         this._chars = { cards: d?.cards || [], roots: d?.roots || [], vae: !!d?.vae, audio_vae: !!d?.audio_vae, busy: !!d?.busy, err, t: Date.now() };
+        this.charFollowAliases();
         return this._chars;
       })();
       this._chars = { ...(c || { cards: [], roots: [] }), loading: job, t: c?.t || 0 };
@@ -110,7 +111,7 @@ export function installChars(Editor, { C, h, ICON }) {
       }
       const st = lib.err ? h("div", { class: "h3z-note err" }, "Библиотека недоступна: " + lib.err) : null;
       const pr = this.mpGet?.(this.p.settings.model_preset);
-      const vaeNote = !lib.vae && !pr?.vae ? h("div", { class: "h3z-note" }, "Для «Создать» нужен VAE: выберите его в пресете моделей проекта или запустите генерацию один раз.") : null;
+      const vaeNote = !lib.vae && !pr?.vae && !this.host.inputLinked?.("vae") ? h("div", { class: "h3z-note" }, "Для «Создать» нужен VAE: подключите его проводом к узлу студии или выберите в пресете моделей проекта.") : null;
       L.append(h("div", { class: "h3z-chars" },
         h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, "Персонажи", h("em", null, `${lib.cards.length} карт.`)), h("i", { class: "grow" }),
           h("button", { class: "h3z-btn sm", title: "Перечитать папку библиотеки", onclick: () => this.charsLoad(true).then(() => this.renderLeft()) }, "↻"),
@@ -307,13 +308,13 @@ export function installChars(Editor, { C, h, ICON }) {
         this.field("Голос", txt("voice_description", "low husky voice…", true)));
       const est = this.$.cfEst = h("div", { class: "h3z-note est" });
       const st = this._chars || {}, pr = this.mpGet?.(this.p.settings.model_preset);
-      const noVae = !edit && !st.vae && !pr?.vae && (f.photos.length || f.clip);
-      const noAvae = !edit && !st.audio_vae && !pr?.audio_vae && f.voice;
+      const noVae = !edit && !st.vae && !pr?.vae && !this.host.inputLinked?.("vae") && (f.photos.length || f.clip);
+      const noAvae = !edit && !st.audio_vae && !pr?.audio_vae && !this.host.inputLinked?.("audio_vae") && f.voice;
       const go = h("button", { class: "h3z-btn primary" + (f.busy ? " dis" : ""), onclick: () => this.charSubmit() }, f.busy ? (edit ? "Сохраняю…" : "Кодирую…") : edit ? "Сохранить" : "◈ Создать карточку");
       // scrolling body + a footer that always stays in view (estimate, warnings, «Создать»)
       const foot = h("div", { class: "cf-ft" }, edit ? null : est,
-        noVae ? h("div", { class: "h3z-note err" }, "Нет VAE: выберите VAE в пресете моделей проекта или запустите генерацию один раз.") : null,
-        noAvae ? h("div", { class: "h3z-note err" }, "Нет аудио-VAE для голоса: выберите его в пресете моделей проекта или запустите генерацию.") : null,
+        noVae ? h("div", { class: "h3z-note err" }, "Нет VAE: подключите VAE проводом к узлу студии или выберите в пресете моделей проекта.") : null,
+        noAvae ? h("div", { class: "h3z-note err" }, "Нет аудио-VAE для голоса: подключите его ко входу audio_vae узла студии или выберите в пресете.") : null,
         f.uploading ? h("div", { class: "h3z-note" }, `Загрузка файлов: ${f.uploading}…`) : null,
         h("div", { class: "h3z-row ft" }, go, h("button", { class: "h3z-btn", onclick: () => this.charCloseForm() }, "Отмена")));
       const form = h("div", { class: "h3z-chars form" + (f.busy ? " busy" : "") }, head, h("div", { class: "cf-body" }, parts), foot);
@@ -411,13 +412,16 @@ export function installChars(Editor, { C, h, ICON }) {
           const d = await this.host.call("/h3zero/chars/update", { id: old, fields });
           await this.charsLoad(true);
           const card = d?.card || null;
-          if (card) this.charRelink(old, card);
-          this.toast(`Карточка «${name}» сохранена`);
+          if (!card) throw new Error("сервер не вернул карточку — обновите библиотеку (↻)");
+          this.charRelink(old, card);
+          this.toast(card.name === name ? `Карточка «${name}» сохранена` : `Сохранено, но имя на диске «${card.name}»`, card.name !== name);
         } else {
           const spec = this.charSpec();
           if (!spec.photos.length && !spec.clip && !spec.voice) { f.busy = false; this.renderLeft(); return this.toast("Добавьте фото, клип или голос", true); }
           const pr = this.mpGet?.(this.p.settings.model_preset);
-          const d = await this.host.call("/h3zero/chars/create", { spec, vae: pr?.vae || "", audio_vae: pr?.audio_vae || "" });
+          const wired = {};
+          for (const k of ["vae", "audio_vae"]) { const w = await this.host.wiredUpstream?.(k); if (w) wired[k] = w; }
+          const d = await this.host.call("/h3zero/chars/create", { spec, wired, vae: pr?.vae || "", audio_vae: pr?.audio_vae || "" });
           await this.charsLoad(true);
           this.toast(`◈ Карточка «${d?.card?.name || name}» создана`);
         }
@@ -426,6 +430,18 @@ export function installChars(Editor, { C, h, ICON }) {
         f.busy = false; this.toast((f.edit ? "Не сохранилось: " : "Не создалась: ") + (err.message || err), true);
       }
       this.renderLeft(); this.renderInspector();
+    },
+    /** A card renamed / moved (here, in another project or another tab) keeps its old ids as aliases: follow them. */
+    charFollowAliases() {
+      const cards = this._chars?.cards || [];
+      if (!this.p || !cards.some((c) => c.aliases?.length)) return;
+      const ids = new Set(cards.map((c) => c.id)), used = new Set();
+      for (const x of [...(this.p.segments || []), ...(this.p.regions || [])]) for (const e of x.cards || []) used.add(e.id);
+      for (const id of used) {
+        if (ids.has(id)) continue;
+        const card = cards.find((c) => c.aliases?.includes(id));
+        if (card) this.charRelink(id, card);
+      }
     },
     /** After a rename / move the card id changes: the clips and spans of this project follow it. */
     charRelink(old, card) {

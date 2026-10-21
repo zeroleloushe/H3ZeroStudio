@@ -1566,7 +1566,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     h3s_chars.remember_vaes(vae, audio_vae)
     used_cards = {e["id"] for x in proj["segments"] + (proj.get("regions") or []) for e in x.get("cards") or [] if e.get("on", True)}
     if used_cards:   # «Персонажи»: the library as it is now (signatures in the keys, kinds for the numbering)
-        lib = {c["id"]: c for c in h3s_chars.scan()}
+        cards_now = h3s_chars.scan()
+        lib = {c["id"]: c for c in cards_now}
+        moved = {i: h3s_chars.resolve_alias(i, cards_now) for i in used_cards if i not in lib}
+        moved = {i: c["id"] for i, c in moved.items() if c}
+        if moved:   # renamed / moved since this project saw it: follow the card (its old id is an alias)
+            for x in proj["segments"] + (proj.get("regions") or []):
+                for e in x.get("cards") or []:
+                    e["id"] = moved.get(e["id"], e["id"])
+            used_cards = {moved.get(i, i) for i in used_cards}
+            log("characters: renamed cards followed: " + ", ".join(f"{a} → {b}" for a, b in moved.items()))
         gone = sorted(i for i in used_cards if i not in lib)
         if gone:
             raise ValueError("H3ZeroStudio: нет карточек персонажей: " + ", ".join((proj["cards"].get(i) or {}).get("name") or i for i in gone)

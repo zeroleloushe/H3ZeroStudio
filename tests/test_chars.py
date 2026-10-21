@@ -313,3 +313,83 @@ def test_uploads_are_global_temp(dirs, monkeypatch):
     open(old, "wb").write(b"x")
     os.utime(old, (time.time() - 2 * 86400,) * 2)
     assert chars.prune_uploads() == 1 and not os.path.exists(old)
+
+
+def test_edit_round_trip_rename_move_describe(dirs):
+    c = make("Ann")
+    sig0 = c["sig"]
+    u = chars.update(c["id"], {"name": "Bella", "folder": "heroes", "concept": "identity", "subject_name": "Bel", "appearance": "short black hair"})
+    assert u["id"] == "s:heroes/Bella" and u["name"] == "Bella" and u["appearance"] == "short black hair" and u["subject_name"] == "Bel"
+    assert u["sig"] == sig0                      # header-only edit: clips made with the card stay ready
+    lst = {x["id"]: x for x in chars.scan()}
+    assert set(lst) == {"s:heroes/Bella"} and lst["s:heroes/Bella"]["name"] == "Bella"   # nothing silently reverts
+    assert "s:Ann" in lst["s:heroes/Bella"]["aliases"] and chars.resolve_alias("s:Ann")["id"] == "s:heroes/Bella"
+    root = chars.our_root()
+    assert not any(n.startswith("Ann") for n in os.listdir(root))
+    with safe_open(os.path.join(root, "heroes", "Bella_visual.safetensors"), framework="pt") as f:
+        assert json.loads(f.metadata()["refmod_meta"])["appearance"] == "short black hair"
+    # case-only rename (same file on Windows) and a second edit keep working
+    u2 = chars.update(u["id"], {"name": "BELLA", "appearance": ""})
+    assert u2["name"] == "BELLA" and not u2.get("appearance") and [x["name"] for x in chars.scan()] == ["BELLA"]
+    make("Cid")
+    with pytest.raises(ValueError, match="уже есть"):
+        chars.update("s:Cid", {"name": "BELLA", "folder": "heroes"})
+    with pytest.raises(ValueError, match="пуст"):
+        chars.update("s:Cid", {"name": "  "})
+
+
+def test_edit_survives_windows_style_lock(dirs, monkeypatch):
+    c = make("Ann")
+    real, fails = os.replace, {"n": 0}
+
+    def locked(src, dst):      # like Windows while an antivirus / viewer still holds the file for a moment
+        if fails["n"] < 3:
+            fails["n"] += 1
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        real(src, dst)
+    monkeypatch.setattr(os, "replace", locked)
+    monkeypatch.setattr(chars.time, "sleep", lambda s: None)
+    assert chars.update(c["id"], {"name": "Bella"})["name"] == "Bella"
+    assert [x["name"] for x in chars.scan()] == ["Bella"]
+
+    def always(src, dst):
+        raise PermissionError(13, "being used by another process")
+    monkeypatch.setattr(os, "replace", always)
+    with pytest.raises(ValueError, match="занят другой программой"):   # a lasting lock is an error the editor shows
+        chars.update("s:Bella", {"name": "Cora"})
+    monkeypatch.setattr(os, "replace", real)
+    assert [x["name"] for x in chars.scan()] == ["Bella"]               # and nothing half-renamed
+
+
+def test_create_uses_the_wired_vae(dirs, monkeypatch):
+    import nodes
+
+    class WiredVAE:
+        FUNCTION = "load"
+        calls = 0
+
+        def load(self, vae_name):
+            WiredVAE.calls += 1
+            assert vae_name == "h3_vae.safetensors"
+            return (FakeVAE(),)
+
+    class Broken:
+        FUNCTION = "load"
+
+        def load(self):
+            raise FileNotFoundError("файла нет")
+    monkeypatch.setitem(nodes.NODE_CLASS_MAPPINGS, "TestWiredVAE", WiredVAE)
+    monkeypatch.setitem(nodes.NODE_CLASS_MAPPINGS, "TestBroken", Broken)
+    monkeypatch.setattr(chars, "VAES", {"vae": None, "audio_vae": None})
+    monkeypatch.setattr(chars, "_loaders", lambda: (loaders()["load_image"], loaders()["load_clip"], loaders()["load_voice"]))
+    spec = {"name": "Wired", "concept": "identity", "mode": "full", "res": 512, "photos": [{"asset": "a"}]}
+    wired = {"vae": {"prompt": {"7": {"class_type": "TestWiredVAE", "inputs": {"vae_name": "h3_vae.safetensors"}}}, "src": ["7", 0]}}
+    card = chars.create_from_editor({"spec": spec, "wired": wired, "vae": "", "audio_vae": ""})
+    assert card["name"] == "Wired" and WiredVAE.calls == 1
+    chars.create_from_editor({"spec": {**spec, "name": "Wired2"}, "wired": wired})
+    assert WiredVAE.calls == 1                               # loaded once
+    with pytest.raises(ValueError, match="Нет VAE"):          # truly nothing anywhere
+        chars.create_from_editor({"spec": {**spec, "name": "None"}, "vae": ""})
+    bad = {"vae": {"prompt": {"3": {"class_type": "TestBroken", "inputs": {}}}, "src": ["3", 0]}}
+    with pytest.raises(ValueError, match="файла нет"):         # a broken wire says why
+        chars.create_from_editor({"spec": {**spec, "name": "Bad"}, "wired": bad})

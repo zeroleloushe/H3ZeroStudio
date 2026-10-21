@@ -1208,7 +1208,7 @@ def card_key(project, holder, video=True):
         sn = snaps.get(e["id"])
         if not sn or not e.get("on", True) or not card_copies(e.get("w", 1.0))[0]:
             continue
-        out.append([e["id"], *card_copies(e["w"]), sn.get("sig", ""), bool(e.get("look", True)), bool(e.get("voice", True)), bool(video)])
+        out.append([*card_copies(e["w"]), sn.get("sig", ""), bool(e.get("look", True)), bool(e.get("voice", True)), bool(video)])
     return out
 
 

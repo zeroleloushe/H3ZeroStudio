@@ -14,6 +14,7 @@ is listed read-only next to ours). The format follows their docs; the code here 
 
 Ours live in output/h3zerostudio/_characters/<folder>/; our own sidecar <name>.h3zs.json keeps the sources and settings.
 """
+import gc
 import hashlib
 import io
 import json
@@ -251,7 +252,8 @@ def scan():
                            "frames": bool(vm.get("enc_times"))} if vm else None,
                 "audio": {"latent_t": int(am.get("latent_t") or 0), "tokens": 2 * int(am.get("latent_t") or 0),
                           "seconds": round(int(am.get("latent_t") or 0) / 40.0, 2)} if am else None,
-                "bundle": bool(bundle), "preview": prev, "sig": _sig(files + ([os.path.join(root, prev)] if prev else [])),
+                "bundle": bool(bundle), "preview": prev, "sig": str(extra.get("csig") or "") or _sig(files + ([os.path.join(root, prev)] if prev else [])),
+                "aliases": [f"{rk}:{a}" for a in extra.get("aliases") or [] if isinstance(a, str)],
                 "created": int(extra.get("created") or 0), "sources": extra.get("sources"),
                 **_desc_fields(vm, am),
             }
@@ -528,6 +530,56 @@ def estimate(spec, sizes):
     return {"visual_tokens": t * (gh // 2) * (gw // 2), "canvas": [cw, ch], "latent": [t, gh, gw]}
 
 
+def replace_retry(src, dst, tries=8, wait=0.15):
+    """os.replace that survives a short Windows lock (antivirus / indexer / a reader that has the file open) and
+    turns a lasting one into a clear error instead of a silent no-op."""
+    for k in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            if k == tries - 1:
+                raise ValueError(f"Файл карточки занят другой программой ({os.path.basename(dst)}): {e.strerror or e}. "
+                                 "Закройте её (просмотрщик, антивирус-сканирование) и сохраните ещё раз") from e
+            gc.collect()   # drop any of our own tensors that may still map the file
+            time.sleep(wait * (k + 1))
+
+
+def content_sig(paths):
+    """Signature of the tensors only (a header edit — name, folder, description — keeps it, so clips stay ready)."""
+    from safetensors import safe_open
+    h = hashlib.sha1()
+    for p in sorted(paths, key=lambda x: os.path.basename(x).replace("_visual", "0").replace("_audio", "1")):
+        with safe_open(p, framework="pt") as f:
+            for k in sorted(f.keys()):
+                t = f.get_tensor(k)
+                h.update(k.encode())
+                h.update(str(tuple(t.shape)).encode() + str(t.dtype).encode())
+                h.update(t.contiguous().view(torch.uint8).numpy().tobytes() if t.dtype != torch.bool else t.numpy().tobytes())
+    return h.hexdigest()[:12]
+
+
+def _side_path(root, rel):
+    return os.path.join(root, rel + ".h3zs.json")
+
+
+def _read_side(root, rel):
+    try:
+        with open(_side_path(root, rel), "r", encoding="utf-8") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_side(root, rel, data):
+    p = _side_path(root, rel)
+    fd, tmp = tempfile.mkstemp(prefix=".side-", suffix=".tmp", dir=os.path.dirname(p))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    replace_retry(tmp, p)
+
+
 def _save(path_no_ext, latent, meta, extra=None):
     from safetensors.torch import save_file
     os.makedirs(os.path.dirname(path_no_ext), exist_ok=True)
@@ -536,7 +588,7 @@ def _save(path_no_ext, latent, meta, extra=None):
     os.close(fd)
     try:
         save_file({"latent": latent.contiguous(), **(extra or {})}, tmp, metadata={META_KEY: json.dumps(meta)})
-        os.replace(tmp, dest)
+        replace_retry(tmp, dest)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -574,7 +626,7 @@ def create(spec, vae, audio_vae=None, load_image=None, load_clip=None, load_voic
         sources, enc, first = [], [], None
         if photos or clip:
             if vae is None:
-                raise ValueError("Нет VAE: выберите VAE в пресете моделей проекта или запустите генерацию один раз")
+                raise ValueError("Нет VAE: подключите VAE проводом к узлу студии или выберите в пресете моделей проекта")
             srcs = [("photo", load_image(p["asset"]), p) for p in photos]
             if clip:
                 n = snap_clip_frames(int(clip.get("frames") or 22))
@@ -624,7 +676,7 @@ def create(spec, vae, audio_vae=None, load_image=None, load_clip=None, load_voic
             sources += [{"kind": w_, "asset": s_.get("asset"), "crop": s_.get("crop"), **({"start": s_.get("start"), "frames": s_.get("frames")} if w_ == "clip" else {})} for w_, _p, s_ in srcs]
         if voice:
             if audio_vae is None:
-                raise ValueError("Нет аудио-VAE: выберите его в пресете моделей проекта или запустите генерацию один раз")
+                raise ValueError("Нет аудио-VAE: подключите его ко входу audio_vae узла студии или выберите в пресете моделей проекта")
             au = load_voice(voice["asset"], float(voice.get("start") or 0), voice.get("end"))
             from .h3s_gen import encode_audio
             alat = encode_audio(audio_vae, au).to(torch.float16).cpu().contiguous()
@@ -647,7 +699,7 @@ def create(spec, vae, audio_vae=None, load_image=None, load_clip=None, load_voic
             im.thumbnail((512, 512))
             im.save(base + ".png", optimize=True)
         with open(base + ".h3zs.json", "w", encoding="utf-8") as f:
-            json.dump({"name": name, "created": int(time.time()), "sources": sources,
+            json.dump({"name": name, "created": int(time.time()), "sources": sources, "csig": content_sig(written),
                        "settings": {"mode": "compressed" if not full else "full", "res": res, "grid": int(spec.get("grid") or 16)}}, f, ensure_ascii=False)
         log(f"characters: «{rel}» created ({'Full' if full else 'Compressed'}"
             + (f", look {tuple(vis_lat.shape)}" if vis_lat is not None else "") + (", voice" if voice else "") + ")")
@@ -666,17 +718,34 @@ def create_now(spec, **kw):
 
 
 def update(card_id, fields):
-    """Rename / move / describe without re-encoding: rewrites the header(s) (tensors copied as they are)."""
+    """Rename / move / describe without re-encoding: rewrites the header(s) (tensors copied as they are), the
+    sidecar (display name, old ids as aliases so other projects still find the card, the content signature) and
+    moves the files for a new name / folder. Any failure raises (the editor shows it)."""
     from safetensors import safe_open
     root, writable, rel = resolve(card_id)
     if not writable:
         raise ValueError("Карточки из models/refmods только для чтения — скопируйте в «Студию», чтобы менять")
     files = _files(card_id)
+    if not files:
+        raise FileNotFoundError(f"Карточка {card_id} не найдена — обновите библиотеку (↻)")
     if "bundle" in files:
         raise ValueError("Бандлы только для чтения")
     new_name = clean_name(fields.get("name")) if fields.get("name") is not None else None
+    if fields.get("name") is not None and not new_name:
+        raise ValueError("Имя карточки не может быть пустым")
     new_folder = clean_folder(fields.get("folder")) if fields.get("folder") is not None else None
+    nm = new_name or os.path.basename(rel)
+    fd = new_folder if new_folder is not None else os.path.dirname(rel)
+    nrel = (fd + "/" if fd else "") + nm
+    same = os.path.normcase(nrel) == os.path.normcase(rel)          # a case-only rename is the same file on Windows
+    if nrel != rel and not same and any(os.path.exists(os.path.join(root, nrel) + x + ".safetensors") for x in ("", "_visual", "_audio")):
+        raise ValueError(f"Карточка «{nrel}» уже есть — выберите другое имя")
     with LOCK:
+        _CACHE.clear()
+        gc.collect()
+        side = _read_side(root, rel)
+        if not side.get("csig"):
+            side["csig"] = content_sig(list(files.values()))     # older cards: from the tensors, before the rewrite
         for role, p in files.items():
             meta = read_meta(p) or {}
             for k in ("subject_name", "appearance", "retained_attributes", "voice_description", "description"):
@@ -688,27 +757,34 @@ def update(card_id, fields):
                         meta.pop(k, None)
             if fields.get("concept") in CONCEPTS and (role == "visual" or "visual" not in files):
                 meta["concept_type"] = fields["concept"]
+            meta["name"] = nm + ("_" + role if len(files) > 1 else "")
             with safe_open(p, framework="pt") as f:
                 tensors = {k: f.get_tensor(k).clone() for k in f.keys()}
             _save(p[:-len(".safetensors")], tensors.pop("latent"), meta, tensors)
-        if new_name or new_folder is not None:
-            nm = new_name or os.path.basename(rel)
-            fd = new_folder if new_folder is not None else os.path.dirname(rel)
-            nrel = (fd + "/" if fd else "") + nm
-            if nrel != rel:
-                if any(os.path.exists(os.path.join(root, nrel) + s + ".safetensors") for s in ("", "_visual", "_audio")):
-                    raise ValueError(f"«{nrel}» уже есть")
-                os.makedirs(os.path.dirname(os.path.join(root, nrel)), exist_ok=True)
-                for s in ("", "_visual", "_audio"):
-                    for e in (".safetensors",):
-                        if os.path.isfile(os.path.join(root, rel) + s + e):
-                            os.replace(os.path.join(root, rel) + s + e, os.path.join(root, nrel) + s + e)
-                for e in (".png", ".jpg", ".jpeg", ".webp", ".h3zs.json"):
-                    if os.path.isfile(os.path.join(root, rel) + e):
-                        os.replace(os.path.join(root, rel) + e, os.path.join(root, nrel) + e)
-                rel = nrel
+            del tensors
+        side["name"] = nm
+        if nrel != rel:
+            side["aliases"] = [a for a in dict.fromkeys([*(side.get("aliases") or []), rel]) if a != nrel]
+            os.makedirs(os.path.dirname(os.path.join(root, nrel)), exist_ok=True)
+            for sfx in ("", "_visual", "_audio"):
+                if os.path.isfile(os.path.join(root, rel) + sfx + ".safetensors"):
+                    replace_retry(os.path.join(root, rel) + sfx + ".safetensors", os.path.join(root, nrel) + sfx + ".safetensors")
+            for e in (".png", ".jpg", ".jpeg", ".webp", ".h3zs.json"):
+                if os.path.isfile(os.path.join(root, rel) + e):
+                    replace_retry(os.path.join(root, rel) + e, os.path.join(root, nrel) + e)
+            rel = nrel
+        _write_side(root, rel, side)
         _CACHE.clear()
-    return find(f"s:{rel}")
+    card = find(f"s:{rel}")
+    if not card:
+        raise RuntimeError(f"Карточка «{rel}» не читается после сохранения")
+    return card
+
+
+def resolve_alias(card_id, cards=None):
+    """A card id a project still uses after the card was renamed / moved (here or in another project) -> the card."""
+    cards = cards if cards is not None else scan()
+    return next((c for c in cards if c["id"] == card_id), None) or next((c for c in cards if card_id in (c.get("aliases") or [])), None)
 
 
 def delete(card_id):
@@ -758,18 +834,90 @@ def _loaders():
     return load_image, load_clip, load_voice
 
 
+_WIRED = {}   # json of the upstream sub-graph -> the object it produced (a VAE loads once)
+
+
+def run_upstream(prompt, src, depth_max=40):
+    """Run the loader nodes that feed one input of the studio node (prompt = the API-format sub-graph the editor sent
+    from the current workflow, src = [node id, output slot]) and return that output — the wired VAE without a
+    generation run. Only the nodes upstream of that input are executed (normally just VAELoader / a checkpoint loader)."""
+    import asyncio
+    import inspect
+    import nodes
+    key = json.dumps({"p": prompt, "s": src}, sort_keys=True)
+    if key in _WIRED:
+        return _WIRED[key]
+    memo = {}
+
+    def out(nid, slot, d):
+        if d > depth_max:
+            raise ValueError("слишком длинная цепочка узлов перед VAE")
+        nid = str(nid)
+        if nid not in memo:
+            n = prompt.get(nid)
+            if not isinstance(n, dict):
+                raise ValueError(f"узел {nid} перед входом не найден")
+            cls = nodes.NODE_CLASS_MAPPINGS.get(n.get("class_type"))
+            if cls is None:
+                raise ValueError(f"узел «{n.get('class_type')}» не установлен")
+            kw = {}
+            for k, v in (n.get("inputs") or {}).items():
+                kw[k] = out(v[0], v[1], d + 1) if isinstance(v, list) and len(v) == 2 and str(v[0]) in prompt and isinstance(v[1], int) else v
+            fn = getattr(cls(), getattr(cls, "FUNCTION", "execute"))
+            r = fn(**kw)
+            if inspect.iscoroutine(r):
+                r = asyncio.run(r)
+            if isinstance(r, dict):
+                r = r.get("result", ())
+            r = getattr(r, "result", r)
+            memo[nid] = tuple(r) if isinstance(r, (list, tuple)) else (r,)
+        return memo[nid][int(slot)]
+    res = out(src[0], src[1], 0)
+    while len(_WIRED) >= 4:
+        _WIRED.pop(next(iter(_WIRED)))
+    _WIRED[key] = res
+    return res
+
+
+def resolve_vaes(body, need_video=True, need_audio=False):
+    """The VAEs for «Создать», in order: the ones wired into the studio node (the editor sends their upstream
+    sub-graph from the current workflow), those of the last generation run, the project preset's files.
+    Returns (vae, audio_vae, notes) — notes say why a source failed when nothing was found."""
+    wired = body.get("wired") or {}
+    out, notes = {"vae": None, "audio_vae": None}, []
+    for slot, need in (("vae", need_video), ("audio_vae", need_audio)):
+        if not need:
+            continue
+        w = wired.get(slot)
+        if isinstance(w, dict) and isinstance(w.get("prompt"), dict) and isinstance(w.get("src"), list):
+            try:
+                out[slot] = run_upstream(w["prompt"], w["src"])
+                log(f"characters: {slot} from the wire ({w['prompt'].get(str(w['src'][0]), {}).get('class_type', '?')})")
+            except Exception as e:
+                notes.append(f"провод {slot}: {e}")
+        if out[slot] is None and VAES[slot] is not None:
+            out[slot] = VAES[slot]
+        if out[slot] is None and body.get(slot):
+            from . import h3s_models
+            try:
+                out[slot] = h3s_models._load_vae(str(body[slot]), slot)[1]
+            except Exception as e:
+                notes.append(f"пресет {slot}: {e}")
+    return out["vae"], out["audio_vae"], notes
+
+
 def create_from_editor(body):
-    """POST /h3zero/chars/create: the VAEs of the last run, else the project's preset files."""
-    vae, avae = VAES["vae"], VAES["audio_vae"]
+    """POST /h3zero/chars/create: the wired VAEs, else those of the last run, else the project's preset files."""
     spec = body.get("spec") or {}
-    if (vae is None and body.get("vae")) or (avae is None and body.get("audio_vae")):
-        from . import h3s_models
-        if vae is None and body.get("vae"):
-            vae = h3s_models._load_vae(str(body["vae"]), "vae")[1]
-        if avae is None and body.get("audio_vae") and spec.get("voice"):
-            avae = h3s_models._load_vae(str(body["audio_vae"]), "audio_vae")[1]
+    vae, avae, notes = resolve_vaes(body, need_video=bool(spec.get("photos") or (spec.get("clip") or {}).get("asset")),
+                                    need_audio=bool((spec.get("voice") or {}).get("asset")))
     li, lc, lv = _loaders()
-    card = create_now(spec, vae=vae, audio_vae=avae, load_image=li, load_clip=lc, load_voice=lv)
+    try:
+        card = create_now(spec, vae=vae, audio_vae=avae, load_image=li, load_clip=lc, load_voice=lv)
+    except ValueError as e:
+        if notes and "VAE" in str(e):
+            raise ValueError(f"{e} ({'; '.join(notes)})") from e
+        raise
     drop_uploads(spec)
     prune_uploads()
     return card

@@ -755,7 +755,7 @@ export function cardKey(project, holder) {
   const snaps = project.cards || {}, out = [];
   for (const e of holder.cards || []) {
     const sn = snaps[e.id]; if (!sn || e.on === false || !cardCopies(e.w ?? 1)[0]) continue;
-    out.push([e.id, ...cardCopies(e.w), sn.sig || "", e.look !== false, e.voice !== false]);
+    out.push([...cardCopies(e.w), sn.sig || "", e.look !== false, e.voice !== false]);   // no id: a rename keeps clips ready
   }
   return out;
 }

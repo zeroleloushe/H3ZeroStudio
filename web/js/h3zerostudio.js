@@ -81,6 +81,26 @@ function makeHost(node) {
     options: async () => (await api.fetchApi("/h3zero/options")).json(),
     status: async (id) => { const r = await api.fetchApi("/h3zero/status?node=" + encodeURIComponent(String(id ?? node.id))); if (r.status !== 200) throw new Error(r.status + ""); return (await r.json()).status; },
     nodeId: () => String(node.id),
+    // The loaders wired into one input of this node, as an API-format sub-graph of the current workflow
+    // ({prompt, src:[id, slot]}); the server runs just those nodes (character cards need the VAE without a run).
+    wiredUpstream: async (name) => {
+      const i = node.inputs?.find((x) => x.name === name);
+      if (!i || i.link == null) return null;
+      try {
+        const out = (await app.graphToPrompt())?.output || {};
+        const me = String(node.id), key = me in out ? me : Object.keys(out).find((k) => k.endsWith(":" + me));
+        const src = key && out[key]?.inputs?.[name];
+        if (!Array.isArray(src)) return null;
+        const prompt = {}, todo = [String(src[0])];
+        while (todo.length) {
+          const id = todo.pop();
+          if (prompt[id] || !out[id]) continue;
+          prompt[id] = out[id];
+          for (const v of Object.values(out[id].inputs || {})) if (Array.isArray(v) && v.length === 2 && out[String(v[0])]) todo.push(String(v[0]));
+        }
+        return prompt[String(src[0])] ? { prompt, src: [String(src[0]), src[1]] } : null;
+      } catch (e) { console.warn("H3ZeroStudio: wired", name, e); return null; }
+    },
     inputLinked: (name) => { const i = node.inputs?.find((x) => x.name === name); return i ? i.link != null : undefined; },
     videoInfo: async (ref, strip = true) => { const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", strip: strip ? "1" : "0" }); const r = await api.fetchApi("/h3zero/video_info?" + q.toString()); const j = await r.json(); if (!j.ok) throw new Error(j.error || r.status); return j.info; },
     pickFolder: async (initial) => { const r = await api.fetchApi("/h3zero/pick_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: initial || "" }) }); const j = await r.json().catch(() => ({ ok: false, error: r.status + "" })); if (!j.ok) throw new Error(j.error || r.status); return j.path; },
