@@ -565,6 +565,8 @@ export class H3Editor {
     if (!this.root) return;
     if (this.pe?.el?.contains(e.target)) return;   // CodeMirror handles its own paste (the modal stops it after)
     e.stopPropagation();
+    // «Персонажи» create form open: pasted images become its photos (even while a field of the form has focus)
+    if (this.cf && !this.cf.edit && this.tool === "chars") { const fs = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/")); if (fs.length) { e.preventDefault(); this.charAddFiles(fs, "photo"); return; } }
     if (isTyping(e)) return;
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
     if (files.length) { e.preventDefault(); this.uploadFiles(files); }

@@ -16,7 +16,8 @@ export function installChars(Editor, { C, h, ICON }) {
   const SUBJECT_RE = /^[\p{L}\p{N}_\-']+$/u;
   const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
   const ref = (a) => a && { file: a.file, subfolder: a.subfolder || "", type: a.type || "input" };
-  const blankForm = () => ({ edit: null, name: "", folder: "", concept: "identity", mode: "full", res: 768, grid: 16,
+  const IMG_RE = /^image\//, VID_RE = /^video\//, AUD_RE = /^audio\//;
+  const blankForm = () => ({ uploads: [],  edit: null, name: "", folder: "", concept: "identity", mode: "full", res: 768, grid: 16,
     subject_name: "", appearance: "", retained_attributes: "", voice_description: "", photos: [], clip: null, voice: null, busy: false });
 
   Object.assign(Editor.prototype, {
@@ -210,6 +211,7 @@ export function installChars(Editor, { C, h, ICON }) {
         if (a.category === "video" && (!voice || a.has_audio)) out.push({ v: "a:" + a.id, label: "🎞 " + a.name, ref: ref(a), w: a.width, h: a.height, frames: a.frames, dur: a.duration, url: this.assetUrl(a) });
         if (voice && a.category === "audio") out.push({ v: "a:" + a.id, label: "♪ " + a.name, ref: ref(a), dur: a.duration, url: this.assetUrl(a) });
       }
+      for (const u of this.cf?.uploads || []) if (voice ? u.kind !== "image" && (u.kind === "audio" || u.has_audio !== false) : u.kind === "video") out.push(u);
       const [W, H] = C.resolution(this.p.settings);
       this.p.segments.forEach((s, i) => {
         const v = s.result?.video; if (!v?.filename) return;
@@ -219,22 +221,24 @@ export function installChars(Editor, { C, h, ICON }) {
       return out;
     },
     /** Natural size of an image asset (async, cached); repaints the form once known. */
+    /** A form photo: {key, ref {file, subfolder, type}, name, url, crop}; from a project asset or a file from disk. */
+    charPhotoOf(a) { return { key: "a:" + a.id, ref: ref(a), name: a.name, url: this.assetUrl(a), crop: null }; },
     charImgSize(a) {
-      const m = this._imgSz || (this._imgSz = {}), k = a.file + "|" + a.subfolder;
+      const m = this._imgSz || (this._imgSz = {}), k = (a.ref || a).file + "|" + (a.ref || a).subfolder;
       if (m[k]) return m[k] === "…" ? null : m[k];
       m[k] = "…";
       const im = new Image(); im.onload = () => { m[k] = [im.naturalWidth, im.naturalHeight]; if (this.cf && this.tool === "chars") this.charFormEst?.(); };
-      im.onerror = () => { m[k] = [0, 0]; }; im.src = this.assetUrl(a);
+      im.onerror = () => { m[k] = [0, 0]; }; im.src = a.url || this.assetUrl(a);
       return null;
     },
     charPhotoAspect(i = 0) {
-      const f = this.cf, ph = f?.photos[i]; const a = ph && this.p.assets.find((x) => x.id === ph.id); if (!a) return null;
-      const sz = this.charImgSize(a); if (!sz || !sz[0]) return null;
+      const f = this.cf, ph = f?.photos[i]; if (!ph) return null;
+      const sz = this.charImgSize(ph); if (!sz || !sz[0]) return null;
       const c = ph.crop; return c ? (sz[0] * c[2]) / (sz[1] * c[3]) : sz[0] / sz[1];
     },
     charSpec() {
       const f = this.cf, srcs = this.charSources(false), vsrcs = this.charSources(true);
-      const photos = f.photos.map((p) => { const a = this.p.assets.find((x) => x.id === p.id); return a && { asset: ref(a), crop: p.crop || null }; }).filter(Boolean);
+      const photos = f.photos.map((p) => ({ asset: p.ref, crop: p.crop || null }));
       const cs = f.clip && srcs.find((s) => s.v === f.clip.src), vs = f.voice && vsrcs.find((s) => s.v === f.voice.src);
       return { name: f.name.trim(), folder: f.folder.trim(), concept: f.concept, mode: f.mode, res: f.res, grid: f.grid,
         subject_name: f.subject_name.trim(), appearance: f.appearance.trim(), retained_attributes: f.retained_attributes.trim(), voice_description: f.voice_description.trim(),
@@ -245,7 +249,7 @@ export function installChars(Editor, { C, h, ICON }) {
       const f = this.cf; if (!f) return null;
       const sizes = [];
       for (let i = 0; i < f.photos.length; i++) {
-        const a = this.p.assets.find((x) => x.id === f.photos[i].id); const sz = a && this.charImgSize(a); if (!sz) return null;
+        const sz = this.charImgSize(f.photos[i]); if (!sz) return null;
         const c = f.photos[i].crop; sizes.push(c ? [Math.max(2, Math.round(sz[0] * c[2])), Math.max(2, Math.round(sz[1] * c[3]))] : sz);
       }
       const cs = f.clip && this.charSources(false).find((s) => s.v === f.clip.src);
@@ -275,9 +279,9 @@ export function installChars(Editor, { C, h, ICON }) {
       const folder = txt("folder", "папка (необязательно)"); folder.setAttribute("list", "h3z-cfolders");
       const concept = h("select", { class: "h3z-sel sm" }, C.CARD_CONCEPTS.map((k) => h("option", { value: k, selected: f.concept === k }, `${GLYPH[k]} ${CN[k]}`)));
       concept.onchange = () => { f.concept = concept.value; };
+      const head = h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, edit ? "Изменить карточку" : "Новая карточка"), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm", onclick: () => this.charCloseForm() }, "← К библиотеке"));
       const parts = [
-        h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, edit ? "Изменить карточку" : "Новая карточка"), h("i", { class: "grow" }),
-          h("button", { class: "h3z-btn sm", onclick: () => this.charCloseForm() }, "← К библиотеке")),
         h("div", { class: "h3z-grid2" }, this.field("Имя", txt("name", "Анна")), this.field("Тип", concept)),
         this.field("Папка", h("div", null, folder, h("datalist", { id: "h3z-cfolders" }, folders.map((x) => h("option", { value: x }))))),
       ];
@@ -306,22 +310,30 @@ export function installChars(Editor, { C, h, ICON }) {
       const noVae = !edit && !st.vae && !pr?.vae && (f.photos.length || f.clip);
       const noAvae = !edit && !st.audio_vae && !pr?.audio_vae && f.voice;
       const go = h("button", { class: "h3z-btn primary" + (f.busy ? " dis" : ""), onclick: () => this.charSubmit() }, f.busy ? (edit ? "Сохраняю…" : "Кодирую…") : edit ? "Сохранить" : "◈ Создать карточку");
-      parts.push(edit ? null : est,
+      // scrolling body + a footer that always stays in view (estimate, warnings, «Создать»)
+      const foot = h("div", { class: "cf-ft" }, edit ? null : est,
         noVae ? h("div", { class: "h3z-note err" }, "Нет VAE: выберите VAE в пресете моделей проекта или запустите генерацию один раз.") : null,
         noAvae ? h("div", { class: "h3z-note err" }, "Нет аудио-VAE для голоса: выберите его в пресете моделей проекта или запустите генерацию.") : null,
+        f.uploading ? h("div", { class: "h3z-note" }, `Загрузка файлов: ${f.uploading}…`) : null,
         h("div", { class: "h3z-row ft" }, go, h("button", { class: "h3z-btn", onclick: () => this.charCloseForm() }, "Отмена")));
-      L.append(h("div", { class: "h3z-chars form" + (f.busy ? " busy" : "") }, parts));
+      const form = h("div", { class: "h3z-chars form" + (f.busy ? " busy" : "") }, head, h("div", { class: "cf-body" }, parts), foot);
+      if (!edit) {   // files from Explorer anywhere on the form: images → photos, video → clip, audio → voice
+        form.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); form.classList.add("over"); } });
+        form.addEventListener("dragleave", (e) => { if (!form.contains(e.relatedTarget)) form.classList.remove("over"); });
+        form.addEventListener("drop", (e) => { form.classList.remove("over"); if (e.dataTransfer.files?.length) { e.preventDefault(); e.stopPropagation(); this.charAddFiles([...e.dataTransfer.files]); } });
+      }
+      L.append(form);
       if (!edit) this.charFormEst();
     },
     charPhotosBlock() {
       const f = this.cf, re = () => this.renderLeft();
       const list = h("div", { class: "h3z-cphotos" });
       f.photos.forEach((p, i) => {
-        const a = this.p.assets.find((x) => x.id === p.id); if (!a) return;
+        const a = p;
         const mv = (d) => { const j = i + d; if (j < 0 || j >= f.photos.length) return; const arr = f.photos; [arr[i], arr[j]] = [arr[j], arr[i]];
           if (i === 0 || j === 0) { let n = 0; arr.forEach((q, k) => { if (k && q.crop) { q.crop = null; n++; } }); if (n) this.toast("Первое фото сменилось — кадрирование остальных сброшено (их пропорции задаёт первое)"); } re(); };
         list.append(h("div", { class: "ph" + (i ? "" : " first"), title: a.name },
-          h("img", { src: this.assetUrl(a), draggable: "false" }),
+          h("img", { src: a.url, draggable: "false" }),
           h("span", { class: "n", title: i ? "" : "Первое фото задаёт пропорции карточки" }, i ? String(i + 1) : "1 ⤢"),
           p.crop ? h("span", { class: "cr", title: "Кадрировано" }, "✂") : null,
           h("div", { class: "bt" },
@@ -329,21 +341,21 @@ export function installChars(Editor, { C, h, ICON }) {
             h("span", { title: i ? "Кадрировать (пропорции первого фото)" : "Кадрировать (свободно — задаёт пропорции карточки)", onclick: () => this.charCrop(i) }, "✂"),
             h("span", { title: "Убрать", onclick: () => { f.photos.splice(i, 1); if (i === 0) f.photos.forEach((q) => { q.crop = null; }); re(); } }, "✕"))));
       });
-      const imgs = this.p.assets.filter((a) => a.category !== "audio" && a.category !== "video" && !f.photos.some((p) => p.id === a.id));
+      const imgs = this.p.assets.filter((a) => a.category !== "audio" && a.category !== "video" && !f.photos.some((p) => p.key === "a:" + a.id));
       const pick = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, imgs.length ? "+ фото из ассетов" : "нет картинок в ассетах"), imgs.map((a) => h("option", { value: a.id }, a.name)));
-      pick.onchange = () => { if (pick.value) { f.photos.push({ id: pick.value, crop: null }); re(); } };
-      list.append(pick);
-      list.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("application/x-h3s-asset")) { e.preventDefault(); list.classList.add("over"); } });
+      pick.onchange = () => { const a = this.p.assets.find((x) => x.id === pick.value); if (a) { f.photos.push(this.charPhotoOf(a)); re(); } };
+      list.append(h("div", { class: "add" }, pick, this.charFileBtn("image/*", true, "Фото с диска (можно несколько) · или перетащите файлы сюда · Ctrl+V — вставить картинку")));
+      list.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].some((t) => t === "application/x-h3s-asset" || t === "Files")) { e.preventDefault(); list.classList.add("over"); } });
       list.addEventListener("dragleave", () => list.classList.remove("over"));
-      list.addEventListener("drop", (e) => { list.classList.remove("over"); const id = e.dataTransfer.getData("application/x-h3s-asset"); const a = this.p.assets.find((x) => x.id === id);
-        if (a && a.category !== "audio" && a.category !== "video") { e.preventDefault(); if (!f.photos.some((p) => p.id === id)) { f.photos.push({ id, crop: null }); re(); } } });
-      return h("div", null, h("div", { class: "h3z-lbl" }, "Фото", h("em", null, f.photos.length ? `${f.photos.length} · первое задаёт пропорции` : "перетащите картинки из «Ассетов»")), list);
+      list.addEventListener("drop", (e) => { list.classList.remove("over"); if (e.dataTransfer.files?.length) { e.preventDefault(); e.stopPropagation(); this.charAddFiles([...e.dataTransfer.files], "photo"); return; } const id = e.dataTransfer.getData("application/x-h3s-asset"); const a = this.p.assets.find((x) => x.id === id);
+        if (a && a.category !== "audio" && a.category !== "video") { e.preventDefault(); if (!f.photos.some((p) => p.key === "a:" + id)) { f.photos.push(this.charPhotoOf(a)); re(); } } });
+      return h("div", null, h("div", { class: "h3z-lbl" }, "Фото", h("em", null, f.photos.length ? `${f.photos.length} · первое задаёт пропорции` : "из ассетов, с диска, перетаскиванием или Ctrl+V")), list);
     },
     charClipBlock() {
       const f = this.cf, re = () => this.renderLeft(), srcs = this.charSources(false);
       const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? "— без клипа —" : "нет видео / готовых клипов"), srcs.map((s) => h("option", { value: s.v, selected: f.clip?.src === s.v }, s.label)));
       sel.onchange = () => { f.clip = sel.value ? { src: sel.value, start: 0, frames: 22 } : null; re(); };
-      const out = [sel];
+      const out = [h("div", { class: "add" }, sel, this.charFileBtn("video/*,.mp4,.mov,.webm,.mkv", false, "Клип с диска · или перетащите видеофайл на форму"))];
       if (f.clip) {
         const s = srcs.find((x) => x.v === f.clip.src), maxF = Math.max(1, s?.frames || 9999);
         const st = h("input", { class: "h3z-in sm", type: "number", min: 0, max: Math.max(0, maxF - 1), value: f.clip.start, title: "Первый кадр" });
@@ -366,7 +378,7 @@ export function installChars(Editor, { C, h, ICON }) {
       const f = this.cf, re = () => this.renderLeft(), srcs = this.charSources(true);
       const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? "— без голоса —" : "нет аудио / видео со звуком"), srcs.map((s) => h("option", { value: s.v, selected: f.voice?.src === s.v }, s.label)));
       sel.onchange = () => { const s = srcs.find((x) => x.v === sel.value); f.voice = s ? { src: s.v, start: 0, end: Math.round(Math.min(s.dur || 8, 8) * 10) / 10 || null } : null; re(); };
-      const out = [sel];
+      const out = [h("div", { class: "add" }, sel, this.charFileBtn("audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.mp4,.mov,.webm", false, "Голос с диска (аудио или видео со звуком) · или перетащите файл на форму"))];
       if (f.voice) {
         const s = srcs.find((x) => x.v === f.voice.src), dur = s?.dur || 0;
         const a = h("input", { class: "h3z-in sm", type: "number", step: 0.1, min: 0, value: f.voice.start, title: "Начало, с" });
@@ -425,6 +437,51 @@ export function installChars(Editor, { C, h, ICON }) {
       });
     },
 
+    // ------------------------------------------------------------------ files from disk (picker, drop, paste)
+    charFileBtn(accept, multiple, title) {
+      const inp = h("input", { type: "file", accept, multiple: multiple || undefined, style: { display: "none" } });
+      inp.onchange = () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) this.charAddFiles(fs, accept.startsWith("image") ? "photo" : accept.startsWith("video") ? "clip" : "voice"); };
+      return h("span", { class: "fb" }, h("button", { class: "h3z-btn sm", type: "button", title, onclick: () => inp.click() }, "📁 С диска"), inp);
+    },
+    /** Files from the PC → the project's own folder (output/h3zerostudio/<id>/assets, one copy per content — the
+     *  self-contained project rule) but NOT into the asset list: they live in this form and in the card's sources.
+     *  want: "photo" | "clip" | "voice" | undefined (by file type: images → photos, video → clip, audio → voice). */
+    async charAddFiles(files, want) {
+      const f = this.cf; if (!f || f.edit) return;
+      const kind = (x) => IMG_RE.test(x.type) || /\.(png|jpe?g|webp|bmp|gif)$/i.test(x.name) ? "image" : VID_RE.test(x.type) || /\.(mp4|mov|webm|mkv)$/i.test(x.name) ? "video" : AUD_RE.test(x.type) || /\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(x.name) ? "audio" : "";
+      const list = files.filter((x) => kind(x));
+      if (list.length < files.length) this.toast(`Пропущено файлов: ${files.length - list.length} (нужны картинки, видео или аудио)`, true);
+      if (!list.length) return;
+      f.uploading = (f.uploading || 0) + list.length; this.renderLeft();
+      let ok = 0;
+      for (const x of list) {
+        const k = kind(x);
+        try {
+          const r = await this.host.upload(x, this.p.id);
+          const rf = { file: r.name, subfolder: r.subfolder || "", type: r.type || "output" };
+          const url = this.host.url({ filename: rf.file, subfolder: rf.subfolder, type: rf.type });
+          const name = (x.name && x.name !== "image.png" ? x.name : r.name).replace(/\.[^.]+$/, "");
+          if (this.cf !== f) return;
+          if (k === "image" && want !== "clip" && want !== "voice") {
+            if (!f.photos.some((p) => p.key === "u:" + rf.subfolder + "/" + rf.file)) f.photos.push({ key: "u:" + rf.subfolder + "/" + rf.file, ref: rf, name, url, crop: null });
+          } else if (k === "video" || k === "audio") {
+            const u = { v: "u:" + rf.subfolder + "/" + rf.file, kind: k, label: (k === "video" ? "📁🎞 " : "📁♪ ") + name, ref: rf, url };
+            if (k === "video") {
+              try { const info = await this.host.videoInfo({ filename: rf.file, subfolder: rf.subfolder, type: rf.type }, false); Object.assign(u, { w: info.width, h: info.height, frames: info.frames, dur: info.duration, has_audio: !!info.has_audio }); }
+              catch (e) { this.toast(`${x.name}: не удалось прочитать видео (${e.message || e})`, true); continue; }
+            } else u.dur = await new Promise((res) => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(isFinite(a.duration) ? a.duration : 0); a.onerror = () => res(0); a.src = url; });
+            if (!f.uploads.some((q) => q.v === u.v)) f.uploads.push(u);
+            const asVoice = want === "voice" || (want !== "clip" && k === "audio");
+            if (asVoice && (k === "audio" || u.has_audio)) f.voice = { src: u.v, start: 0, end: Math.round(Math.min(u.dur || 8, 8) * 10) / 10 || null };
+            else if (k === "video") f.clip = { src: u.v, start: 0, frames: Math.min(22, Math.max(1, u.frames || 22)) };
+            else this.toast(`${x.name}: в видео нет звука — для голоса не подходит`, true);
+          } else this.toast(`${x.name}: сюда нужна ${want === "clip" ? "видео" : "аудио"}-запись`, true);
+          ok++;
+        } catch (e) { this.toast("Не удалось загрузить " + x.name + ": " + (e.message || e), true); }
+      }
+      f.uploading = Math.max(0, (f.uploading || 0) - list.length);
+      if (this.cf === f) { this.renderLeft(); if (ok) this.toast(`Загружено в папку проекта: ${ok} (в «Ассеты» не добавляются)`); }
+    },
     // ------------------------------------------------------------------ prompt editor (increment 2)
     /** The card labels of a clip / span as prompt-editor reference items (after the plain refs). */
     peCardItems(holder, index, region) {
@@ -582,10 +639,10 @@ export function installChars(Editor, { C, h, ICON }) {
 
     // ------------------------------------------------------------------ crop modal
     charCrop(i) {
-      const f = this.cf, p = f?.photos[i]; const a = p && this.p.assets.find((x) => x.id === p.id); if (!a) return;
+      const f = this.cf, p = f?.photos[i], a = p; if (!a) return;
       const aspect = i ? this.charPhotoAspect(0) : null;
       if (i && !aspect) return this.toast("Подождите — размер первого фото ещё не известен", true);
-      const img = h("img", { src: this.assetUrl(a), draggable: "false" });
+      const img = h("img", { src: a.url, draggable: "false" });
       const box = h("div", { class: "rect" }, h("i", { class: "hd" }));
       const stage = h("div", { class: "stage" }, img, box);
       const st = { i, aspect, r: p.crop ? [...p.crop] : null, img, box };
