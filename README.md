@@ -326,16 +326,6 @@ rem опционально, для RTX VSR:
 Возьмите плитку меньше (например, 768×448): плиток станет больше, но каждая легче. Итоговая сетка и размер показываются до запуска.
 </details>
 
-## 🗺️ Roadmap
-
-- [ ] Английский интерфейс (сейчас UI на русском).
-- [ ] Публикация в ComfyUI Registry / Manager.
-- [ ] Нативное превью `taeh3`, когда оно появится в ComfyUI ([#15592](https://github.com/Comfy-Org/ComfyUI/issues/15592)).
-- [ ] Выходной латент с «новыми сценами» точно по сетке 5k+2 (сейчас — конкатенация).
-- [ ] Подстройка цветов превью и поведения дорожки «Аудио» на полноразмерной H3.
-
-Идеи и баги — в [Issues](https://github.com/zeroleloushe/H3ZeroStudio/issues).
-
 ## 🧪 Тесты
 
 ```bash
@@ -355,7 +345,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 
 ## 🇬🇧 English
 
-**H3ZeroStudio** is a CapCut-style timeline editor node for **MiniMax H3** in ComfyUI. The UI is in Russian; English is on the roadmap.
+**H3ZeroStudio** is a CapCut-style timeline editor node for **MiniMax H3** in ComfyUI. The UI is in Russian.
 
 - **Segments.** Build a long video from segments, each with its own prompt and reference images. *Extend* continues the previous segment: its latent tail is pinned and audio continues through H3's native denoise masks. *New scene* is a hard cut.
 - **Takes.** Keep up to 12 takes per segment. Only changed segments are re-generated, thanks to a content-hash cache.
