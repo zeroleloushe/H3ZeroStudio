@@ -219,3 +219,45 @@ def test_create_from_editor_body(dirs, monkeypatch):
     assert card["visual"]["tokens"] == est["visual_tokens"]
     with pytest.raises(ValueError):
         chars.create_from_editor(body)   # same name again without «Перезаписать»
+
+
+def test_prompt_editor_card_helpers_js(tmp_path):
+    """«Персонажи» 2 in the prompt editor: !Name → <Subject N> Name on apply, subjects / draft lines from the clip's cards."""
+    import pathlib, shutil, subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("no node")
+    js = pathlib.Path(__file__).resolve().parents[1] / "web" / "js"
+    drv = tmp_path / "d.mjs"
+    drv.write_text(f"""
+import * as C from {(js / "h3s_core.js").as_uri()!r};
+const {{ installChars }} = await import({(js / "h3s_chars.js").as_uri()!r});
+class E {{}}
+installChars(E, {{ C, h: () => null, ICON: {{}} }});
+const p = C.normalizeProject({{ id: "x", segments: [{{ id: "a", frames: 124, prompt: "",
+  cards: [{{ id: "s:Anna", w: 2 }}, {{ id: "s:Forest" }}, {{ id: "s:Nar" }}] }}],
+  cards: {{ "s:Anna": {{ name: "Anna", concept: "identity", vkind: "image", audio: true, subject_name: "Anna", appearance: "red coat", voice_description: "low voice" }},
+            "s:Forest": {{ name: "Pine Forest", concept: "background", vkind: "image" }},
+            "s:Nar": {{ name: "Old Narrator", concept: "voice", audio: true }} }} }});
+const e = new E(); e.p = p; e.charCard = () => null; e.charThumb = () => "";
+const subjects = e.peSubjects(p.segments[0], 0, false);
+e.pe = {{ refs: {{ subjects, items: e.peCardItems(p.segments[0], 0, false) }}, spec: {{ ctx: {{ kind: "seg", seg: 0 }} }} }};
+console.log(JSON.stringify({{
+  subjects: subjects.map((x) => [x.n, x.name]),
+  items: e.pe.refs.items.map((r) => r.token),
+  bang: e.peExpandBangs("!anna meets !Old_Narrator near (!Bob) and mail!Anna"),
+  draft: e.peDraftLines(),
+  status: e.peCardStatus("<Picture 1> walks; <Subject 7> x"),
+}}));
+""", encoding="utf-8")
+    r = subprocess.run([node, str(drv)], capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout)
+    assert o["subjects"] == [[1, "Anna"], [2, "Old_Narrator"]]
+    assert o["items"] == ["<Picture 1>", "<Picture 2>", "<Audio 1>", "<Audio 2>", "<Picture 3>", "<Audio 3>"]
+    assert o["bang"] == "<Subject 1> Anna meets <Subject 2> Old_Narrator near (!Bob) and mail!Anna"
+    defs = [d["line"] for d in o["draft"]["defs"]]
+    assert defs[0].startswith("<Subject 1> Anna — <Picture 1>, <Picture 2>, <Audio 1>, <Audio 2>: character") and "red coat" in defs[0] and "voice: low voice" in defs[0]
+    assert defs[1] == "<Picture 3> — Pine Forest: location" and defs[2].startswith("<Subject 2> Old_Narrator — <Audio 3>: speaker")
+    assert [d["line"] for d in o["draft"]["ret"]][-2:] == ["<Picture 3>: partially_preserved", "<Audio 3>: reference"]
+    assert "Pine Forest" in o["status"] and "Old Narrator" in o["status"] and "Subject 7" in o["status"] and "не упомянуты: Pine Forest" in o["status"].replace("Anna, ", "")

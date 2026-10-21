@@ -72,16 +72,19 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         if (cp) out.push({ token: `<Picture ${cp}>`, kind: "auto", name: `последний кадр отрезка ${i}`, sub: "добавляется автоматически", icon: "⟶", over: cp > C.MAX_REF_IMAGES });
         if (!C.isFootage(s)) C.videoRefs(p, s).forEach((a, k) => out.push({ token: `<Video ${k + 1}>`, kind: "video", name: a.name, sub: `видео${a.duration ? " · " + Number(a.duration).toFixed(1) + " с" : ""}`, thumb: a.poster ? this.posterUrl(a) : "", icon: "🎞", over: k >= C.MAX_REF_VIDEOS }));
         C.audioRefs(p, s).forEach((a, k) => out.push({ token: `<Audio ${k + 1}>`, kind: "audio", name: a.name, sub: "аудио", icon: "♪", over: k >= C.MAX_REF_AUDIOS }));
+        out.push(...(this.peCardItems?.(s, i, false) || []));   // «Персонажи»: after the plain refs
         return out;
       };
       if (ctx.kind === "seg" || ctx.kind === "marker") {
         const i = ctx.seg ?? -1, items = i >= 0 ? segList(i) : [];
-        return { items, valid: new Map(items.map((r) => [r.token, null])), note: i >= 0 ? `Референсы отрезка ${i + 1}` : "Маркер за концом ролика — референсов нет" };
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: i >= 0 ? `Референсы отрезка ${i + 1}` : "Маркер за концом ролика — референсов нет",
+          subjects: i >= 0 && ctx.kind === "seg" ? this.peSubjects?.(p.segments[i], i, false) || [] : [] };
       }
       if (ctx.kind === "region") {
         const rg = ctx.region || {};
         const items = C.orderedRefs(p, { refs: rg.refs || [] }).map((a, n) => ({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: "картинка участка", thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
-        return { items, valid: new Map(items.map((r) => [r.token, null])), note: "Референсы участка (картинки)" };
+        items.push(...(this.peCardItems?.(rg, null, true) || []));
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: "Референсы участка (картинки)", subjects: this.peSubjects?.(rg, null, true) || [] };
       }
       if (ctx.kind === "phrase") {
         const items = [{ token: "{n}", kind: "var", name: "номер последнего кадра", sub: "станет <Picture N>", icon: "#" }, { token: "<Picture {n}>", kind: "var", name: "последний кадр прошлого отрезка", sub: "как метка H3", icon: "⟶" }];
@@ -160,6 +163,8 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       // ---- @ autocomplete
       const kindIcon = { picture: "▣", auto: "⟶", video: "🎞", audio: "♪", var: "#" };
       const source = (cx) => {
+        const bang = pe.refs.subjects?.length ? cx.matchBefore(/(?:^|(?<=[\s(\[]))![\p{L}\p{N}_'-]*/u) : null;
+        if (bang) return this.peSubjectCompletion(bang, cx);
         const m = cx.matchBefore(/@[^\s@<>]*/);
         if (!m || (m.from === m.to && !cx.explicit)) return null;
         const q = m.text.slice(1).toLowerCase();
@@ -209,7 +214,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
               if (u.docChanged || u.selectionSet) this.peStatus();
               // the list opens on «@» only (activate-on-typing would swallow a quick Esc after any keystroke)
               if (u.docChanged && u.transactions.some((t) => t.isUserEvent("input.type"))) {
-                let at = false; u.changes.iterChanges((a, b, c, d, ins) => { if (ins.toString().endsWith("@")) at = true; });
+                let at = false; u.changes.iterChanges((a, b, c, d, ins) => { const x = ins.toString(); if (x.endsWith("@") || (x.endsWith("!") && pe.refs.subjects?.length)) at = true; });
                 if (at) setTimeout(() => cm.startCompletion(u.view), 0);
               }
             }),
@@ -248,6 +253,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         B("⌫ Очистить", "Очистить весь текст (отменяется Ctrl+Z)", () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } }), "danger"),
         h("span", { class: "sep" }),
         B("@ Референс", "Вставить ссылку на референс (или наберите @ в тексте)", () => { const r = view.state.selection.main; view.dispatch({ changes: { from: r.from, to: r.to, insert: "@" }, selection: { anchor: r.from + 1 } }); view.focus(); cm.startCompletion(view); }),
+        ...(this.peCardTools?.(B) || []),
         h("i", { class: "grow" }),
         tog("side", "☰ Структура H3", "Подсказка по структуре промпта H3", () => pe.el.classList.toggle("noside", !prefs.side)));
       // reference chips (click = insert at the caret)
@@ -316,6 +322,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       pe.statusEl.innerHTML = `<span><b>${words(t)}</b> слов</span><span><b>${t.length}</b> симв.</span><span>≈ <b>${approxTokens(t)}</b> токенов</span><span>строка ${ln.number}, столбец ${c - ln.from + 1}${sl}</span>`
         + (t !== pe.orig ? `<span class="chg">● изменён</span>` : "")
         + (bad.length ? `<span class="bad" title="${esc(bad.some((x) => x.startsWith("<Image")) ? "H3 ждёт <Picture N>, а не <Image N>. " : "")}Такой метки нет среди референсов — H3 получит ссылку в никуда">⚠ нет референса: ${esc(bad.join(", "))}</span>` : "")
+        + (this.peCardStatus?.(t) || "")
         + (warn.length ? `<span class="warn" title="${esc(warn.map((k) => k + " — " + pe.refs.valid.get(k)).join("\n"))}">⚠ ${esc(warn.join(", "))}: не во всех отрезках</span>` : "");
       clearTimeout(pe._sideT); pe._sideT = setTimeout(() => this.peSide(), 120);
     },
@@ -398,7 +405,8 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
     closePromptEditor(ok) {
       const pe = this.pe; if (!pe) return;
       if (pe.loading) { this.pe = null; return; }
-      const text = pe.view.state.doc.toString();
+      let text = pe.view.state.doc.toString();
+      if (ok && this.peExpandBangs) text = this.peExpandBangs(text);
       if (!ok && text !== pe.orig && !pe.confirm) return this.peAskClose();
       if (ok && text !== pe.orig) { try { pe.spec.apply(text); } catch (e) { this.toast("Не удалось сохранить промпт: " + (e.message || e), true); return; } }
       pe.view.destroy(); pe.el.remove(); this.pe = null;

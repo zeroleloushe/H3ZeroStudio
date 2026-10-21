@@ -6,6 +6,8 @@
 // Applying: drop a card on a clip / into a clip card or a ✂ span card — the whole set goes in after the plain
 // refs (C.cardLabels numbers <Picture N> / <Video N> / <Audio N>); weight > 1 = copies, < 1 = weaker; on / off.
 // Backend: /h3zero/chars (h3s_chars.py, routes.py).
+import { parseSections, promptTemplate } from "./h3s_prompted.js";
+
 export function installChars(Editor, { C, h, ICON }) {
   const CN = C.CARD_CONCEPT_NAMES;
   const GLYPH = { identity: "👤", background: "🏞", clothing: "👗", style: "🎨", pose_motion: "🏃", voice: "🎙", generic: "◈" };
@@ -421,6 +423,161 @@ export function installChars(Editor, { C, h, ICON }) {
         for (const x of [...p.segments, ...(p.regions || [])]) for (const e of x.cards || []) if (e.id === old) e.id = card.id;
         const cs = { ...(p.cards || {}) }; delete cs[old]; cs[card.id] = C.cardSnap(card); p.cards = cs;
       });
+    },
+
+    // ------------------------------------------------------------------ prompt editor (increment 2)
+    /** The card labels of a clip / span as prompt-editor reference items (after the plain refs). */
+    peCardItems(holder, index, region) {
+      const labels = region ? C.cardLabels(this.p, holder, null, true, true) : C.cardLabels(this.p, holder, index);
+      const out = [];
+      for (const r of labels) {
+        const lib = this.charCard(r.id), th = lib && this.charThumb(lib), sn = r.snap;
+        const all = r.image.length + r.video.length + r.audio.length;
+        const mk = (kind, tag, nums) => nums.forEach((n, k) => out.push({ token: `<${tag} ${n}>`, kind, card: r.id, name: sn.name || r.id,
+          sub: `◈ ${CN[sn.concept] || "карточка"}` + (nums.length > 1 ? ` · копия ${k + 1}/${nums.length}` : "") + (sn.subject_name ? ` · ${sn.subject_name}` : ""),
+          thumb: kind === "audio" ? "" : th || "", icon: kind === "audio" ? "🎙" : GLYPH[sn.concept] || "◈", over: false }));
+        mk("picture", "Picture", r.image); mk("video", "Video", r.video); mk("audio", "Audio", r.audio);
+        if (!all) continue;
+      }
+      return out;
+    },
+    /** <Subject N> of the applied cards that name someone (characters, voices, «Другое», or any card with a subject name). */
+    peSubjects(holder, index, region) {
+      const labels = region ? C.cardLabels(this.p, holder, null, true, true) : C.cardLabels(this.p, holder, index);
+      const out = [];
+      for (const r of labels) {
+        const sn = r.snap;
+        if (!sn.subject_name && !["identity", "voice", "generic"].includes(sn.concept)) continue;
+        const name = (sn.subject_name || String(sn.name || "").trim().split(/\s+/).join("_")).replace(/[^\p{L}\p{N}_'-]/gu, "") || `S${out.length + 1}`;
+        out.push({ n: out.length + 1, id: r.id, name, snap: sn, image: r.image, video: r.video, audio: r.audio });
+      }
+      return out;
+    },
+    peHolder() {
+      const ctx = this.pe?.spec?.ctx || {};
+      if (ctx.kind === "seg" && ctx.seg >= 0) return { holder: this.p.segments[ctx.seg], index: ctx.seg, region: false };
+      if (ctx.kind === "region" && ctx.region) return { holder: (this.p.regions || []).find((r) => r.id === ctx.region.id) || ctx.region, index: null, region: true };
+      return null;
+    },
+    peSubjectCompletion(m, cx) {
+      const pe = this.pe, q = m.text.slice(1).toLowerCase();
+      const subs = pe.refs.subjects.filter((x) => !q || x.name.toLowerCase().includes(q) || String(x.snap.name || "").toLowerCase().includes(q));
+      const options = subs.map((x, k) => ({ label: `<Subject ${x.n}> ${x.name}`, detail: x.snap.name, info: `◈ ${CN[x.snap.concept]}` + (x.snap.appearance ? " · " + x.snap.appearance : ""), type: "subject", boost: -k,
+        _r: { kind: "picture", thumb: this.charThumb(this.charCard(x.id)) || "" },
+        apply: (view, c, from, to) => {
+          const after = view.state.sliceDoc(to, to + 1), ins = `<Subject ${x.n}> ${x.name}` + (after && /\s/.test(after) ? "" : " ");
+          view.dispatch({ changes: { from, to, insert: ins }, selection: { anchor: from + ins.length }, userEvent: "input.complete" });
+        } }));
+      if (!options.length) return null;
+      return { from: m.from, to: cx.pos, options, filter: false };
+    },
+    /** On «Применить»: !Name of a known card → <Subject N> Name. */
+    peExpandBangs(text) {
+      const subs = this.pe?.refs?.subjects || []; if (!subs.length) return text;
+      const by = new Map(); for (const x of subs) { by.set(x.name.toLowerCase(), x); const nm = String(x.snap.name || "").replace(/\s+/g, "_").toLowerCase(); if (nm && !by.has(nm)) by.set(nm, x); }
+      return text.replace(/(^|[\s(\[])!([\p{L}\p{N}_'-]+)/gu, (all, pre, nm) => { const x = by.get(nm.toLowerCase()); return x ? `${pre}<Subject ${x.n}> ${x.name}` : all; });
+    },
+    peCardTools(B) {
+      const pe = this.pe, cards = pe.refs.items.filter((r) => r.card);
+      if (!cards.length) return [];
+      const voiced = (pe.refs.subjects || []).filter((x) => x.audio.length).slice(0, 4);
+      return [h("span", { class: "sep" }),
+        B("◈ Набросать из персонажей", "Заполнить subject_definitions и retention_analysis по карточкам «Персонажей» этого промпта (их метки, имена, внешность, что сохранить, голос). Ctrl+Z — отменить", () => this.peDraftFromCards()),
+        ...voiced.map((x) => B(`🎙 ${x.name}`, `Реплика: <Subject ${x.n}> ${x.name} says: <d>[English] …</d> (голос — <Audio ${x.audio[0]}>)`, () => this.peSpeaker(x)))];
+    },
+    peSpeaker(x) {
+      const v = this.pe?.view; if (!v) return;
+      const pre = `<Subject ${x.n}> ${x.name} says:\n<d>[English] `, post = "</d>";
+      const r = v.state.selection.main, ln = v.state.doc.lineAt(r.from), lead = ln.text.trim() && r.from !== ln.from ? "\n" : "";
+      const nx = v.state.sliceDoc(r.to, r.to + 1), tail = nx && nx !== "\n" ? "\n" : "";
+      v.dispatch({ changes: { from: r.from, to: r.to, insert: lead + pre + post + tail }, selection: { anchor: r.from + lead.length + pre.length }, scrollIntoView: true, userEvent: "input" });
+      v.focus();
+    },
+    peDraftLines() {
+      const pe = this.pe, ph = this.peHolder(); if (!ph) return { defs: [], ret: [] };
+      const labels = ph.region ? C.cardLabels(this.p, ph.holder, null, true, true) : C.cardLabels(this.p, ph.holder, ph.index);
+      const subs = new Map((pe.refs.subjects || []).map((x) => [x.id, x]));
+      const EN = { identity: "character", background: "location", clothing: "outfit", style: "visual style", pose_motion: "motion", voice: "voice", generic: "reference" };
+      const RET = { identity: "fully_preserved", clothing: "fully_preserved", generic: "fully_preserved", background: "partially_preserved", style: "attribute_transfer", pose_motion: "attribute_transfer", voice: "reference" };
+      const defs = [], ret = [];
+      for (const r of labels) {
+        const sn = r.snap, sub = subs.get(r.id);
+        const look = [...r.image.map((n) => `<Picture ${n}>`), ...r.video.map((n) => `<Video ${n}>`)], aud = r.audio.map((n) => `<Audio ${n}>`);
+        const desc = [sn.appearance, sn.retained_attributes ? "keep " + sn.retained_attributes : "", aud.length && sn.voice_description ? "voice: " + sn.voice_description : ""].filter(Boolean).join("; ");
+        const toks = [...look, ...aud].join(", ");
+        const head = sub ? `<Subject ${sub.n}> ${sub.name} — ${toks}` : `${toks} — ${sn.name || r.id}`;
+        const what = sub ? (look.length ? EN[sn.concept] === "voice" ? "speaker" : EN[sn.concept] : "speaker (voice only)") : EN[sn.concept] || "reference";
+        defs.push({ toks: [...look, ...aud], line: `${head}: ${what}${look.length && aud.length ? ` (${look.length > 1 ? "looks" : "look"} ${look.join(", ")}, voice ${aud.join(", ")})` : ""}${desc ? ". " + desc : ""}` });
+        for (const t of look) ret.push({ tok: t, line: `${t}: ${RET[sn.concept] || "fully_preserved"}` });
+        for (const t of aud) ret.push({ tok: t, line: `${t}: reference` });
+      }
+      return { defs, ret };
+    },
+    peDraftFromCards() {
+      const pe = this.pe, v = pe.view; if (!v) return;
+      const { defs, ret } = this.peDraftLines();
+      if (!defs.length) return this.toast("У этого промпта нет карточек «Персонажей»", true);
+      const t = v.state.doc.toString(), secs = parseSections(t);
+      if (!secs.length) {   // no structure yet: the H3 skeleton with the plain refs + the card lines, the old text into detailed_description
+        const plain = pe.refs.items.filter((r) => !r.card && r.kind !== "var").map((r) => ({ token: r.token, name: r.kind === "auto" ? "last frame of the previous shot" : r.name, kind: r.kind }));
+        const isCont = pe.refs.items.some((r) => r.kind === "auto");
+        let tpl = promptTemplate(plain, { task: pe.spec.ctx.kind === "region" ? "[video editing]" : isCont ? "[video continuation]" : "[reference generation]" });
+        if (!plain.length) tpl = tpl.replace("subject_definitions:\n<Picture 1> — \n", "subject_definitions:\n").replace("retention_analysis:\n<Picture 1>: fully_preserved\n", "retention_analysis:\n");
+        tpl = tpl.replace("\n\nsummary:", (plain.length ? "\n" : "") + defs.map((d) => d.line).join("\n") + "\n\nsummary:");
+        tpl = tpl.replace("\n\ndetailed_description:", (plain.length ? "\n" : "") + ret.map((d) => d.line).join("\n") + "\n\ndetailed_description:");
+        const at = tpl.indexOf("[Shot 1] ") + "[Shot 1] ".length, full = t.trim() ? tpl.slice(0, at) + t.trim() + tpl.slice(at) : tpl;
+        v.dispatch({ changes: { from: 0, to: t.length, insert: full }, selection: { anchor: full.indexOf("[Shot 1] ") + 9 }, scrollIntoView: true });
+        this.toast(t.trim() ? "Набросок из персонажей вставлен, прежний текст — в detailed_description (Ctrl+Z — отменить)" : "Набросок из персонажей вставлен");
+        v.focus(); return;
+      }
+      // structured: add what is missing to subject_definitions / retention_analysis (creating them in order if absent)
+      const changes = [];
+      const put = (key, lines, before) => {
+        const s = secs.find((x) => x.key === key);
+        if (s) {
+          const L = lines.filter((d) => !d.toks.some((tk) => s.body.includes(tk))).map((d) => d.line);
+          if (!L.length) return 0;
+          let at = s.to; while (at > s.from && /\s/.test(t[at - 1])) at--;
+          changes.push({ from: at, insert: "\n" + L.join("\n") }); return L.length;
+        }
+        const nxt = secs.find((x) => before.includes(x.key));
+        const at = nxt ? nxt.at : t.length;
+        changes.push({ from: at, insert: (at && t[at - 1] !== "\n" ? "\n\n" : "") + `${key}:\n${lines.map((d) => d.line).join("\n")}\n\n` }); return lines.length;
+      };
+      const n1 = put("subject_definitions", defs, ["summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music"]);
+      const n2 = put("retention_analysis", ret.map((d) => ({ toks: [d.tok], line: d.line })), ["detailed_description", "overall_soundscape", "non_diegetic_music"]);
+      if (!changes.length) return this.toast("Все карточки уже описаны в subject_definitions и retention_analysis");
+      v.dispatch({ changes, scrollIntoView: true });
+      this.toast(`◈ Добавлено: ${n1} в subject_definitions, ${n2} в retention_analysis (Ctrl+Z — отменить)`);
+      v.focus();
+    },
+    /** Status bar: cards the prompt never cites (an auto line is added), unknown <Subject N> / !Name, cards switched off but named. */
+    peCardStatus(t) {
+      const pe = this.pe, ph = this.peHolder(); if (!ph || !ph.holder) return "";
+      const e2 = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const subs = pe.refs.subjects || [], out = [];
+      const items = pe.refs.items.filter((r) => r.card);
+      const byCard = new Map(); for (const r of items) { if (!byCard.has(r.card)) byCard.set(r.card, []); byCard.get(r.card).push(r.token); }
+      const silent = [];
+      for (const [id, toks] of byCard) {
+        if (!toks.some((tk) => t.includes(tk))) silent.push(this.p.cards?.[id]?.name || id);   // same rule as C.cardPhrases
+      }
+      if (silent.length) out.push(`<span class="warn" title="Метки этих карточек в промпте не упомянуты — при генерации добавится строка по типу карточки (например «&lt;Picture N&gt; shows Anna…»). «◈ Набросать из персонажей» опишет их явно.">◈ не упомянуты: ${e2(silent.join(", "))}</span>`);
+      const badS = [...new Set([...t.matchAll(/<Subject\s*(\d+)>/g)].map((m) => +m[1]).filter((n) => n < 1 || n > subs.length))];
+      if (badS.length && subs.length) out.push(`<span class="bad" title="Персонажей с такими номерами у этого промпта нет (всего ${subs.length})">✕ ${badS.map((n) => `&lt;Subject ${n}&gt;`).join(", ")}</span>`);
+      const known = new Set(subs.flatMap((x) => [x.name.toLowerCase(), String(x.snap.name || "").replace(/\s+/g, "_").toLowerCase()]));
+      const bangs = [...new Set([...t.matchAll(/(?:^|[\s(\[])!([\p{L}\p{N}_'-]+)/gu)].map((m) => m[1]))];
+      const unk = bangs.filter((b) => !known.has(b.toLowerCase())), ok = bangs.filter((b) => known.has(b.toLowerCase()));
+      if (ok.length) out.push(`<span title="При «Применить» станут &lt;Subject N&gt; Имя">!→ ${e2(ok.join(", "))}</span>`);
+      if (unk.length) out.push(`<span class="bad" title="Нет такой карточки у этого промпта — останется как текст">✕ !${e2(unk.join(", !"))}</span>`);
+      const off = (ph.holder.cards || []).filter((e) => e.on === false || !C.cardCopies(e.w ?? 1)[0]).map((e) => this.p.cards?.[e.id]).filter(Boolean)
+        .filter((sn) => [sn.subject_name, sn.name].some((nm) => nm && new RegExp(`(^|[^\\p{L}])!?${String(nm).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}])`, "iu").test(t)));
+      if (off.length) out.push(`<span class="warn" title="Карточка выключена — в генерацию не подаётся, хотя промпт её называет">◈ выключены: ${e2(off.map((x) => x.name).join(", "))}</span>`);
+      if (ph.region) {
+        const vo = (ph.holder.cards || []).map((e) => this.p.cards?.[e.id]).filter((sn) => sn && sn.audio && !sn.vkind);
+        if (vo.length) out.push(`<span class="warn" title="Участок не подаёт голоса карточек">◈ голос в участке не идёт: ${e2(vo.map((x) => x.name).join(", "))}</span>`);
+      }
+      return out.join("");
     },
 
     // ------------------------------------------------------------------ crop modal
