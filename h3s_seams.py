@@ -149,3 +149,29 @@ def level_lock(frames, at, n=LEVEL_FRAMES):
     info["gain"] = [round(float(x), 3) for x in (ga / gb)]
     info["offset"] = [round(float(x) * 255, 1) for x in (oa - ob)]
     return info
+
+
+def span_seams(images, a, e, n=0, wave=None, sr=None, fps=24, head=True, tail=True, w=12):
+    """«✂ Участок» / bridge: both seams of a regenerated span [a, e) in the stitched frames — rated like clip joins,
+    level-locked first when n > 0 (then the rating is the one after, the raw value kept as «до»). In place on images.
+    Returns {"head": {...}, "tail": {...}} (a side is missing when it has no clean context next to it)."""
+    out = {}
+    for side, at, on in (("head", int(a), head), ("tail", int(e), tail)):
+        if not on or at < 3 or at > images.shape[0] - 3:
+            continue
+        raw = rate_video(images[max(0, at - w):at], images[at:at + w])
+        if raw is None:
+            continue
+        r = dict(raw)
+        if n:
+            info = level_lock(images, at, n)
+            after = rate_video(images[max(0, at - w):at], images[at:at + w]) if info else None
+            if after:
+                r = dict(after, raw={"ratio": raw["ratio"], "verdict": raw["verdict"]}, level=info)
+        if wave is not None and sr:
+            ra = rate_audio(wave, int(sr), int(round(at / fps * sr)))
+            if ra:
+                r["audio"] = ra
+        r["at"] = at
+        out[side] = r
+    return out

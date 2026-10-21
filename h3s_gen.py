@@ -2117,10 +2117,22 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         log(f"region «{name}»: frames {win['a']}-{win['a'] + n_rep} replaced (frame-exact)"
             + (f"; audio spliced sample-exactly: offset {sinfo['lag_ms']} ms, corr head {sinfo['corr_head']} / tail {sinfo['corr_tail']}, "
                f"gain {sinfo['gain']}, seams at {sinfo['head_at_s']}s / {sinfo['tail_at_s']}s" if sinfo else ""))
+        try:   # both seams of the span: level lock (decoded frames only) + rating, like the clip joins
+            from . import h3s_seams
+            r_end = win["a"] + n_rep
+            seams_r = h3s_seams.span_seams(images, win["a"], r_end, level_n, out_audio["waveform"][0] if out_audio else None,
+                                           out_audio["sample_rate"] if out_audio else None, fps, head=win["a"] > win["ws"], tail=r_end < min(win["we"], images.shape[0]))
+            for sd_, sq_ in seams_r.items():
+                log(f"region «{name}»: {'start' if sd_ == 'head' else 'end'} seam {h3s_seams.VERDICTS[sq_['verdict']]} ×{sq_['ratio']}"
+                    + (f" (before level lock ×{sq_['raw']['ratio']})" if sq_.get("raw") else "") + (f", sound jump {sq_['audio']['db']} dB" if sq_.get("audio", {}).get("warn") else ""))
+        except Exception as e:
+            seams_r = {}
+            vlog(f"region «{name}»: seam rating failed: {e}")
         rres = segment_media(d, sub, "r" + rp["key"], fr_w, ra, audio_vae, audio, proj, {"frames": int(fr_w.shape[0])}, fps)
         rres.update({"region": rg["id"], "key": rp["key"], "cached": hit_r, "frames": int(fr_w.shape[0]), "kind": kind,
                      "ws": win["ws"], "a": win["a"], "b": win["b"], "we": win["we"], "seed": int(rg.get("seed") or 0),
-                     "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "created": int(time.time()), "generated": rp["gen"]})
+                     "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "created": int(time.time()), "generated": rp["gen"],
+                     "mode": core.span_kind(win), "seams": seams_r})
         if MR.any:
             rres["models"] = MR.info(max(0, win["seg"]))
         reg_results.append(rres)

@@ -33,7 +33,8 @@ def dirs(tmp_path):
 
 def project(**kw):
     p = {"id": "rg", "settings": {"prompt": "global", "res_mode": "custom", "width": 96, "height": 64, "steps": 2, "cfg": 1.0,
-                                  "sampler": "euler", "scheduler": "simple", "overlap_blocks": 1},
+                                  "sampler": "euler", "scheduler": "simple", "overlap_blocks": 1,
+                                  "level_lock": False},   # frame-exact context checks (level lock at span seams: test_bridge)
          "assets": [{"id": "a1", "file": "hero.png", "subfolder": "h3zerostudio", "category": "character"}],
          "segments": [{"id": "s1", "frames": 39, "prompt": "one"}, {"id": "s2", "frames": 56, "prompt": "two"}]}
     p.update(kw)

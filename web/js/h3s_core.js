@@ -858,6 +858,21 @@ export function regionWindow(project, region, items = null) {
   return out;
 }
 
+/** Mirror of h3s_core.span_kind: region (inside a shot) · bridge (across a cut / gap) · prologue · extension. */
+export function spanKind(w) {
+  if (!w || w.mode !== "bridge") return "region";
+  if (!w.head) return "prologue";
+  if (w.to_end && !w.tail_blocks) return "extension";
+  return "bridge";
+}
+export const SPAN_NAMES = { region: "Участок", bridge: "Мост", prologue: "Пролог", extension: "Продолжение" };
+export const SPAN_HELP = {
+  region: "перегенерация внутри сцены: контекст до и после — из той же сцены",
+  bridge: "через склейку / промежуток: хвост сцены до и начало следующей — контекст, середина генерируется",
+  prologue: "контекста до нет, только последующий — генерация подводит к следующей сцене",
+  extension: "контекста после нет, только предыдущий — генерация продолжает сцену",
+};
+
 /** Mirror of h3s_core.level_lock_frames (0 = off). */
 export function levelLockFrames(project) {
   const s = project.settings;

@@ -1373,6 +1373,18 @@ def region_window(project, region, items=None):
     return out
 
 
+def span_kind(win):
+    """The four faces of the one span engine: "region" (inside a shot), "bridge" (across a cut / gap),
+    "prologue" (no context before), "extension" (no context after, past the end of a shot)."""
+    if win.get("mode") != "bridge":
+        return "region"
+    if not win.get("head"):
+        return "prologue"
+    if win.get("to_end") and not win.get("tail_blocks"):
+        return "extension"
+    return "bridge"
+
+
 def bridge_window(project, region, items=None):
     """A span over a join (cut / gap) — same engine as a region, but its source is the stitched picture and sound
     of the window, VAE-encoded (the two sides are separate latent chains). Clean head context = the end of the

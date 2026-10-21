@@ -48,6 +48,27 @@ def test_gap_fill_prologue_and_extension():
     assert core.region_key(p2, {"id": "r", "start": 240, "end": 290}, w2, ["k0", "k1", "k2"]) != k1   # gap is in the key
 
 
+def test_span_kinds():
+    p = proj()
+    kind = lambda a, b: core.span_kind(core.region_window(p, {"start": a, "end": b, "head": -1, "tail": -1}))
+    assert (kind(40, 70), kind(240, 290), kind(250, 290), kind(200, 270)) == ("region", "bridge", "prologue", "extension")
+
+
+def test_span_seams_level_lock_both_sides():
+    import torch
+    from h3s import h3s_seams
+    g = torch.Generator().manual_seed(0)
+    base = torch.rand(1, 32, 48, 3, generator=g) * 0.3 + 0.3
+    fr = torch.cat([base + 0.004 * k for k in range(60)])                      # slow drift (motion)
+    fr[20:40] += 0.12                                                           # the regenerated span came out brighter
+    raw = h3s_seams.span_seams(fr.clone(), 20, 40, 0)
+    assert set(raw) == {"head", "tail"} and raw["head"]["verdict"] == "hard" and "raw" not in raw["head"]
+    lk = h3s_seams.span_seams(fr, 20, 40, 12)
+    for sd in ("head", "tail"):
+        assert lk[sd]["raw"]["verdict"] == "hard" and lk[sd]["ratio"] < raw[sd]["ratio"] and lk[sd]["level"]
+    assert h3s_seams.span_seams(fr, 20, 40, 12, head=False).keys() == {"tail"}
+
+
 def test_bridge_past_the_end_is_an_error():
     w = core.region_window(proj(), {"start": 390, "end": 460, "head": -1, "tail": -1})
     assert w["error"]
@@ -91,9 +112,12 @@ def test_bridge_e2e_over_a_gap_with_the_tiny_model(tmp_path, monkeypatch):
     img1, au1, _, info = gen.run_project(pt, clip, vae, project(regions=[rg], run={"region": "b1"}), avae)
     r = info["regions"][0]
     assert (r["ws"], r["a"], r["b"], r["we"]) == (17, 34, 85, 107) and r["generated"]
+    assert r["mode"] == "bridge" and set(r["seams"]) == {"head", "tail"}               # both seams rated
+    assert r["seams"]["head"]["at"] == 34 and r["seams"]["tail"]["at"] == 85 and r["seams"]["head"]["verdict"] in ("ok", "soft", "hard")
     assert [c[0] for c in clip.calls] == ["global\nbridge"]                         # clips cached: one span pass
     near = lambda a, b, tol=6 / 255: a.shape == b.shape and float((a - b).abs().max()) <= tol   # cached clips come from masters
-    assert near(img1[:34], img0[:34]) and near(img1[85:], img0[85:])
+    L = core.level_lock_frames(core.normalize_project(project()))                   # level lock on both seams touches ±L frames
+    assert near(img1[:34 - L], img0[:34 - L]) and near(img1[85 + L:], img0[85 + L:])
     assert float(img1[56:73].abs().max()) > 0.0                                      # the gap got picture
     win = core.region_window(core.normalize_project(project(regions=[rg])), rg)
     sv = seen[0][0]

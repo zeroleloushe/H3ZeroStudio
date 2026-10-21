@@ -3,10 +3,14 @@
 // tail context (native per-modality noise mask: the context latents are kept, only the middle is noised) and the
 // backend splices [a, b) back frame-exactly (video) and sample-exactly (sound: correlation offset + short fades at
 // the quietest points). Each result is a take of the region («Оригинал» = the clips as they are).
+// Stage 5: the same engine regenerates a span ACROSS a cut or a gap (bridge: tail of the shot before + head of the next
+// as context), before the first clip (prologue: following context only) and past the end of a shot (extension:
+// preceding context only); both seams of a span are level-locked and rated (h3s_seams.span_seams).
 // Entry points: the «✂ Участок» toggle on the timeline toolbar (drag on the timeline) and the clip menu.
 const SNAP = ["start", "end", "head", "tail", "prompt", "refs", "seed"];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const rnd = () => Math.floor(Math.random() * 2 ** 31);
+const SEAM_TXT = { ok: "шов незаметен", soft: "лёгкий скачок", hard: "резкий шов" };
 
 export function installRegions(Editor, { C, h, ICON }) {
   const proto = Editor.prototype;
@@ -36,16 +40,16 @@ export function installRegions(Editor, { C, h, ICON }) {
       this.root?.classList.toggle("h3z-regmode", this.regionMode);
       this.$.regBtn?.classList.toggle("on", this.regionMode);
       if (this.$.regHint) this.$.regHint.style.display = this.regionMode ? "" : "none";
-      if (this.regionMode) this.toast("✂ Участок: тяните по видеодорожке, чтобы выделить часть ролика · Esc — выход");
+      if (this.regionMode) this.toast("✂ Участок: тяните по видеодорожке — внутри сцены, через склейку / промежуток (мост), в промежутке до сцены (пролог) или за её конец · Esc — выход");
       this.renderTimeline();
     },
 
     regionToolbar() {
       const $ = this.$;
       $.regBtn = h("button", { class: "h3z-btn sm h3z-regbtn" + (this.regionMode ? " on" : ""), html: "<b>✂</b><span>Участок</span>",
-        title: "Пересоздать участок (R): включите и тяните по таймлайну — выделенная часть ролика перегенерируется,\nа видео и звук до и после неё остаются и служат контекстом. Повторное нажатие или Esc — выход",
+        title: "Пересоздать участок (R): включите и тяните по таймлайну — выделенная часть ролика перегенерируется,\nа видео и звук до и после неё остаются и служат контекстом.\nВыделение может пересекать склейку или промежуток (мост), начинаться в промежутке до сцены (пролог)\nили заходить за её конец (продолжение). Повторное нажатие или Esc — выход",
         onclick: () => this.toggleRegionMode() });
-      $.regHint = h("div", { class: "h3z-reghint", style: { display: this.regionMode ? "" : "none" } }, "тяните по видеодорожке · края двигаются · Esc — выход");
+      $.regHint = h("div", { class: "h3z-reghint", style: { display: this.regionMode ? "" : "none" } }, "тяните по видеодорожке — можно через склейку или промежуток · Esc — выход");
       return [$.regBtn, $.regHint];
     },
 
@@ -88,7 +92,8 @@ export function installRegions(Editor, { C, h, ICON }) {
       this.selRegion = rg.id;
       this.renderTimeline();
       const w2 = this.regionWin(this.region(rg.id));
-      this.toast(w2.error ? "Участок: " + w2.error : `Участок ${(w2.a / C.FPS).toFixed(2)}–${(w2.b / C.FPS).toFixed(2)} с (сетка H3: 17 кадров) · допишите промпт и нажмите «↻ Пересоздать»`, !!w2.error);
+      const kn = C.spanKind(w2);
+      this.toast(w2.error ? "Участок: " + w2.error : (kn !== "region" ? C.SPAN_NAMES[kn] + " · " : "") + `Участок ${(w2.a / C.FPS).toFixed(2)}–${(w2.b / C.FPS).toFixed(2)} с (сетка H3: 17 кадров) · допишите промпт и нажмите «↻ Пересоздать»`, !!w2.error);
       return rg.id;
     },
     /** Clip menu «↻ Перегенерировать участок»: a range around the clicked frame. */
@@ -98,7 +103,7 @@ export function installRegions(Editor, { C, h, ICON }) {
      *  they were made on (by segment id + offset), and vanish together with it. */
     regionAnchors() {
       const its = this.items(), layout = its.map((it) => ({ id: this.p.segments[it.index]?.id, start: it.start, end: it.end }));
-      const regs = (this.p.regions || []).map((r) => { const l = layout.find((x) => x.start <= r.start && r.start < x.end); return { id: r.id, sid: l?.id, off: l ? r.start - l.start : 0, start: r.start }; });
+      const regs = (this.p.regions || []).map((r) => { const l = layout.find((x) => x.start <= r.start && r.start < x.end) || layout.find((x) => x.start > r.start); return { id: r.id, sid: l?.id, off: l ? r.start - l.start : 0, start: r.start }; });
       return { key: JSON.stringify(layout), layout, regs };
     },
     regionsRebase(a) {
@@ -151,10 +156,17 @@ export function installRegions(Editor, { C, h, ICON }) {
       if (ok && we > b) el.append(h("div", { class: "zt", style: { left: px(b), width: (we - b) * ppf + "px" }, title: `Контекст после: ${we - b} кадр. — остаётся как есть и задаёт конец` }));
       if (!rg) return el;
       const n = this.regionNo(rg.id), k = tk ? (rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1 : 0;
-      const lbl = `✂ ${n}` + ((b - a) * ppf > 70 ? ` · ${((b - a) / C.FPS).toFixed(1)} с` : "") + (k ? ` · дубль ${k}` : rg.takes?.length ? " · оригинал" : "") + (tk && !tk.fresh ? " · устарел" : "");
+      const kn = ok ? C.spanKind(w) : "region";
+      if (kn !== "region") el.classList.add("span-" + kn);
+      const lbl = `✂ ${n}` + (kn !== "region" ? " · " + C.SPAN_NAMES[kn].toLowerCase() : "") + ((b - a) * ppf > 70 ? ` · ${((b - a) / C.FPS).toFixed(1)} с` : "") + (k ? ` · дубль ${k}` : rg.takes?.length ? " · оригинал" : "") + (tk && !tk.fresh ? " · устарел" : "");
       const tab = h("div", { class: "tab", style: { left: px(a) }, title: (ok ? `Участок ${n}: пересоздаётся ${C.fmtTime(a / C.FPS)}–${C.fmtTime(b / C.FPS)} (${b - a} кадр.)\nКонтекст: ${a - ws} кадр. до · ${we - b} кадр. после · окно H3 ${we - ws} кадр.` : `Участок ${n}: ${w.error}`) +
         (tk && !tk.fresh ? "\nДубль устарел: отрезки под ним или настройки изменились — пересоздайте" : "") + "\nКлик — карточка участка · тяните — сдвинуть" }, lbl);
       tab.addEventListener("pointerdown", (e) => this.regionDrag(e, rg.id, "move"));
+      if (tk?.fresh && ok) for (const [sd, sq] of Object.entries(tk.take.result?.seams || {})) {   // both seams of the applied take
+        const m = h("div", { class: "h3z-seamq rs " + sq.verdict, style: { left: px(sq.at ?? (sd === "head" ? a : b)) }, title: this.spanSeamTip(rg, sd, sq) });
+        m.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); } });
+        el.append(m);
+      }
       tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); });
       el.append(tab);
       for (const side of ["start", "end"]) {
@@ -193,6 +205,25 @@ export function installRegions(Editor, { C, h, ICON }) {
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
     },
 
+    spanSeamTip(rg, sd, sq) {
+      return `Участок ${this.regionNo(rg.id)}: шов в ${sd === "head" ? "начале" : "конце"} — ${SEAM_TXT[sq.verdict] || sq.verdict} (×${sq.ratio})`
+        + (sq.raw ? `\nбез выравнивания яркости и цвета: ${SEAM_TXT[sq.raw.verdict] || ""} (×${sq.raw.ratio})` : "")
+        + (sq.audio ? `\nзвук: скачок ${sq.audio.db} дБ${sq.audio.warn ? " — заметный" : ""}` : "")
+        + (sq.verdict !== "ok" ? "\n«↻ Пересоздать» (новый сид) может дать ровнее" : "");
+    },
+    /** ↺: the inputs the active take was made with (start/end, context, prompt, refs, seed). */
+    regionRestorable(rg) {
+      const tk = this.regionTake(rg); if (!tk || tk.fresh || !tk.take.snap) return false;
+      return SNAP.some((k) => k in tk.take.snap && JSON.stringify(tk.take.snap[k]) !== JSON.stringify(rg[k]));
+    },
+    restoreRegionTake(id) {
+      const rg = this.region(id), tk = rg && this.regionTake(rg); if (!tk?.take.snap) return;
+      this.updateRegion(id, (r) => Object.assign(r, clone(tk.take.snap)), { render: "none" });
+      this.renderAll();
+      const t2 = this.regionTake(this.region(id));
+      this.toast(t2?.fresh ? `Участок ${this.regionNo(id)}: входы дубля восстановлены — дубль снова применён` : `Входы участка восстановлены, но изменились клипы или настройки под ним — пересоздайте`, !t2?.fresh);
+    },
+
     // ------------------------------------------------------------ card (popover above the timeline)
     regionPopover() {
       const $ = this.$;
@@ -206,7 +237,8 @@ export function installRegions(Editor, { C, h, ICON }) {
       const pop = $.regPop = h("div", { class: "h3z-regpop h3z-glass", dataset: { id: rg.id } });
       ["pointerdown", "keydown", "wheel"].forEach((ev) => pop.addEventListener(ev, (e) => e.stopPropagation()));
       const busy = !!this.run?.active, n = this.regionNo(rg.id);
-      pop.append(h("div", { class: "hd" }, h("b", null, `✂ Участок ${n}`), $.regTime = h("span", { class: "tm" }),
+      const kn = w.error ? "region" : C.spanKind(w);
+      pop.append(h("div", { class: "hd" }, h("b", null, `✂ ${kn === "region" ? "Участок" : C.SPAN_NAMES[kn]} ${n}`), $.regTime = h("span", { class: "tm" }),
         h("div", { class: "grow" }),
         h("button", { class: "h3z-btn sm icon", title: "Плейхед к началу участка", html: ICON.play, onclick: () => { this.pvMode = "full"; this.seek(Math.max(0, w.ws ?? rg.start)); this.renderPreview(); } }),
         h("button", { class: "h3z-btn sm icon danger", title: "Удалить участок", html: ICON.trash, onclick: () => this.deleteRegion(rg.id) }),
@@ -254,12 +286,14 @@ export function installRegions(Editor, { C, h, ICON }) {
       // takes
       if ((rg.takes || []).length) {
         const tk = this.regionTake(rg);
-        pop.append(h("div", null, h("div", { class: "h3z-lbl" }, "Дубли участка", tk && !tk.fresh ? h("em", { style: { color: "var(--warn)" } }, "выбранный дубль устарел — пересоздайте") : h("em", null, "клик — сравнить / вернуть")),
+        pop.append(h("div", null, h("div", { class: "h3z-lbl" }, "Дубли участка", tk && !tk.fresh ? h("em", { style: { color: "var(--warn)" } }, "выбранный дубль устарел — пересоздайте") : h("em", null, "клик — сравнить / вернуть"),
+          this.regionRestorable(rg) ? h("button", { class: "h3z-btn sm", style: { marginLeft: "auto" }, title: "Вернуть входы, с которыми сделан выбранный дубль (границы, контекст, промпт, референсы, сид)", onclick: () => this.restoreRegionTake(rg.id) }, "↺ Восстановить") : null),
           h("div", { class: "h3z-pills takes" },
             h("div", { class: "h3z-pill" + (!rg.active_take ? " on" : ""), title: "Без перегенерации: отрезки как есть", onclick: () => this.selectRegionTake(rg.id, null) }, "Оригинал"),
             rg.takes.map((t, k) => h("div", { class: "h3z-pill" + (t.id === rg.active_take ? " on" : ""), title: `Дубль ${k + 1} · сид ${t.seed ?? "?"}` + (t.created ? ` · ${new Date(t.created * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""), onclick: () => this.selectRegionTake(rg.id, t.id) }, `${k + 1}`)))));
       }
-      const stageTxt = { draft: "черновик", refine: "финал из черновика: окно черновика → апскейл → доработка", full: "сразу финал" }[C.runKind(this.p.settings)] || "";
+      const stageTxt = (kn !== "region" && C.runKind(this.p.settings) === "refine") ? "сразу финал (мост/пролог/продолжение — один проход по склеенному видео)"
+        : { draft: "черновик", refine: "финал из черновика: окно черновика → апскейл → доработка", full: "сразу финал" }[C.runKind(this.p.settings)] || "";
       $.regGo = h("button", { class: "h3z-btn primary", html: "<span>↻ Пересоздать</span>", disabled: busy || !!w.error, title: w.error || "Сгенерировать новый вариант участка (новый дубль). Несгенерированные отрезки сцены будут сгенерированы в том же запуске", onclick: () => this.regenRegion(rg.id) });
       pop.append(h("div", { class: "ft" }, h("span", { class: "h3z-note" }, "Режим: " + stageTxt), h("div", { class: "grow" }), $.regGo));
       this.root.append(pop);
@@ -273,12 +307,23 @@ export function installRegions(Editor, { C, h, ICON }) {
       if ($.regTime) $.regTime.textContent = `${C.fmtTime(w.a / C.FPS)} – ${C.fmtTime(w.b / C.FPS)}`;
       const moved = Math.abs(w.a - rg.start) > 0 || Math.abs(w.b - rg.end) > 0;
       $.regInfo.innerHTML = "";
-      $.regInfo.append(
+      $.regInfo.append(...[
         h("div", null, h("b", null, `${w.b - w.a} кадр. ≈ ${((w.b - w.a) / C.FPS).toFixed(2)} с`), " пересоздаётся",
           moved ? h("span", { class: "snap", title: `Выделено ${rg.start}–${rg.end}; H3 режет ролик блоками по 17 кадров (≈0.71 с), края прилипли к ближайшим границам блоков` }, ` · прилипло к сетке 17 кадр.`) : null),
+        C.spanKind(w) !== "region" ? h("div", { class: "kd" }, h("b", null, C.SPAN_NAMES[C.spanKind(w)]), " — " + C.SPAN_HELP[C.spanKind(w)] + ((w.gaps || []).length ? ` · промежутков внутри: ${w.gaps.length}` : "")) : null,
         h("div", null, `Контекст: ${w.head} кадр. до · ${w.tail} кадр. после · окно H3 ${w.frames} кадр. (17·${(w.frames - 5) / 17}+5)` + (w.segs.length > 1 ? ` · отрезки ${w.segs.map((i) => i + 1).join(", ")}` : ` · отрезок ${w.segs[0] + 1}`)),
-        w.warnings.map((x) => h("div", { class: "wr" }, "⚠ " + x)));
+        this.spanSeamsLine(rg),
+        ...w.warnings.map((x) => h("div", { class: "wr" }, "⚠ " + x))].filter(Boolean));
       if ($.regGo) $.regGo.disabled = !!this.run?.active;
+    },
+
+    spanSeamsLine(rg) {
+      const tk = this.regionTake(rg), sm = tk?.fresh ? tk.take.result?.seams : null;
+      if (!sm || !Object.keys(sm).length) return null;
+      const lock = C.levelLockFrames(this.p);
+      return h("div", { class: "sq" }, "Швы: ", ["head", "tail"].filter((sd) => sm[sd]).map((sd) => h("span", { class: "h3z-seamv " + sm[sd].verdict, title: this.spanSeamTip(rg, sd, sm[sd]) }, h("b"),
+        `${sd === "head" ? "начало" : "конец"} ×${sm[sd].ratio}` + (sm[sd].raw ? ` (было ×${sm[sd].raw.ratio})` : "") + (sm[sd].audio?.warn ? ` · звук ${sm[sd].audio.db} дБ` : ""))),
+        lock ? h("em", null, ` · выравнивание яркости ${lock} кадр.`) : null);
     },
 
     placeRegionPopover(w) {
