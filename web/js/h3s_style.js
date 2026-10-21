@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // H3ZeroStudio styles (CapCut-like: deep navy-black, purple→cyan gradients, glassy rounded panels).
 export const CSS = String.raw`
 .h3z-root, .h3z-compact { --bg0:#05070f; --bg1:#0a0e1c; --bg2:#10152a; --panel:rgba(17,22,42,.72); --panel2:rgba(24,30,56,.78);
@@ -559,7 +560,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 /* modal dialogs */
 .h3z-modal { position:fixed; inset:0; z-index:300; background:rgba(2,6,23,.6); display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
 .h3z-modal.busy { cursor:progress; }
-.h3z-modal.busy .h3z-ae::after { content:"Обработка… не закрывайте окно"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:10px 18px; border-radius:10px; background:rgba(0,0,0,.75); color:#fff; font-size:13px; z-index:5; pointer-events:none; }
+.h3z-modal.busy .h3z-ae::after { content:"${T("Обработка… не закрывайте окно")}"; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:10px 18px; border-radius:10px; background:rgba(0,0,0,.75); color:#fff; font-size:13px; z-index:5; pointer-events:none; }
 .h3z-modal.busy .h3z-ae, .h3z-modal.busy .h3z-save { opacity:.75; pointer-events:none; }
 .h3z-save { width:min(620px, 94vw); display:flex; flex-direction:column; gap:12px; padding:16px; border-radius:16px; }
 .h3z-save .hd, .h3z-ae .hd { display:flex; align-items:center; gap:8px; }
@@ -653,6 +654,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-setbody .h3z-det .in { display:flex; flex-direction:column; gap:9px; }
 .h3z-setscope { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.025); }
 .h3z-setscope .h3z-btn { align-self:flex-start; }
+.h3z-langrow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; } .h3z-langrow .h3z-lbl { margin:0; } .h3z-langrow .h3z-sel { flex:1 1 140px; min-width:0; max-width:220px; }
 .h3z-settabs { display:flex; flex-wrap:wrap; gap:4px; position:sticky; top:0; z-index:3; padding:6px 0; background:var(--bg1); }
 .h3z-settab { flex:1 1 auto; text-align:center; padding:7px 10px; border-radius:8px; cursor:pointer; font-size:12px; white-space:nowrap; color:#d6dafa; border:1px solid var(--line); background:rgba(255,255,255,.03); user-select:none; }
 .h3z-settab:hover { background:rgba(148,163,255,.12); } .h3z-settab.on { background:rgba(139,92,246,.28); color:#fff; border-color:rgba(139,92,246,.6); }
@@ -809,7 +811,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 @media (max-width:1700px) { .h3z-run { min-width:240px; } .h3z-head { gap:8px; } .h3z-head .h3z-chip { padding:5px 8px; } }
 .h3z-rs{margin-top:6px;padding:8px 10px;border-radius:10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
 .h3z-rs-row{display:flex;gap:6px;align-items:baseline;cursor:pointer}.h3z-rs-row em{opacity:.6;font-style:normal;margin-left:auto;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.h3z-rs-row.proj span::after{content:" · проект";opacity:.55}.h3z-rs-row.lib span::after{content:" · библиотека";opacity:.55}.h3z-rs-warn{color:var(--warn)}.h3z-rs-warn:empty{display:none}.h3z-rs-btns{display:flex;gap:6px;margin-top:4px}
+.h3z-rs-row.proj span::after{content:"${T(" · проект")}";opacity:.55}.h3z-rs-row.lib span::after{content:"${T(" · библиотека")}";opacity:.55}.h3z-rs-warn{color:var(--warn)}.h3z-rs-warn:empty{display:none}.h3z-rs-btns{display:flex;gap:6px;margin-top:4px}
 .h3z-rsb{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;z-index:4;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.45)}
 .h3z-rsb button{border:0;background:rgba(255,181,71,.92);color:#1b1205;font:600 11.5px/1 inherit;padding:5px 9px;cursor:pointer}
 .h3z-rsb button:hover{background:#ffc66b}.h3z-rsb.icon .h3z-rsb-main{padding:5px 7px;font-size:13px}.h3z-rsb .h3z-rsb-more{padding:5px 6px;border-left:1px solid rgba(0,0,0,.18)}

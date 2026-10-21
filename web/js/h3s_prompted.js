@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // H3ZeroStudio: «✎ Редактировать» — a comfortable full-window prompt editor for every prompt field.
 // CodeMirror 6 (MIT, vendored as one ES module in ./vendor, loaded on first use): undo/redo, find/replace,
 // line numbers, wrap, auto-indent, multi-cursor. Typing @ lists the references of this prompt (images
@@ -6,18 +7,18 @@
 // structure (subject_definitions … non_diegetic_music) with Russian notes, live section status and the
 // detailed_description word count vs the 350–500 target; «Вставить шаблон» inserts the skeleton.
 const SECTIONS = [
-  ["subject_definitions", "Кто есть кто", "what each referenced item is and what it contributes",
-    "Каждая метка с новой строки: <Picture N>, <Video N>, <Audio N> (или своя <Subject N>) — что это (персонаж, предмет, локация, стиль, движение, голос) и что именно берётся из референса: внешность, одежда, детали, роль в ролике."],
-  ["summary", "Кратко", "[task type] one paragraph",
-    "Один абзац. Начинается с типа задачи в квадратных скобках: [reference generation], [keyframe completion], [video editing], [video continuation], [audio reuse], [audio reference] (можно сочетать через +). Что за ролик, главные герои, как используются референсы."],
-  ["retention_analysis", "Что сохранить", "per-label fidelity markers",
-    "Для каждой метки — насколько точно её сохранить: fully_preserved (почти без изменений), partially_preserved (часть черт меняется), attribute_transfer (черты переносятся на другой объект), weak_reference (только стиль/атмосфера). Для аудио: fully_copy, partially_copy, reference, weak_reference."],
-  ["detailed_description", "Основное описание", "shot-by-shot body, normally 350–500 words",
-    "Главная часть промпта. 1–2 предложения про стиль, реализм, свет, палитру и атмосферу, затем кадры по порядку: [Shot 1], [Shot 2] At 00:03.500 … В каждом: композиция, персонаж (по референсам), действие, камера (ракурс, объектив, движение), свет, звук. Реплики: <Subject 1> (S1) says: <d>[Russian] текст</d>. Обычно 350–500 слов."],
-  ["overall_soundscape", "Звуковая среда", "ambience and physical sound",
-    "Фон и физические звуки сцены: эмбиент, шаги, ветер, ткань, предметы. Без диалогов."],
-  ["non_diegetic_music", "Закадровая музыка", "audience-only score, or N/A",
-    "Музыка, которую слышит только зритель: инструменты, темп, настроение, развитие. Если музыки нет — N/A."],
+  ["subject_definitions", T("Кто есть кто"), "what each referenced item is and what it contributes",
+    T("Каждая метка с новой строки: <Picture N>, <Video N>, <Audio N> (или своя <Subject N>) — что это (персонаж, предмет, локация, стиль, движение, голос) и что именно берётся из референса: внешность, одежда, детали, роль в ролике.")],
+  ["summary", T("Кратко"), "[task type] one paragraph",
+    T("Один абзац. Начинается с типа задачи в квадратных скобках: [reference generation], [keyframe completion], [video editing], [video continuation], [audio reuse], [audio reference] (можно сочетать через +). Что за ролик, главные герои, как используются референсы.")],
+  ["retention_analysis", T("Что сохранить"), "per-label fidelity markers",
+    T("Для каждой метки — насколько точно её сохранить: fully_preserved (почти без изменений), partially_preserved (часть черт меняется), attribute_transfer (черты переносятся на другой объект), weak_reference (только стиль/атмосфера). Для аудио: fully_copy, partially_copy, reference, weak_reference.")],
+  ["detailed_description", T("Основное описание"), "shot-by-shot body, normally 350–500 words",
+    T("Главная часть промпта. 1–2 предложения про стиль, реализм, свет, палитру и атмосферу, затем кадры по порядку: [Shot 1], [Shot 2] At 00:03.500 … В каждом: композиция, персонаж (по референсам), действие, камера (ракурс, объектив, движение), свет, звук. Реплики: <Subject 1> (S1) says: <d>[Russian] текст</d>. Обычно 350–500 слов.")],
+  ["overall_soundscape", T("Звуковая среда"), "ambience and physical sound",
+    T("Фон и физические звуки сцены: эмбиент, шаги, ветер, ткань, предметы. Без диалогов.")],
+  ["non_diegetic_music", T("Закадровая музыка"), "audience-only score, or N/A",
+    T("Музыка, которую слышит только зритель: инструменты, темп, настроение, развитие. Если музыки нет — N/A.")],
 ];
 const KEYS = SECTIONS.map((s) => s[0]);
 const TASKS = ["[reference generation]", "[keyframe completion]", "[video editing]", "[video continuation]", "[audio reuse]", "[audio reference]"];
@@ -51,12 +52,12 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const loadPrefs = () => { try { return { wrap: true, lines: true, mono: false, size: 15, side: true, ...JSON.parse(localStorage.getItem(LS) || "{}") }; } catch (e) { return { wrap: true, lines: true, mono: false, size: 15, side: true }; } };
   const savePrefs = (p) => { try { localStorage.setItem(LS, JSON.stringify(p)); } catch (e) {} };
-  const KIND_RU = { picture: "картинка", video: "видео", audio: "аудио", auto: "авто-кадр", var: "подстановка" };
+  const KIND_RU = { picture: T("картинка"), video: T("видео"), audio: T("аудио"), auto: T("авто-кадр"), var: T("подстановка") };
   const PHRASES = {
-    "Find": "Найти", "Replace": "Заменить на", "next": "дальше", "previous": "назад", "all": "все", "match case": "регистр",
-    "by word": "слово целиком", "regexp": "рег. выражение", "replace": "заменить", "replace all": "заменить все", "close": "закрыть",
-    "current match": "текущее совпадение", "replaced $ matches": "заменено: $", "replaced match on line $": "заменено в строке $", "on line": "в строке",
-    "Go to line": "К строке", "go": "перейти",
+    "Find": T("Найти"), "Replace": T("Заменить на"), "next": T("дальше"), "previous": T("назад"), "all": T("все"), "match case": T("регистр"),
+    "by word": T("слово целиком"), "regexp": T("рег. выражение"), "replace": T("заменить"), "replace all": T("заменить все"), "close": T("закрыть"),
+    "current match": T("текущее совпадение"), "replaced $ matches": T("заменено: $"), "replaced match on line $": T("заменено в строке $"), "on line": T("в строке"),
+    "Go to line": T("К строке"), "go": T("перейти"),
   };
 
   Object.assign(Editor.prototype, {
@@ -67,43 +68,43 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       const segList = (i) => {
         const s = p.segments[i]; if (!s) return [];
         const out = [];
-        C.orderedRefs(p, s).forEach((a, n) => out.push({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: { character: "персонаж", location: "локация", other: "другое" }[a.category] || "картинка", thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
+        C.orderedRefs(p, s).forEach((a, n) => out.push({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: { character: T("персонаж"), location: T("локация"), other: T("другое") }[a.category] || T("картинка"), thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
         const cp = C.continuityPicture(p, i);
-        if (cp) out.push({ token: `<Picture ${cp}>`, kind: "auto", name: `последний кадр отрезка ${i}`, sub: "добавляется автоматически", icon: "⟶", over: cp > C.MAX_REF_IMAGES });
-        if (!C.isFootage(s)) C.videoRefs(p, s).forEach((a, k) => out.push({ token: `<Video ${k + 1}>`, kind: "video", name: a.name, sub: `видео${a.duration ? " · " + Number(a.duration).toFixed(1) + " с" : ""}`, thumb: a.poster ? this.posterUrl(a) : "", icon: "🎞", over: k >= C.MAX_REF_VIDEOS }));
-        C.audioRefs(p, s).forEach((a, k) => out.push({ token: `<Audio ${k + 1}>`, kind: "audio", name: a.name, sub: "аудио", icon: "♪", over: k >= C.MAX_REF_AUDIOS }));
+        if (cp) out.push({ token: `<Picture ${cp}>`, kind: "auto", name: T("последний кадр отрезка {0}", i), sub: T("добавляется автоматически"), icon: "⟶", over: cp > C.MAX_REF_IMAGES });
+        if (!C.isFootage(s)) C.videoRefs(p, s).forEach((a, k) => out.push({ token: `<Video ${k + 1}>`, kind: "video", name: a.name, sub: T("видео{0}", a.duration ? " · " + Number(a.duration).toFixed(1) + T(" с") : ""), thumb: a.poster ? this.posterUrl(a) : "", icon: "🎞", over: k >= C.MAX_REF_VIDEOS }));
+        C.audioRefs(p, s).forEach((a, k) => out.push({ token: `<Audio ${k + 1}>`, kind: "audio", name: a.name, sub: T("аудио"), icon: "♪", over: k >= C.MAX_REF_AUDIOS }));
         out.push(...(this.peCardItems?.(s, i, false) || []));   // «Персонажи»: after the plain refs
         return out;
       };
       if (ctx.kind === "seg" || ctx.kind === "marker") {
         const i = ctx.seg ?? -1, items = i >= 0 ? segList(i) : [];
-        return { items, valid: new Map(items.map((r) => [r.token, null])), note: i >= 0 ? `Референсы отрезка ${i + 1}` : "Маркер за концом ролика — референсов нет",
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: i >= 0 ? T("Референсы отрезка {0}", i + 1) : T("Маркер за концом ролика — референсов нет"),
           subjects: i >= 0 && ctx.kind === "seg" ? this.peSubjects?.(p.segments[i], i, false) || [] : [] };
       }
       if (ctx.kind === "region") {
         const rg = ctx.region || {};
-        const items = C.orderedRefs(p, { refs: rg.refs || [] }).map((a, n) => ({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: "картинка участка", thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
+        const items = C.orderedRefs(p, { refs: rg.refs || [] }).map((a, n) => ({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: T("картинка участка"), thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
         items.push(...(this.peCardItems?.(rg, null, true) || []));
-        return { items, valid: new Map(items.map((r) => [r.token, null])), note: "Референсы участка (картинки)", subjects: this.peSubjects?.(rg, null, true) || [] };
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: T("Референсы участка (картинки)"), subjects: this.peSubjects?.(rg, null, true) || [] };
       }
       if (ctx.kind === "phrase") {
-        const items = [{ token: "{n}", kind: "var", name: "номер последнего кадра", sub: "станет <Picture N>", icon: "#" }, { token: "<Picture {n}>", kind: "var", name: "последний кадр прошлого отрезка", sub: "как метка H3", icon: "⟶" }];
-        return { items, valid: new Map(), note: "Фраза продления: {n} заменяется номером картинки последнего кадра" };
+        const items = [{ token: "{n}", kind: "var", name: T("номер последнего кадра"), sub: T("станет <Picture N>"), icon: "#" }, { token: "<Picture {n}>", kind: "var", name: T("последний кадр прошлого отрезка"), sub: T("как метка H3"), icon: "⟶" }];
+        return { items, valid: new Map(), note: T("Фраза продления: {n} заменяется номером картинки последнего кадра") };
       }
       // global prompt / negative: added to every clip, so a token means a different reference per clip
       const by = new Map(), n = p.segments.length;
       p.segments.forEach((s, i) => { if (C.isFootage(s)) return; for (const r of segList(i)) { if (!by.has(r.token)) by.set(r.token, { ...r, per: [] }); by.get(r.token).per.push(`${i + 1}: ${r.name}`); } });
       const gen = p.segments.map((s, i) => i).filter((i) => !C.isFootage(p.segments[i]));
       const items = [...by.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.token.localeCompare(b.token, "en", { numeric: true }))
-        .map((r) => ({ ...r, name: r.per.length === 1 ? `отрезок ${r.per[0]}` : `в ${r.per.length} отр.: ` + r.per.slice(0, 3).join(" · ") + (r.per.length > 3 ? " …" : ""), sub: KIND_RU[r.kind === "auto" ? "picture" : r.kind] }));
-      const valid = new Map(items.map((r) => { const miss = gen.length - r.per.length; return [r.token, miss > 0 ? `есть только в ${r.per.length} из ${gen.length} отрезков` : null]; }));
-      return { items, valid, global: true, note: `Общий промпт добавляется к каждому отрезку: номер метки у каждого отрезка свой (${n} отр.)` };
+        .map((r) => ({ ...r, name: r.per.length === 1 ? T("отрезок {0}", r.per[0]) : T("в {0} отр.: ", r.per.length) + r.per.slice(0, 3).join(" · ") + (r.per.length > 3 ? " …" : ""), sub: KIND_RU[r.kind === "auto" ? "picture" : r.kind] }));
+      const valid = new Map(items.map((r) => { const miss = gen.length - r.per.length; return [r.token, miss > 0 ? T("есть только в {0} из {1} отрезков", r.per.length, gen.length) : null]; }));
+      return { items, valid, global: true, note: T("Общий промпт добавляется к каждому отрезку: номер метки у каждого отрезка свой ({0} отр.)", n) };
     },
 
     /** «✎ Редактировать» button for a prompt field. spec() → {title, ctx, value, apply(text)} (read at click time). */
     peButton(spec, extra = "") {
       if (!document.getElementById("h3z-pe-style")) { const st = document.createElement("style"); st.id = "h3z-pe-style"; st.textContent = PE_CSS; document.head.appendChild(st); }
-      return h("button", { class: "h3z-btn sm h3z-pe-btn " + extra, type: "button", title: "Открыть удобный редактор промпта: поиск/замена, @ — ссылки на референсы, подсказка по структуре H3", html: "<span>✎ Редактировать</span>",
+      return h("button", { class: "h3z-btn sm h3z-pe-btn " + extra, type: "button", title: T("Открыть удобный редактор промпта: поиск/замена, @ — ссылки на референсы, подсказка по структуре H3"), html: T("<span>✎ Редактировать</span>"),
         onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.preventDefault(); e.stopPropagation(); this.openPromptEditor(spec()); } });
     },
 
@@ -113,7 +114,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       const pe = this.pe = { spec, orig: String(spec.value ?? ""), prefs: loadPrefs(), loading: true };
       let cm;
       try { cm = await loadCM(); }
-      catch (e) { this.pe = null; return this.toast("Не удалось загрузить редактор: " + (e.message || e), true); }
+      catch (e) { this.pe = null; return this.toast(T("Не удалось загрузить редактор: ") + (e.message || e), true); }
       if (this.pe !== pe || !this.root) return;
       this.peBuild(cm);
     },
@@ -170,7 +171,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         const q = m.text.slice(1).toLowerCase();
         const items = pe.refs.items.filter((r) => !q || [r.token, r.name, r.sub, KIND_RU[r.kind] || "", r.token.replace(/[<>]/g, "")].some((x) => String(x || "").toLowerCase().includes(q)));
         const opts = items.map((r, k) => ({
-          label: r.token, detail: r.name, info: r.sub + (pe.refs.valid.get(r.token) ? " · ⚠ " + pe.refs.valid.get(r.token) : "") + (r.over ? " · ⚠ сверх лимита H3 — не попадёт в генерацию" : ""),
+          label: r.token, detail: r.name, info: r.sub + (pe.refs.valid.get(r.token) ? " · ⚠ " + pe.refs.valid.get(r.token) : "") + (r.over ? T(" · ⚠ сверх лимита H3 — не попадёт в генерацию") : ""),
           type: r.kind, boost: -k, _r: r,
           apply: (view, c, from, to) => {
             const before = view.state.sliceDoc(Math.max(0, from - 1), from), after = view.state.sliceDoc(to, to + 1);
@@ -178,7 +179,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
             view.dispatch({ changes: { from, to, insert: ins }, selection: { anchor: from + ins.length }, userEvent: "input.complete" });
           },
         }));
-        if (!opts.length) opts.push({ label: pe.refs.items.length ? "Ничего не найдено" : "Нет прикреплённых референсов", detail: pe.refs.items.length ? "" : "перетащите ассет в «Референсы»", type: "none", apply: () => {} });
+        if (!opts.length) opts.push({ label: pe.refs.items.length ? T("Ничего не найдено") : T("Нет прикреплённых референсов"), detail: pe.refs.items.length ? "" : T("перетащите ассет в «Референсы»"), type: "none", apply: () => {} });
         return { from: m.from, to: cx.pos, options: opts, filter: false };
       };
       const thumbRender = {
@@ -207,7 +208,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
               { key: "Tab", run: (v) => cm.acceptCompletion(v) },
             ])),
             keymap.of([...cm.closeBracketsKeymap, ...cm.completionKeymap, ...cm.searchKeymap, ...cm.historyKeymap, ...cm.defaultKeymap, cm.indentWithTab]),
-            placeholder(spec.placeholder || "Пишите промпт… @ — ссылка на референс"),
+            placeholder(spec.placeholder || T("Пишите промпт… @ — ссылка на референс")),
             cWrap.of(prefs.wrap ? EditorView.lineWrapping : []), cLines.of(prefs.lines ? [lineNumbers()] : []), cTheme.of(theme()),
             hl,
             EditorView.updateListener.of((u) => {
@@ -232,36 +233,36 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       const fsz = (d) => { prefs.size = Math.max(11, Math.min(28, prefs.size + d)); savePrefs(prefs); sizeL.textContent = prefs.size + " px"; recfg(cTheme, theme()); };
       const sel = () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
       const tools = h("div", { class: "pe-tools" },
-        B("↶", "Отменить (Ctrl+Z)", () => cm.undo(view), "icon"), B("↷", "Повторить (Ctrl+Y / Ctrl+Shift+Z)", () => cm.redo(view), "icon"),
+        B("↶", T("Отменить (Ctrl+Z)"), () => cm.undo(view), "icon"), B("↷", T("Повторить (Ctrl+Y / Ctrl+Shift+Z)"), () => cm.redo(view), "icon"),
         h("span", { class: "sep" }),
-        B("⌕ Найти", "Найти (Ctrl+F)", () => cm.openSearchPanel(view)),
-        B("⇄ Заменить", "Найти и заменить (Ctrl+H)", () => { cm.openSearchPanel(view); setTimeout(() => pe.el?.querySelector(".cm-search input[name=replace]")?.focus(), 0); }),
+        B(T("⌕ Найти"), T("Найти (Ctrl+F)"), () => cm.openSearchPanel(view)),
+        B(T("⇄ Заменить"), T("Найти и заменить (Ctrl+H)"), () => { cm.openSearchPanel(view); setTimeout(() => pe.el?.querySelector(".cm-search input[name=replace]")?.focus(), 0); }),
         h("span", { class: "sep" }),
-        tog("wrap", "↩ Перенос", "Перенос длинных строк", () => recfg(cWrap, prefs.wrap ? EditorView.lineWrapping : [])),
-        tog("lines", "# Строки", "Номера строк", () => recfg(cLines, prefs.lines ? [lineNumbers()] : [])),
-        tog("mono", "Моно", "Моноширинный шрифт", () => recfg(cTheme, theme())),
-        B("A−", "Шрифт меньше (Ctrl+−)", () => fsz(-1)), sizeL, B("A+", "Шрифт больше (Ctrl+=)", () => fsz(1)),
+        tog("wrap", T("↩ Перенос"), T("Перенос длинных строк"), () => recfg(cWrap, prefs.wrap ? EditorView.lineWrapping : [])),
+        tog("lines", T("# Строки"), T("Номера строк"), () => recfg(cLines, prefs.lines ? [lineNumbers()] : [])),
+        tog("mono", T("Моно"), T("Моноширинный шрифт"), () => recfg(cTheme, theme())),
+        B("A−", T("Шрифт меньше (Ctrl+−)"), () => fsz(-1)), sizeL, B("A+", T("Шрифт больше (Ctrl+=)"), () => fsz(1)),
         h("span", { class: "sep" }),
-        B("⧉ Копировать", "Скопировать выделение (или весь текст, если ничего не выделено)", async () => {
+        B(T("⧉ Копировать"), T("Скопировать выделение (или весь текст, если ничего не выделено)"), async () => {
           const t = sel() || view.state.doc.toString();
-          try { await navigator.clipboard.writeText(t); this.toast(`Скопировано: ${t.length} симв.`); } catch (e) { this.toast("Буфер обмена недоступен: " + (e.message || e), true); }
+          try { await navigator.clipboard.writeText(t); this.toast(T("Скопировано: {0} симв.", t.length)); } catch (e) { this.toast(T("Буфер обмена недоступен: ") + (e.message || e), true); }
         }),
-        B("⎘ Вставить", "Вставить из буфера обмена (Ctrl+V)", async () => {
-          try { const t = await navigator.clipboard.readText(); view.dispatch(view.state.replaceSelection(t)); } catch (e) { this.toast("Браузер не дал прочитать буфер — нажмите Ctrl+V", true); }
+        B(T("⎘ Вставить"), T("Вставить из буфера обмена (Ctrl+V)"), async () => {
+          try { const t = await navigator.clipboard.readText(); view.dispatch(view.state.replaceSelection(t)); } catch (e) { this.toast(T("Браузер не дал прочитать буфер — нажмите Ctrl+V"), true); }
           view.focus();
         }),
-        B("⌫ Очистить", "Очистить весь текст (отменяется Ctrl+Z)", () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } }), "danger"),
+        B(T("⌫ Очистить"), T("Очистить весь текст (отменяется Ctrl+Z)"), () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } }), "danger"),
         h("span", { class: "sep" }),
-        B("@ Референс", "Вставить ссылку на референс (или наберите @ в тексте)", () => { const r = view.state.selection.main; view.dispatch({ changes: { from: r.from, to: r.to, insert: "@" }, selection: { anchor: r.from + 1 } }); view.focus(); cm.startCompletion(view); }),
+        B(T("@ Референс"), T("Вставить ссылку на референс (или наберите @ в тексте)"), () => { const r = view.state.selection.main; view.dispatch({ changes: { from: r.from, to: r.to, insert: "@" }, selection: { anchor: r.from + 1 } }); view.focus(); cm.startCompletion(view); }),
         ...(this.peCardTools?.(B) || []),
         h("i", { class: "grow" }),
-        tog("side", "☰ Структура H3", "Подсказка по структуре промпта H3", () => pe.el.classList.toggle("noside", !prefs.side)));
+        tog("side", T("☰ Структура H3"), T("Подсказка по структуре промпта H3"), () => pe.el.classList.toggle("noside", !prefs.side)));
       // reference chips (click = insert at the caret)
-      const chips = h("div", { class: "pe-refs" }, h("span", { class: "h3z-note" }, pe.refs.note + (pe.refs.items.length ? " · клик — вставить" : "")),
-        pe.refs.items.map((r) => h("span", { class: "pe-chip " + r.kind + (pe.refs.valid.get(r.token) || r.over ? " warn" : ""), title: `${r.token} — ${r.name} (${r.sub})` + (pe.refs.valid.get(r.token) ? `\n⚠ ${pe.refs.valid.get(r.token)}` : "") + (r.over ? "\n⚠ сверх лимита H3" : ""),
+      const chips = h("div", { class: "pe-refs" }, h("span", { class: "h3z-note" }, pe.refs.note + (pe.refs.items.length ? T(" · клик — вставить") : "")),
+        pe.refs.items.map((r) => h("span", { class: "pe-chip " + r.kind + (pe.refs.valid.get(r.token) || r.over ? " warn" : ""), title: `${r.token} — ${r.name} (${r.sub})` + (pe.refs.valid.get(r.token) ? `\n⚠ ${pe.refs.valid.get(r.token)}` : "") + (r.over ? T("\n⚠ сверх лимита H3") : ""),
           onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(r.token) },
           r.thumb ? h("img", { src: r.thumb, draggable: "false" }) : h("span", { class: "ic" }, kindIcon[r.kind] || "•"), h("b", null, r.token), h("span", { class: "nm" }, String(r.name || "").slice(0, 28)))),
-        !pe.refs.items.length && spec.ctx.kind !== "phrase" ? h("span", { class: "h3z-note" }, "— пока нет: перетащите ассет в «Референсы»") : null);
+        !pe.refs.items.length && spec.ctx.kind !== "phrase" ? h("span", { class: "h3z-note" }, T("— пока нет: перетащите ассет в «Референсы»")) : null);
       // side panel
       const side = h("div", { class: "pe-side" });
       pe.side = side;
@@ -269,13 +270,13 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       pe.statusEl = status;
       const el = pe.el = h("div", { class: "h3z-pe-modal" + (prefs.side ? "" : " noside") },
         h("div", { class: "h3z-pe h3z-glass" },
-          h("div", { class: "pe-hd" }, h("span", { class: "vtag" }, "Промпт"), h("b", { class: "pe-title" }, spec.title || "Промпт"), h("i", { class: "grow" }),
-            h("span", { class: "h3z-note" }, "Ctrl+Enter — применить · Esc — отмена"), B("✕", "Закрыть (Esc)", () => this.closePromptEditor(false), "icon")),
+          h("div", { class: "pe-hd" }, h("span", { class: "vtag" }, T("Промпт")), h("b", { class: "pe-title" }, spec.title || T("Промпт")), h("i", { class: "grow" }),
+            h("span", { class: "h3z-note" }, T("Ctrl+Enter — применить · Esc — отмена")), B("✕", T("Закрыть (Esc)"), () => this.closePromptEditor(false), "icon")),
           tools, chips,
           h("div", { class: "pe-body" }, h("div", { class: "pe-ed" }, view.dom), side),
           h("div", { class: "pe-ft" }, status, h("i", { class: "grow" }),
-            B("Отмена", "Закрыть без изменений (Esc)", () => this.closePromptEditor(false)),
-            B("✓ Применить", "Сохранить текст в поле (Ctrl+Enter)", () => this.closePromptEditor(true), "pri"))));
+            B(T("Отмена"), T("Закрыть без изменений (Esc)"), () => this.closePromptEditor(false)),
+            B(T("✓ Применить"), T("Сохранить текст в поле (Ctrl+Enter)"), () => this.closePromptEditor(true), "pri"))));
       // the modal owns the keyboard: keys reach CodeMirror (the editor's window handler steps aside while this.pe
       // is set) and stop here, so ComfyUI shortcuts never see them
       el.addEventListener("keydown", (e) => {
@@ -318,12 +319,12 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         if (!pe.refs.valid.has(k)) { if (!bad.includes(k)) bad.push(k); }
         else if (pe.refs.valid.get(k) && !warn.includes(k)) warn.push(k);
       }
-      const sl = st.selection.main.empty ? "" : ` · выделено ${st.selection.main.to - st.selection.main.from}`;
-      pe.statusEl.innerHTML = `<span><b>${words(t)}</b> слов</span><span><b>${t.length}</b> симв.</span><span>≈ <b>${approxTokens(t)}</b> токенов</span><span>строка ${ln.number}, столбец ${c - ln.from + 1}${sl}</span>`
-        + (t !== pe.orig ? `<span class="chg">● изменён</span>` : "")
-        + (bad.length ? `<span class="bad" title="${esc(bad.some((x) => x.startsWith("<Image")) ? "H3 ждёт <Picture N>, а не <Image N>. " : "")}Такой метки нет среди референсов — H3 получит ссылку в никуда">⚠ нет референса: ${esc(bad.join(", "))}</span>` : "")
+      const sl = st.selection.main.empty ? "" : T(" · выделено {0}", st.selection.main.to - st.selection.main.from);
+      pe.statusEl.innerHTML = T("<span><b>{0}</b> слов</span><span><b>{1}</b> симв.</span><span>≈ <b>{2}</b> токенов</span><span>строка {3}, столбец {4}{5}</span>", words(t), t.length, approxTokens(t), ln.number, c - ln.from + 1, sl)
+        + (t !== pe.orig ? T("<span class=\"chg\">● изменён</span>") : "")
+        + (bad.length ? T("<span class=\"bad\" title=\"{0}Такой метки нет среди референсов — H3 получит ссылку в никуда\">⚠ нет референса: {1}</span>", esc(bad.some((x) => x.startsWith("<Image")) ? T("H3 ждёт <Picture N>, а не <Image N>. ") : ""), esc(bad.join(", "))) : "")
         + (this.peCardStatus?.(t) || "")
-        + (warn.length ? `<span class="warn" title="${esc(warn.map((k) => k + " — " + pe.refs.valid.get(k)).join("\n"))}">⚠ ${esc(warn.join(", "))}: не во всех отрезках</span>` : "");
+        + (warn.length ? T("<span class=\"warn\" title=\"{0}\">⚠ {1}: не во всех отрезках</span>", esc(warn.map((k) => k + " — " + pe.refs.valid.get(k)).join("\n")), esc(warn.join(", "))) : "");
       clearTimeout(pe._sideT); pe._sideT = setTimeout(() => this.peSide(), 120);
     },
 
@@ -337,34 +338,34 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       pe.side.innerHTML = "";
       const refsForTpl = pe.refs.items.filter((r) => r.kind !== "var");
       const B = (label, title, fn, cls = "") => h("button", { class: "h3z-btn sm " + cls, type: "button", title, onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.preventDefault(); fn(); } }, label);
-      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, "Структура промпта H3"), h("span", { class: "h3z-note" }, "Рекомендуемый формат (Full-Reference): разделы по порядку, ключ с двоеточием в начале строки, текст — по-английски.")));
+      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, T("Структура промпта H3")), h("span", { class: "h3z-note" }, T("Рекомендуемый формат (Full-Reference): разделы по порядку, ключ с двоеточием в начале строки, текст — по-английски."))));
       pe.side.append(h("div", { class: "pe-row" },
-        B("⊕ Вставить шаблон", "Вставить скелет всех разделов" + (refsForTpl.length ? " (subject_definitions и retention_analysis заполнятся метками референсов)" : ""), () => this.peTemplate(), "pri"),
-        refsForTpl.length ? B("⇣ Метки → subject_definitions", "Добавить в subject_definitions по строке на каждую метку референса, которой там ещё нет", () => this.peFillSubjects()) : null));
+        B(T("⊕ Вставить шаблон"), T("Вставить скелет всех разделов") + (refsForTpl.length ? T(" (subject_definitions и retention_analysis заполнятся метками референсов)") : ""), () => this.peTemplate(), "pri"),
+        refsForTpl.length ? B(T("⇣ Метки → subject_definitions"), T("Добавить в subject_definitions по строке на каждую метку референса, которой там ещё нет"), () => this.peFillSubjects()) : null));
       for (const [key, ru, en, help] of SECTIONS) {
         const s = has.get(key);
         let stat;
         if (key === "detailed_description" && s) {
           const w = s.words, cls = w < DESC_MIN ? (w < DESC_MIN * 0.5 ? "bad" : "warn") : w > DESC_MAX ? "warn" : "ok";
-          stat = h("span", { class: "pe-wc " + cls, title: "Слов в detailed_description · рекомендуется 350–500" }, h("i", { style: { width: Math.min(100, w / DESC_MAX * 100) + "%" } }), h("b", null, `${w} / ${DESC_MIN}–${DESC_MAX}`));
-        } else stat = h("span", { class: "pe-st " + (s ? (s.words ? "ok" : "warn") : "no") }, s ? (s.words ? `✓ ${s.words} сл.` : "пусто") : "нет");
+          stat = h("span", { class: "pe-wc " + cls, title: T("Слов в detailed_description · рекомендуется 350–500") }, h("i", { style: { width: Math.min(100, w / DESC_MAX * 100) + "%" } }), h("b", null, `${w} / ${DESC_MIN}–${DESC_MAX}`));
+        } else stat = h("span", { class: "pe-st " + (s ? (s.words ? "ok" : "warn") : "no") }, s ? (s.words ? T("✓ {0} сл.", s.words) : T("пусто")) : T("нет"));
         const row = h("div", { class: "pe-sec" + (open.has(key) ? " open" : "") },
-          h("div", { class: "pe-sec-h", title: s ? "Перейти к разделу" : "Вставить раздел у курсора", onmousedown: (e) => e.preventDefault(),
+          h("div", { class: "pe-sec-h", title: s ? T("Перейти к разделу") : T("Вставить раздел у курсора"), onmousedown: (e) => e.preventDefault(),
             onclick: () => { if (s) { const v = pe.view; v.dispatch({ selection: { anchor: Math.min(s.from + (t[s.from] === "\n" ? 1 : 0), t.length) }, scrollIntoView: true }); v.focus(); } else this.peInsert(`${key}:\n`, { line: true }); } },
             h("code", null, key + ":"), h("span", { class: "ru" }, ru), h("i", { class: "grow" }), stat,
-            h("span", { class: "tg", title: "Подробнее", onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.stopPropagation(); if (open.has(key)) open.delete(key); else open.add(key); this.peSide(); } }, open.has(key) ? "▾" : "▸")),
+            h("span", { class: "tg", title: T("Подробнее"), onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.stopPropagation(); if (open.has(key)) open.delete(key); else open.add(key); this.peSide(); } }, open.has(key) ? "▾" : "▸")),
           h("div", { class: "pe-sec-en h3z-note" }, en),
           open.has(key) ? h("div", { class: "pe-sec-b" }, help,
-            key === "summary" ? h("div", { class: "pe-ins" }, TASKS.map((x) => h("span", { class: "pe-mini", title: "Вставить у курсора", onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
-            key === "retention_analysis" ? h("div", { class: "pe-ins" }, RETAIN.map((x) => h("span", { class: "pe-mini", title: "Вставить у курсора", onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
-            key === "detailed_description" ? h("div", { class: "pe-ins" }, ["[Shot 1]", "[Shot 2] At 00:03.000", "<Subject 1> (S1) says:\n<d>[English] </d>"].map((x) => h("span", { class: "pe-mini", title: "Вставить у курсора", onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x.split("\n")[0]))) : null) : null);
+            key === "summary" ? h("div", { class: "pe-ins" }, TASKS.map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
+            key === "retention_analysis" ? h("div", { class: "pe-ins" }, RETAIN.map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
+            key === "detailed_description" ? h("div", { class: "pe-ins" }, ["[Shot 1]", "[Shot 2] At 00:03.000", "<Subject 1> (S1) says:\n<d>[English] </d>"].map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x.split("\n")[0]))) : null) : null);
         pe.side.append(row);
       }
       const order = secs.map((s) => KEYS.indexOf(s.key)), unordered = order.some((x, i) => i && x < order[i - 1]);
       const dup = KEYS.filter((k) => secs.filter((s) => s.key === k).length > 1);
-      if (unordered || dup.length) pe.side.append(h("div", { class: "h3z-note warn" }, unordered ? "⚠ Разделы не по порядку — H3 обучен на порядке сверху вниз. " : "", dup.length ? `⚠ Повтор: ${dup.join(", ")}` : ""));
-      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, "Метки"), h("span", { class: "h3z-note" },
-        "<Picture N>, <Video N>, <Audio N> — номера идут в порядке референсов (картинки: персонажи → локации → другое). <Subject N> — своя метка персонажа/объекта: опишите её в subject_definitions. Наберите @, чтобы выбрать референс из списка.")));
+      if (unordered || dup.length) pe.side.append(h("div", { class: "h3z-note warn" }, unordered ? T("⚠ Разделы не по порядку — H3 обучен на порядке сверху вниз. ") : "", dup.length ? T("⚠ Повтор: {0}", dup.join(", ")) : ""));
+      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, T("Метки")), h("span", { class: "h3z-note" },
+        T("<Picture N>, <Video N>, <Audio N> — номера идут в порядке референсов (картинки: персонажи → локации → другое). <Subject N> — своя метка персонажа/объекта: опишите её в subject_definitions. Наберите @, чтобы выбрать референс из списка."))));
       pe.side.scrollTop = sideTop;
     },
 
@@ -379,7 +380,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         // keep the existing text: it goes into detailed_description of the skeleton, nothing is lost
         const at = tpl.indexOf("[Shot 1] ") + "[Shot 1] ".length, full = tpl.slice(0, at) + t.trim() + tpl.slice(at);
         v.dispatch({ changes: { from: 0, to: t.length, insert: full }, selection: { anchor: full.indexOf("—") + 2 } });
-        this.toast("Шаблон вставлен, прежний текст перенесён в detailed_description (Ctrl+Z — отменить)");
+        this.toast(T("Шаблон вставлен, прежний текст перенесён в detailed_description (Ctrl+Z — отменить)"));
       }
       v.focus();
     },
@@ -393,7 +394,7 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
         const add = `subject_definitions:\n${lines("").join("\n")}\n\n`;
         v.dispatch({ changes: { from: 0, insert: add }, selection: { anchor: add.indexOf("—") + 2 }, scrollIntoView: true });
       } else {
-        const L = lines(s.body); if (!L.length) { this.toast("Все метки уже есть в subject_definitions"); return; }
+        const L = lines(s.body); if (!L.length) { this.toast(T("Все метки уже есть в subject_definitions")); return; }
         let at = s.to; while (at > s.from && /\s/.test(t[at - 1])) at--;
         const ins = (at > s.from ? "\n" : "\n") + L.join("\n");
         v.dispatch({ changes: { from: at, insert: ins }, selection: { anchor: at + ins.length }, scrollIntoView: true });
@@ -408,16 +409,16 @@ export function installPromptEditor(Editor, { C, h, ICON }) {
       let text = pe.view.state.doc.toString();
       if (ok && this.peExpandBangs) text = this.peExpandBangs(text);
       if (!ok && text !== pe.orig && !pe.confirm) return this.peAskClose();
-      if (ok && text !== pe.orig) { try { pe.spec.apply(text); } catch (e) { this.toast("Не удалось сохранить промпт: " + (e.message || e), true); return; } }
+      if (ok && text !== pe.orig) { try { pe.spec.apply(text); } catch (e) { this.toast(T("Не удалось сохранить промпт: ") + (e.message || e), true); return; } }
       pe.view.destroy(); pe.el.remove(); this.pe = null;
       this.focusSink?.();
     },
     peAskClose() {
       const pe = this.pe;
-      const bar = pe.confirm = h("div", { class: "pe-confirm h3z-glass" }, h("b", null, "Текст изменён. Закрыть без сохранения?"),
-        h("button", { class: "h3z-btn sm pri", onclick: () => this.peConfirmClose("save") }, "✓ Применить"),
-        h("button", { class: "h3z-btn sm danger", onclick: () => this.peConfirmClose("drop") }, "Не сохранять"),
-        h("button", { class: "h3z-btn sm", onclick: () => this.peConfirmClose(false) }, "Вернуться (Esc)"));
+      const bar = pe.confirm = h("div", { class: "pe-confirm h3z-glass" }, h("b", null, T("Текст изменён. Закрыть без сохранения?")),
+        h("button", { class: "h3z-btn sm pri", onclick: () => this.peConfirmClose("save") }, T("✓ Применить")),
+        h("button", { class: "h3z-btn sm danger", onclick: () => this.peConfirmClose("drop") }, T("Не сохранять")),
+        h("button", { class: "h3z-btn sm", onclick: () => this.peConfirmClose(false) }, T("Вернуться (Esc)")));
       pe.el.querySelector(".h3z-pe").append(bar);
       bar.querySelector(".pri").focus();
     },

@@ -1,3 +1,4 @@
+import { lang } from "./h3s_i18n.js";
 // «Справка»: a beginner's manual inside the studio. The left panel holds search + table of contents, the
 // content opens wide over the player and the right panel (collapsible sections, several columns on wide
 // screens). Only features that exist in the code are described.
@@ -277,7 +278,8 @@ export function installHelp(Editor, { h }) {
       const all = h("div", { class: "h3z-row" },
         h("button", { class: "h3z-btn sm", onclick: () => this.helpOpenAll(true) }, "Развернуть все"),
         h("button", { class: "h3z-btn sm", onclick: () => this.helpOpenAll(false) }, "Свернуть все"));
-      L.append(h("div", { class: "h3z-ph" }, h("h3", null, "Справка")), h("div", { class: "h3z-scroll h3z-helpnav" }, q, all, $.helpToc));
+      L.append(h("div", { class: "h3z-ph" }, h("h3", null, lang() === "en" ? "Help" : "Справка")), h("div", { class: "h3z-scroll h3z-helpnav" },
+        lang() === "en" ? h("div", { class: "h3z-note" }, "Help is in Russian for now (the interface is in English).") : null, q, all, $.helpToc));
       this.helpShow();
       if (this._helpQ) this.helpFilter(this._helpQ);
     },

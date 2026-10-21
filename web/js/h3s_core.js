@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // H3ZeroStudio: pure project/timeline logic. Mirror of h3s_core.py (tests/test_core_parity.py compares both).
 export const FPS = 24;
 export const AUDIO_LATENT_FPS = 40;
@@ -47,7 +48,7 @@ export const roundHalf = (x, d) => Math.floor(Number(x) * 10 ** d + 0.5) / 10 **
 export const SEG_UPSCALE_SIGMA = { latent: 0.4, rtx: 0.25, tiles: 0.35 };
 export const SEG_UPSCALE_SIGMA_RANGE = [0.1, 0.7];
 export const RTX_QUALITIES = ["LOW", "MEDIUM", "HIGH", "ULTRA"];
-export const UPSCALE_LABELS = { latent: "Латент + доработка", rtx: "RTX VSR → доработка", tiles: "Плитки (SyncTile)" };
+export const UPSCALE_LABELS = { latent: T("Латент + доработка"), rtx: T("RTX VSR → доработка"), tiles: T("Плитки (SyncTile)") };
 export function normalizeUpscale(u) {
   if (!u || typeof u !== "object" || !SEG_UPSCALE_METHODS.includes(u.method)) return null;
   const m = u.method;
@@ -297,7 +298,7 @@ export function normalizeProject(p) {
   const out = {
     version: SCHEMA_VERSION,
     id: String(p.id || "").replace(/[^A-Za-z0-9_-]/g, "") || "project",
-    name: String(p.name || "H3 проект"),
+    name: String(p.name || T("H3 проект")),
     settings: merge(DEFAULT_SETTINGS, p.settings),
     assets: [],
     segments: [],
@@ -514,7 +515,7 @@ export function audioRefs(project, seg) {
   for (const r of seg.refs || []) {
     if (seen.has(r)) continue;
     if (byId[r]) out.push(byId[r]);
-    else if (r === AUDIO_INPUT_ID) out.push({ id: AUDIO_INPUT_ID, name: "Вход audio ноды", category: "audio" });
+    else if (r === AUDIO_INPUT_ID) out.push({ id: AUDIO_INPUT_ID, name: T("Вход audio ноды"), category: "audio" });
     else continue;
     seen.add(r);
   }
@@ -637,7 +638,7 @@ export function composePrompt(project, index) {
 // ---------------------------------------------------------------- «Персонажи» (mirror of h3s_core card_*)
 export const MAX_CARDS = 8, CARD_W_MAX = 4;
 export const CARD_CONCEPTS = ["identity", "background", "clothing", "style", "pose_motion", "voice", "generic"];
-export const CARD_CONCEPT_NAMES = { identity: "Персонаж", background: "Локация", clothing: "Одежда", style: "Стиль", pose_motion: "Движение", voice: "Голос", generic: "Другое" };
+export const CARD_CONCEPT_NAMES = { identity: T("Персонаж"), background: T("Локация"), clothing: T("Одежда"), style: T("Стиль"), pose_motion: T("Движение"), voice: T("Голос"), generic: T("Другое") };
 const CARD_LOOK_PHRASE = {
   identity: "{label} shows {who}; keep this identity and appearance.",
   background: "The location looks like {label}.",
@@ -788,32 +789,32 @@ export function estimate(project) {
   let total = items.length ? items[items.length - 1].end : 0;
   if (Math.trunc(Number(project.end || 0)) > 0) total = Math.min(total, Math.trunc(Number(project.end)));
   const warnings = [];
-  if (items.length < fullN) warnings.push(`${fullN - items.length} отр. за маркером конца ролика — не генерируются`);
+  if (items.length < fullN) warnings.push(T("{0} отр. за маркером конца ролика — не генерируются", fullN - items.length));
   const gap = Math.trunc(Number(project.end || 0)) - contentEnd(items);
-  if (items.length && gap > 0) warnings.push(`пусто ${fmtSec10(gap)} с между последним отрезком и маркером конца — ролик будет короче: заполните пустоту отрезком («Продлить») или растяните последний`);
+  if (items.length && gap > 0) warnings.push(T("пусто {0} с между последним отрезком и маркером конца — ролик будет короче: заполните пустоту отрезком («Продлить») или растяните последний", fmtSec10(gap)));
   for (const it of items) {
     const seg = project.segments[it.index];
     const name = seg.name || `#${it.index + 1}`;
     if (it.frames < TRAINED_MIN_FRAMES || it.frames > TRAINED_MAX_FRAMES)
-      warnings.push(`${name}: ${it.frames} кадров (${(it.frames / FPS).toFixed(1)} с) — вне обучающего диапазона H3 ${TRAINED_MIN_FRAMES}–${TRAINED_MAX_FRAMES} кадров`);
+      warnings.push(T("{0}: {1} кадров ({2} с) — вне обучающего диапазона H3 {3}–{4} кадров", name, it.frames, (it.frames / FPS).toFixed(1), TRAINED_MIN_FRAMES, TRAINED_MAX_FRAMES));
     const cp = continuityPicture(project, it.index);
     const nRefs = orderedRefs(project, seg).length + (cp ? 1 : 0);
-    if (nRefs > MAX_REF_IMAGES) warnings.push(`${name}: ${nRefs} референсов, максимум ${MAX_REF_IMAGES}` + (cp ? " (вместе с последним кадром прошлого отрезка)" : ""));
+    if (nRefs > MAX_REF_IMAGES) warnings.push(T("{0}: {1} референсов, максимум {2}", name, nRefs, MAX_REF_IMAGES) + (cp ? T(" (вместе с последним кадром прошлого отрезка)") : ""));
     const na = audioRefs(project, seg).length;
-    if (na > MAX_REF_AUDIOS) warnings.push(`${name}: ${na} аудио-референса, максимум ${MAX_REF_AUDIOS}`);
+    if (na > MAX_REF_AUDIOS) warnings.push(T("{0}: {1} аудио-референса, максимум {2}", name, na, MAX_REF_AUDIOS));
     const nv = videoRefs(project, seg).length;
-    if (nv > MAX_REF_VIDEOS) warnings.push(`${name}: ${nv} видео-референса, максимум ${MAX_REF_VIDEOS}`);
+    if (nv > MAX_REF_VIDEOS) warnings.push(T("{0}: {1} видео-референса, максимум {2}", name, nv, MAX_REF_VIDEOS));
     if (isFootage(seg)) continue;
     if (it.link === "extend" && it.index > 0 && it.overlap === 0 && wantedOverlap(project, it.index) > 0)
-      warnings.push(`${name}: перекрытие не помещается в отрезок — продление только по последнему кадру`);
-    if (!(project.settings.prompt || "").trim() && !(seg.prompt || "").trim()) warnings.push(`${name}: пустой промпт`);
+      warnings.push(T("{0}: перекрытие не помещается в отрезок — продление только по последнему кадру", name));
+    if (!(project.settings.prompt || "").trim() && !(seg.prompt || "").trim()) warnings.push(T("{0}: пустой промпт", name));
     const ids = new Set(orderedRefs(project, seg).map((a) => a.id));
     for (const m of segmentMarkers(project, it.index, items))
-      if (m.effect === "boost" && m.asset && !ids.has(m.asset)) warnings.push(`${name}: маркер «${m.label || m.id}» усиливает персонажа, которого нет в референсах отрезка`);
+      if (m.effect === "boost" && m.asset && !ids.has(m.asset)) warnings.push(T("{0}: маркер «{1}» усиливает персонажа, которого нет в референсах отрезка", name, m.label || m.id));
   }
   for (const m of project.markers || [])
-    if (m.effect !== "note" && markerSegment(items, m.frame) < 0) warnings.push(`маркер «${m.label || m.id}» за концом ролика — не действует`);
-  if (w * h > 1344 * 768 * 1.05) warnings.push(`${w}×${h} больше официальных 1344×768 — дольше и больше VRAM`);
+    if (m.effect !== "note" && markerSegment(items, m.frame) < 0) warnings.push(T("маркер «{0}» за концом ролика — не действует", m.label || m.id));
+  if (w * h > 1344 * 768 * 1.05) warnings.push(T("{0}×{1} больше официальных 1344×768 — дольше и больше VRAM", w, h));
   let steps = items.reduce((acc, it) => acc + segSteps(project, it.index), 0);
   const ups = items.map((it) => it.index).filter((i) => upscalable(project.segments[i]));
   const fr = Object.fromEntries(items.map((it) => [it.index, it.frames]));
@@ -822,7 +823,7 @@ export function estimate(project) {
   if (ups.length) {
     const [uw, uh] = ups.map((i) => upscaleCanvas(w, h, project.segments[i].upscale)).reduce((a, b) => (b[0] * b[1] > a[0] * a[1] ? b : a));
     const nch = Math.max(...ups.map((i) => upscaleChunking(project.settings, fr[i], um(i))[0]));
-    warnings.push(`апскейл отрезков: ${ups.length} → до ${uw}×${uh}` + (nch > 1 ? ` · до ${nch} фрагм. по времени` : ""));
+    warnings.push(T("апскейл отрезков: {0} → до {1}×{2}", ups.length, uw, uh) + (nch > 1 ? T(" · до {0} фрагм. по времени", nch) : ""));
   }
   return { segments: items.length, frames: total, seconds: Math.round(total / FPS * 1000) / 1000, width: w, height: h, steps_total: steps, warnings, kind: runKind(project.settings) };
 }
@@ -918,10 +919,10 @@ export function fmtTime(sec) {
 
 export function fmtDur(sec) {
   if (!isFinite(sec) || sec < 0) return "–";
-  if (sec < 60) return `${Math.round(sec)} с`;
+  if (sec < 60) return T("{0} с", Math.round(sec));
   const m = Math.floor(sec / 60), s = Math.round(sec % 60);
-  if (m < 60) return `${m} мин ${s.toString().padStart(2, "0")} с`;
-  return `${Math.floor(m / 60)} ч ${m % 60} мин`;
+  if (m < 60) return T("{0} мин {1} с", m, s.toString().padStart(2, "0"));
+  return T("{0} ч {1} мин", Math.floor(m / 60), m % 60);
 }
 
 export function newId(prefix = "") {
@@ -993,10 +994,10 @@ export function regionWindow(project, region, items = null) {
   Object.assign(out, { chain: [cs, ce], i0, i1, ws, a, b, we, frames, head: a - ws, tail: we - b, head_blocks: oh, tail_blocks: ot, to_end: toEnd,
     lat0: Math.floor(5 * (ws - cs) / 17), latent_t: latentT(frames), seg: markerSegment(items, a),
     segs: items.filter((it) => it.start < we && it.end > ws).map((it) => it.index) });
-  if (frames > MAX_FRAMES) out.error = `окно ${frames} кадров длиннее максимума ${MAX_FRAMES} — выделите участок короче`;
-  if (a === cs) out.warnings.push("участок у начала сцены — без контекста до него");
-  if (toEnd) out.warnings.push("участок до конца сцены — без контекста после него");
-  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(`окно ${frames} кадров (${(frames / FPS).toFixed(1)} с) вне обучающего диапазона H3 ${TRAINED_MIN_FRAMES}–${TRAINED_MAX_FRAMES}`);
+  if (frames > MAX_FRAMES) out.error = T("окно {0} кадров длиннее максимума {1} — выделите участок короче", frames, MAX_FRAMES);
+  if (a === cs) out.warnings.push(T("участок у начала сцены — без контекста до него"));
+  if (toEnd) out.warnings.push(T("участок до конца сцены — без контекста после него"));
+  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(T("окно {0} кадров ({1} с) вне обучающего диапазона H3 {2}–{3}", frames, (frames / FPS).toFixed(1), TRAINED_MIN_FRAMES, TRAINED_MAX_FRAMES));
   return out;
 }
 
@@ -1007,12 +1008,12 @@ export function spanKind(w) {
   if (w.to_end && !w.tail_blocks) return "extension";
   return "bridge";
 }
-export const SPAN_NAMES = { region: "Участок", bridge: "Мост", prologue: "Пролог", extension: "Продолжение" };
+export const SPAN_NAMES = { region: T("Участок"), bridge: T("Мост"), prologue: T("Пролог"), extension: T("Продолжение") };
 export const SPAN_HELP = {
-  region: "перегенерация внутри сцены: контекст до и после — из той же сцены",
-  bridge: "через склейку / промежуток: хвост сцены до и начало следующей — контекст, середина генерируется",
-  prologue: "контекста до нет, только последующий — генерация подводит к следующей сцене",
-  extension: "контекста после нет, только предыдущий — генерация продолжает сцену",
+  region: T("перегенерация внутри сцены: контекст до и после — из той же сцены"),
+  bridge: T("через склейку / промежуток: хвост сцены до и начало следующей — контекст, середина генерируется"),
+  prologue: T("контекста до нет, только последующий — генерация подводит к следующей сцене"),
+  extension: T("контекста после нет, только предыдущий — генерация продолжает сцену"),
 };
 
 /** Mirror of h3s_core.level_lock_frames (0 = off). */
@@ -1027,7 +1028,7 @@ export function bridgeWindow(project, region, items = null) {
   items = items || plan(limitedProject(project));
   const out = { error: "", warnings: [], mode: "bridge" };
   const st = Math.trunc(region.start), en = Math.trunc(region.end), chains = sceneChains(items);
-  if (!items.length || en <= st) { out.error = "пустой участок"; return out; }
+  if (!items.length || en <= st) { out.error = T("пустой участок"); return out; }
   const total = items[items.length - 1].end;
   const chA = chains.find((c) => c[0] <= st && st < c[1]) || null;
   let chB = chains.find((c) => c[0] <= en && en < c[1]) || null;
@@ -1040,17 +1041,17 @@ export function bridgeWindow(project, region, items = null) {
   let ot = 0;
   if (chB && b >= chB[0]) ot = Math.max(0, Math.min(regionBlocks(project, region, "tail"), Math.floor((chB[1] - 5 - b) / 17)));
   const toEnd = ot === 0, we = b + 17 * ot + 5;
-  if (we > total) { out.error = "участок выходит за конец таймлайна — добавьте промежуток или отрезок после него"; return out; }
+  if (we > total) { out.error = T("участок выходит за конец таймлайна — добавьте промежуток или отрезок после него"); return out; }
   const frames = we - ws, segs = items.filter((it) => it.start < we && it.end > ws).map((it) => it.index);
   const ms = markerSegment(items, a);
   Object.assign(out, { chain: [ws, we], i0: segs[0] ?? 0, i1: segs[segs.length - 1] ?? 0, ws, a, b, we, frames, head: a - ws, tail: we - b,
     head_blocks: oh, tail_blocks: ot, to_end: toEnd, lat0: 0, latent_t: latentT(frames), seg: ms >= 0 ? ms : (segs[0] ?? 0), segs,
     gaps: items.filter((it) => it.gap && ws < it.start && it.start <= we).map((it) => [it.index, it.gap]) });
-  if (!segs.length) out.error = "под участком нет отрезков";
-  else if (frames > MAX_FRAMES) out.error = `окно ${frames} кадров длиннее максимума ${MAX_FRAMES} — выделите участок короче`;
-  if (oh === 0) out.warnings.push("без контекста до участка (пролог / заполнение)");
-  if (toEnd) out.warnings.push("без контекста после участка (продление)");
-  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(`окно ${frames} кадров (${(frames / FPS).toFixed(1)} с) вне обучающего диапазона H3 ${TRAINED_MIN_FRAMES}–${TRAINED_MAX_FRAMES}`);
+  if (!segs.length) out.error = T("под участком нет отрезков");
+  else if (frames > MAX_FRAMES) out.error = T("окно {0} кадров длиннее максимума {1} — выделите участок короче", frames, MAX_FRAMES);
+  if (oh === 0) out.warnings.push(T("без контекста до участка (пролог / заполнение)"));
+  if (toEnd) out.warnings.push(T("без контекста после участка (продление)"));
+  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(T("окно {0} кадров ({1} с) вне обучающего диапазона H3 {2}–{3}", frames, (frames / FPS).toFixed(1), TRAINED_MIN_FRAMES, TRAINED_MAX_FRAMES));
   return out;
 }
 

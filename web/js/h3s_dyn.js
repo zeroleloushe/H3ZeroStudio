@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // Sampling dynamics panel under the player (like KJNodes' Model Preview Override): sigma / delta per step,
 // step time (ms), status idle / running.
 export function installDyn(Editor, { h }) {
@@ -5,15 +6,15 @@ export function installDyn(Editor, { h }) {
     buildDyn() {
       const $ = this.$;
       this.dyn = this.dyn || { seg: -1, sigmas: [], delta: [], ms: [], step: 0, steps: 0 };
-      $.dynSt = h("span", { class: "st" }, "ожидание");
+      $.dynSt = h("span", { class: "st" }, T("ожидание"));
       $.dynSig = h("canvas"); $.dynMs = h("canvas");
       $.dynInfo = h("span", { class: "nf" });
       $.dyn = h("div", { class: "h3z-dyn" + (this.dynOpen === false ? " closed" : "") },
         h("div", { class: "hd", onclick: () => { this.dynOpen = this.dynOpen === false; try { localStorage.setItem("h3zs.dyn", this.dynOpen ? "1" : "0"); } catch (e) {} $.dyn.classList.toggle("closed", !this.dynOpen); this.drawDyn(); } },
-          h("b", null, "Динамика сэмплирования"), $.dynInfo, h("i", { class: "grow" }), $.dynSt),
+          h("b", null, T("Динамика сэмплирования")), $.dynInfo, h("i", { class: "grow" }), $.dynSt),
         h("div", { class: "bd" },
           h("div", { class: "ch" }, h("div", { class: "lb", html: "<b>σ</b> / <em>Δ</em>" }), $.dynSig),
-          h("div", { class: "ch" }, h("div", { class: "lb" }, "время шага (мс)"), $.dynMs)));
+          h("div", { class: "ch" }, h("div", { class: "lb" }, T("время шага (мс)")), $.dynMs)));
       try { this.dynOpen = localStorage.getItem("h3zs.dyn") !== "0"; } catch (e) { this.dynOpen = true; }
       $.dyn.classList.toggle("closed", !this.dynOpen);
       try { new ResizeObserver(() => this.drawDyn()).observe($.dyn); } catch (e) {}
@@ -34,11 +35,11 @@ export function installDyn(Editor, { h }) {
 
     drawDyn() {
       const $ = this.$, y = this.dyn; if (!$?.dyn || !y) return;
-      $.dynSt.textContent = y.running ? `идёт · отрезок ${y.seg + 1} · шаг ${y.step}/${y.steps}` : "ожидание";
+      $.dynSt.textContent = y.running ? T("идёт · отрезок {0} · шаг {1}/{2}", y.seg + 1, y.step, y.steps) : T("ожидание");
       $.dynSt.classList.toggle("on", !!y.running);
       const ms = y.ms.filter((x) => x != null), avg = ms.length ? ms.slice(-8).reduce((a, b) => a + b, 0) / Math.min(8, ms.length) : null;
       const last = y.step ? y.sigmas[y.step - 1] : null;
-      $.dynInfo.textContent = [last != null ? `σ ${last.toFixed(3)}` : "", y.delta[y.step - 1] != null ? `Δ ${y.delta[y.step - 1].toFixed(4)}` : "", avg != null ? `${(avg / 1000).toFixed(2)} с/шаг` : ""].filter(Boolean).join(" · ");
+      $.dynInfo.textContent = [last != null ? `σ ${last.toFixed(3)}` : "", y.delta[y.step - 1] != null ? `Δ ${y.delta[y.step - 1].toFixed(4)}` : "", avg != null ? T("{0} с/шаг", (avg / 1000).toFixed(2)) : ""].filter(Boolean).join(" · ");
       if (this.dynOpen === false) return;
       const n = Math.max(y.steps || 0, y.sigmas.length - 1, y.ms.length, 1);
       chart($.dynSig, n, [{ v: y.sigmas.slice(0, n + 1), color: "#e5e7ff", dots: true, x0: 0 }, { v: y.delta, color: "#fb923c", x0: 1 }], y.step);

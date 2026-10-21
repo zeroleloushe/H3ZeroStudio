@@ -359,3 +359,130 @@ def test_fill_trailing_area_moves_the_end_marker(tmp_path):
             assert o["end"] == o["last"] and o["toasts"] == 0, o           # marker exactly on the new piece's end
         else:
             assert o["end"] > o["last"] and o["toasts"] == 1, o            # longer than one clip: max piece, click again
+
+
+# ---------------------------------------------------------------- i18n (RU source → EN dictionary)
+import re
+CYR = re.compile(r"[А-Яа-яЁё]")
+I18N_SKIP = {"h3s_help.js", "h3s_i18n.js", "h3s_i18n_en.js"}     # help stays Russian for now
+I18N_ALLOW = {"H3ZeroStudio · Таймлайн", "максимум"}              # matched against Russian text on purpose
+
+
+def _skip_regex(src, i):
+    j, cls, n = i + 1, False, len(src)
+    while j < n and (cls or src[j] != "/") and src[j] != "\n":
+        if src[j] == "\\": j += 1
+        elif src[j] == "[": cls = True
+        elif src[j] == "]": cls = False
+        j += 1
+    return j + 1
+
+
+def _js_template(src, i, out):
+    """Template literal at src[i] == "`": records its text (CSS comments dropped) and any literals inside ${…}."""
+    j, n, buf = i + 1, len(src), []
+    while j < n and src[j] != "`":
+        if src[j] == "\\":
+            buf.append(src[j:j + 2]); j += 2
+        elif src.startswith("${", j):
+            j, depth, prev = j + 2, 1, "("
+            while j < n and depth:
+                c = src[j]
+                if c == "/" and prev in "(,=:[!&|?{};+-*%<>~^":
+                    j = _skip_regex(src, j); prev = "x"; continue
+                if not c.isspace():
+                    prev = c
+                if c in "\"'":
+                    k = j + 1
+                    while k < n and src[k] != c:
+                        k += 2 if src[k] == "\\" else 1
+                    out.append(("str", src[j + 1:k], j)); j = k + 1; continue
+                if c == "`":
+                    j = _js_template(src, j, out); continue
+                depth += (c == "{") - (c == "}"); j += 1
+        else:
+            buf.append(src[j]); j += 1
+    out.append(("tpl", re.sub(r"/\*.*?\*/", "", "".join(buf), flags=re.S), i))
+    return j + 1
+
+
+def _js_strings(src):
+    """(kind, text, start) for every string / template literal outside comments and regex literals."""
+    out, i, n = [], 0, len(src)
+    prev = ""
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            i = src.find("\n", i); i = n if i < 0 else i; continue
+        if src.startswith("/*", i):
+            i = src.find("*/", i + 2); i = n if i < 0 else i + 2; continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and src[j] != c:
+                j += 2 if src[j] == "\\" else 1
+            out.append(("str", src[i + 1:j], i)); i = j + 1; prev = "x"; continue
+        if c == "`":
+            i = _js_template(src, i, out); prev = "x"; continue
+        if c == "/" and (prev == "" or prev in "(,=:[!&|?{};+-*%<>~^"):
+            i = _skip_regex(src, i); prev = "x"; continue
+        if not c.isspace():
+            prev = c
+        i += 1
+    return out
+
+
+def _en_keys():
+    keys = set()
+    for line in open(os.path.join(JS, "h3s_i18n_en.js"), encoding="utf-8"):
+        m = re.match(r'^\s*("(?:[^"\\]|\\.)*"):\s*"', line)
+        if m:
+            keys.add(json.loads(m.group(1)))
+    return keys
+
+
+def test_ui_strings_are_translated():
+    """Every user-visible Russian literal in web/js (help excepted) goes through T("…") and has an English entry."""
+    en, bare, missing = _en_keys(), [], []
+    for f in sorted(os.listdir(JS)):
+        if not f.endswith(".js") or f in I18N_SKIP:
+            continue
+        src = open(os.path.join(JS, f), encoding="utf-8").read()
+        for kind, text, at in _js_strings(src):
+            if not CYR.search(text):
+                continue
+            line = src.count("\n", 0, at) + 1
+            if kind == "tpl":
+                bare.append(f"{f}:{line} template `{text[:50]}`"); continue
+            wrapped = re.search(r"\bT\(\s*$", src[max(0, at - 12):at])
+            key = json.loads('"' + text.replace('\\\'', "'") + '"') if '\\' in text else text
+            if not wrapped:
+                if key not in I18N_ALLOW:
+                    bare.append(f"{f}:{line} {text[:60]!r}")
+            elif key not in en:
+                missing.append(f"{f}:{line} {text[:60]!r}")
+    assert not bare, "not wrapped in T():\n" + "\n".join(bare[:40])
+    assert not missing, "no English entry:\n" + "\n".join(missing[:40])
+
+
+@need_node
+def test_i18n_runtime(tmp_path):
+    """T() fills {0}…, falls back to Russian, plurals per language; server messages (exact / f-string patterns /
+    «prefix: message») are translated in English mode."""
+    js = tmp_path / "i.mjs"
+    js.write_text(textwrap.dedent(f"""
+        const I = await import({json.dumps(pathlib.Path(JS, "h3s_i18n.js").as_uri())});
+        const r = {{}};
+        r.ru = I.T("Отрезок {{0}}", 3); r.ruPl = I.plural(3, "отрезок", "отрезка", "отрезков");
+        I.setLangForTests("en");
+        r.en = I.T("Отрезок {{0}}", 3); r.miss = I.T("Нет такой строки {{0}}", 1); r.enPl = [I.plural(1, "a", "b", "c"), I.plural(3, "a", "b", "c")];
+        r.srv = I.tServer("Карточка «Ann» уже есть — выберите другое имя");
+        r.srv2 = I.tServer("Не создалась: Нет VAE: подключите VAE проводом к узлу студии или выберите в пресете моделей проекта");
+        r.plain = I.tServer("CUDA out of memory");
+        console.log(JSON.stringify(r));
+    """))
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["ru"] == "Отрезок 3" and o["ruPl"] == "отрезка" and o["en"] == "Segment 3" and o["miss"] == "Нет такой строки 1"
+    assert o["enPl"] == ["a", "c"] and o["srv"] == "Card “Ann” already exists — choose another name"
+    assert o["srv2"].startswith("Not created: No VAE:") and o["plain"] == "CUDA out of memory"

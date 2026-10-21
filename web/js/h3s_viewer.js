@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // «Удобный просмотр»: a full-window viewer for the live «Весь ролик» composition or one file (a clip's take,
 // footage, a gallery item, the final). Zoom fit / ×1 (one video pixel = one screen pixel) / ×2 / ×4, wheel zoom
 // at the cursor, drag to pan (the A/B compare zoom, generalised to free scales), scrub bar with timecode and
@@ -8,7 +9,7 @@
 export function installViewer(Editor, { C, h, ICON }) {
   const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
   const SPEEDS = [0.25, 0.5, 1, 2];
-  const ZOOMS = [["fit", "Вписать"], [1, "×1"], [2, "×2"], [4, "×4"]];
+  const ZOOMS = [["fit", T("Вписать")], [1, "×1"], [2, "×2"], [4, "×4"]];
   const MAXS = 16;
   const svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const IC = {
@@ -28,31 +29,31 @@ export function installViewer(Editor, { C, h, ICON }) {
       const el = this.$?.center; if (!el) return;
       if (document.fullscreenElement) { document.exitFullscreen?.().catch(() => {}); return; }
       const p = el.requestFullscreen?.();
-      if (!p) return this.toast("Браузер не поддерживает полноэкранный режим", true);
-      p.catch((e) => this.toast("Полноэкранный режим недоступен: " + (e.message || e), true));
+      if (!p) return this.toast(T("Браузер не поддерживает полноэкранный режим"), true);
+      p.catch((e) => this.toast(T("Полноэкранный режим недоступен: ") + (e.message || e), true));
     },
 
     /** «Удобный просмотр» of what the main player shows. */
     viewerFromPlayer() {
       const s = this.src;
-      if (!s && !this.totalFrames()) return this.toast("Нечего показывать: сначала сгенерируйте отрезок или добавьте футаж", true);
+      if (!s && !this.totalFrames()) return this.toast(T("Нечего показывать: сначала сгенерируйте отрезок или добавьте футаж"), true);
       if (!s || s.kind === "comp") return this.openViewer({ comp: true });
-      if (s.kind === "full") return this.openViewer({ ref: s.ref, title: s.old ? "Прошлый итог (устарел)" : "Весь ролик · итоговый файл", t: this.playhead / FPS });
-      return this.openViewer({ ref: s.ref, title: `Отрезок ${this.sel + 1}` + (s.foot ? " · футаж" : ""), t: Math.max(0, (this.playhead - s.start) / FPS + (s.off || 0)) });
+      if (s.kind === "full") return this.openViewer({ ref: s.ref, title: s.old ? T("Прошлый итог (устарел)") : T("Весь ролик · итоговый файл"), t: this.playhead / FPS });
+      return this.openViewer({ ref: s.ref, title: T("Отрезок {0}", this.sel + 1) + (s.foot ? T(" · футаж") : ""), t: Math.max(0, (this.playhead - s.start) / FPS + (s.off || 0)) });
     },
     /** What a clip can show in the viewer: its active take, else its footage file. */
     viewerClipSpec(i) {
       const s = this.seg(i); if (!s) return null;
-      const nm = `Отрезок ${i + 1}` + (s.name ? ` «${s.name}»` : "");
+      const nm = T("Отрезок {0}", i + 1) + (s.name ? ` «${s.name}»` : "");
       const foot = C.isFootage(s) || s.freeze ? this.footageSource?.(i) : null;
       if (s.result?.video && !(foot && C.isFootage(s) && this.isStale(i))) {
         const n = (s.takes || []).length, k = this.takeIndex ? this.takeIndex(s, s.active_take) + 1 : 0;
-        return { ref: s.result.video, title: nm + (n > 1 && k > 0 ? ` · дубль ${k}/${n}` : "") };
+        return { ref: s.result.video, title: nm + (n > 1 && k > 0 ? T(" · дубль {0}/{1}", k, n) : "") };
       }
-      if (foot) return { ref: foot.ref, title: nm + " · футаж", t: foot.off || 0 };
+      if (foot) return { ref: foot.ref, title: nm + T(" · футаж"), t: foot.off || 0 };
       return null;
     },
-    viewerForClip(i) { const sp = this.viewerClipSpec(i); if (sp) this.openViewer(sp); else this.toast("У отрезка ещё нет видео", true); },
+    viewerForClip(i) { const sp = this.viewerClipSpec(i); if (sp) this.openViewer(sp); else this.toast(T("У отрезка ещё нет видео"), true); },
 
     /** spec: {comp: true} | {ref, title, t (s)} */
     openViewer(spec) {
@@ -78,7 +79,7 @@ export function installViewer(Editor, { C, h, ICON }) {
           pause: () => this.stopPlayback(),
           rate: (r) => { this.playRate = r; const v = this.$.video; if (v) { v.defaultPlaybackRate = r; v.playbackRate = r; } },
           vol: () => this.applyVolume(),
-          info: () => { const s = this.src; return "Весь ролик · сборка таймлайна" + (s && s.seg >= 0 ? ` · отрезок ${s.seg + 1}` + (s.region ? " · ✂ участок" : s.foot ? " · футаж" : s.ph ? " · заглушка (не сгенерирован)" : "") : ""); },
+          info: () => { const s = this.src; return T("Весь ролик · сборка таймлайна") + (s && s.seg >= 0 ? T(" · отрезок {0}", s.seg + 1) + (s.region ? T(" · ✂ участок") : s.foot ? T(" · футаж") : s.ph ? T(" · заглушка (не сгенерирован)") : "") : ""); },
         };
       } else {
         const v = V.video = h("video", { src: this.host.url(spec.ref), preload: "auto", playsinline: true, draggable: "false" });
@@ -97,39 +98,39 @@ export function installViewer(Editor, { C, h, ICON }) {
           pause: () => v.pause(),
           rate: (r) => { v.defaultPlaybackRate = r; v.playbackRate = r; },
           vol: () => { v.volume = clamp(this.vol.v, 0, 1); v.muted = !!this.vol.muted; },
-          info: () => spec.title || "Видео",
+          info: () => spec.title || T("Видео"),
         };
         d.vol();
       }
       V.d = d;
       // ---- controls
       const B = (html, title, fn, cls = "") => h("button", { class: "h3z-btn sm " + cls, html, title, onclick: (e) => { e.stopPropagation(); fn(); } });
-      const playB = h("button", { class: "h3z-play", html: ICON.play, title: "Воспроизвести / пауза (Пробел)", onclick: () => this.vwToggle() });
-      const scrub = h("input", { class: "h3z-range scrub", type: "range", min: 0, max: 1, step: 1, value: 0, title: "Перемотка по кадрам" });
+      const playB = h("button", { class: "h3z-play", html: ICON.play, title: T("Воспроизвести / пауза (Пробел)"), onclick: () => this.vwToggle() });
+      const scrub = h("input", { class: "h3z-range scrub", type: "range", min: 0, max: 1, step: 1, value: 0, title: T("Перемотка по кадрам") });
       scrub.addEventListener("input", () => d.seek(Number(scrub.value)));
       const band = h("div", { class: "loopband" });
       const time = h("div", { class: "vtime" });
-      const speeds = h("div", { class: "h3z-pills vspeed", title: "Скорость воспроизведения" }, SPEEDS.map((r) => h("div", { class: "h3z-pill" + (r === 1 ? " on" : ""), "data-r": r, onclick: () => this.vwRate(r) }, r === 1 ? "1×" : r + "×")));
-      const zoomB = ZOOMS.map(([z, l]) => h("button", { class: "h3z-btn sm", "data-z": z, title: z === "fit" ? "Вписать кадр в окно (0)" : z === 1 ? "1:1 — один пиксель видео = один пиксель экрана (1)" : `Увеличить в ${z} раза (${z})`, onclick: () => this.vwZoom(z) }, l));
+      const speeds = h("div", { class: "h3z-pills vspeed", title: T("Скорость воспроизведения") }, SPEEDS.map((r) => h("div", { class: "h3z-pill" + (r === 1 ? " on" : ""), "data-r": r, onclick: () => this.vwRate(r) }, r === 1 ? "1×" : r + "×")));
+      const zoomB = ZOOMS.map(([z, l]) => h("button", { class: "h3z-btn sm", "data-z": z, title: z === "fit" ? T("Вписать кадр в окно (0)") : z === 1 ? T("1:1 — один пиксель видео = один пиксель экрана (1)") : T("Увеличить в {0} раза ({1})", z, z), onclick: () => this.vwZoom(z) }, l));
       const zl = h("span", { class: "h3z-note zl" }, "");
-      const pxB = B("▦", "Чёткие пиксели без сглаживания (P)", () => this.vwPx(), "px");
-      const loopB = B("⟲ Петля", "Повторять участок между входом и выходом (L)", () => this.vwLoop());
-      const inB = B("[ Вход", "Начало петли на текущем кадре (I)", () => this.vwMark("a"));
-      const outB = B("Выход ]", "Конец петли на текущем кадре (O)", () => this.vwMark("b"));
-      const volB = h("button", { class: "h3z-btn icon sm", title: "Звук вкл/выкл (M)", onclick: () => this.vwMute() });
-      const volR = h("input", { class: "h3z-range vol", type: "range", min: 0, max: 1, step: 0.02, value: this.vol.muted ? 0 : this.vol.v, title: "Громкость" });
+      const pxB = B("▦", T("Чёткие пиксели без сглаживания (P)"), () => this.vwPx(), "px");
+      const loopB = B(T("⟲ Петля"), T("Повторять участок между входом и выходом (L)"), () => this.vwLoop());
+      const inB = B(T("[ Вход"), T("Начало петли на текущем кадре (I)"), () => this.vwMark("a"));
+      const outB = B(T("Выход ]"), T("Конец петли на текущем кадре (O)"), () => this.vwMark("b"));
+      const volB = h("button", { class: "h3z-btn icon sm", title: T("Звук вкл/выкл (M)"), onclick: () => this.vwMute() });
+      const volR = h("input", { class: "h3z-range vol", type: "range", min: 0, max: 1, step: 0.02, value: this.vol.muted ? 0 : this.vol.v, title: T("Громкость") });
       volR.addEventListener("input", () => { this.vol.v = Number(volR.value); this.vol.muted = this.vol.v === 0; this.userGesture = true; this.autoMuted = false; this.vwSaveVol(); });
       const title = h("b", { class: "vtitle" }, d.info()), sub = h("span", { class: "h3z-note vsub" }, "");
       const el = h("div", { class: "h3z-viewer", tabindex: "-1" },
-        h("div", { class: "vhd" }, h("span", { class: "vtag" }, "Удобный просмотр"), title, sub, h("i", { class: "grow" }),
+        h("div", { class: "vhd" }, h("span", { class: "vtag" }, T("Удобный просмотр")), title, sub, h("i", { class: "grow" }),
           h("div", { class: "vzoom" }, zoomB, zl, pxB),
-          B(IC.fs, "Во весь экран (F)", () => this.vwFullscreen(), "icon"), B("✕", "Закрыть (Esc)", () => this.closeViewer(), "icon")),
+          B(IC.fs, T("Во весь экран (F)"), () => this.vwFullscreen(), "icon"), B("✕", T("Закрыть (Esc)"), () => this.closeViewer(), "icon")),
         vp,
         h("div", { class: "vbar" }, h("div", { class: "scrubw" }, band, scrub)),
         h("div", { class: "vctr" },
-          B(IC.stepB, "Кадр назад (← или ,) · с Shift — на 1 с", () => this.vwStep(-1), "icon"), playB, B(IC.stepF, "Кадр вперёд (→ или .) · с Shift — на 1 с", () => this.vwStep(1), "icon"),
+          B(IC.stepB, T("Кадр назад (← или ,) · с Shift — на 1 с"), () => this.vwStep(-1), "icon"), playB, B(IC.stepF, T("Кадр вперёд (→ или .) · с Shift — на 1 с"), () => this.vwStep(1), "icon"),
           time, h("i", { class: "grow" }), speeds, h("span", { class: "sep" }), inB, outB, loopB, h("span", { class: "sep" }), h("div", { class: "h3z-volume" }, volB, volR)),
-        h("div", { class: "vkeys h3z-note" }, "Пробел — пуск/пауза · ← → или , . — кадр (Shift — 1 с) · колесо — масштаб у курсора · тянуть — двигать · 0/1/2/4 — масштаб · I / O / L — петля · F — во весь экран · Esc — закрыть"));
+        h("div", { class: "vkeys h3z-note" }, T("Пробел — пуск/пауза · ← → или , . — кадр (Shift — 1 с) · колесо — масштаб у курсора · тянуть — двигать · 0/1/2/4 — масштаб · I / O / L — петля · F — во весь экран · Esc — закрыть")));
       Object.assign(V, { el, vp, cont, playB, scrub, band, time, speeds, zoomB, zl, pxB, loopB, inB, outB, volB, volR, title, sub });
       // ---- zoom / pan (same model as the A/B compare: one transform, clamped so the frame never leaves the window)
       vp.addEventListener("wheel", (ev) => {
@@ -198,7 +199,7 @@ export function installViewer(Editor, { C, h, ICON }) {
       V.zoomB.forEach((b) => b.classList.toggle("on", String(b.dataset.z) === String(V.z)));
       V.pxB.classList.toggle("on", V.px);
       V.zl.textContent = Math.round(V.s * 100) + "%";
-      V.sub.textContent = `${w}×${hh} · ${FPS} к/с`;
+      V.sub.textContent = T("{0}×{1} · {2} к/с", w, hh, FPS);
     },
     vwToggle() { const V = this.viewer; if (!V) return; if (V.d.playing()) { V.want = false; V.d.pause(); } else { V.want = true; this.userGesture = true; this.autoMuted = false; V.d.rate(V.rate); V.d.play(); } },
     vwStep(k) { const V = this.viewer; if (!V) return; V.want = false; V.d.pause(); V.d.seek(V.d.f() + k); },
@@ -220,7 +221,7 @@ export function installViewer(Editor, { C, h, ICON }) {
     vwFullscreen() {
       const V = this.viewer; if (!V) return;
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-      else V.el.requestFullscreen?.().catch((e) => this.toast("Полноэкранный режим недоступен: " + (e.message || e), true));
+      else V.el.requestFullscreen?.().catch((e) => this.toast(T("Полноэкранный режим недоступен: ") + (e.message || e), true));
     },
     /** Loop range: back to the in-point as soon as the out-point is reached (true = it jumped). Runs in the editor's
      *  playback tick (composition) and per presented video frame (file), so it does not overshoot by a repaint. */
@@ -248,7 +249,7 @@ export function installViewer(Editor, { C, h, ICON }) {
       V.band.style.left = (a / Math.max(1, n - 1) * 100) + "%"; V.band.style.width = ((b - a) / Math.max(1, n - 1) * 100) + "%";
       V.band.classList.toggle("on", L.on);
       V.loopB.classList.toggle("on", L.on);
-      const tt = `<b>${tc(f)}</b> / ${tc(n - 1)} · кадр <b>${f}</b> / ${n - 1}` + (L.on ? ` · петля ${a}–${b}` : "") + (V.rate !== 1 ? ` · ${V.rate}×` : "");
+      const tt = T("<b>{0}</b> / {1} · кадр <b>{2}</b> / {3}", tc(f), tc(n - 1), f, n - 1) + (L.on ? T(" · петля {0}–{1}", a, b) : "") + (V.rate !== 1 ? ` · ${V.rate}×` : "");
       if (V._tt !== tt) { V.time.innerHTML = tt; V._tt = tt; }
       const pl = d.playing(); if (V._pl !== pl) { V.playB.innerHTML = pl ? ICON.pause : ICON.play; V._pl = pl; }
       const info = d.info(); if (V._info !== info) { V.title.textContent = info; V._info = info; }

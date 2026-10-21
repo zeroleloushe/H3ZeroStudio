@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // H3ZeroStudio: audio. Audio files are assets (category "audio", plus the node's audio input as a virtual asset).
 // Clips on the audio track (two lanes, mixed) are the main composition: their audio latent is locked, the video
 // follows the sound. An audio asset in a segment's references is an <Audio j> reference for that segment only.
@@ -15,7 +16,7 @@ export function installAudio(Editor, { C, h, ICON }) {
     audioAssets() {
       const ir = this.p.audio.input_ref;
       return [...this.p.assets.filter((a) => a.category === "audio"),
-        { id: C.AUDIO_INPUT_ID, name: "Вход audio ноды", category: "audio", virtual: true, duration: ir?.duration || 0 }];
+        { id: C.AUDIO_INPUT_ID, name: T("Вход audio ноды"), category: "audio", virtual: true, duration: ir?.duration || 0 }];
     },
     audioAsset(id) { return this.audioAssets().find((a) => a.id === id) || null; },
     audioRefOf(id) {
@@ -61,9 +62,9 @@ export function installAudio(Editor, { C, h, ICON }) {
           const id = C.newId("au");
           this.mutate((p) => { p.assets.push({ id, name: (f.name || r.name).replace(/\.[^.]+$/, ""), file: r.name, subfolder: r.subfolder || "", type: r.type || "input", category: "audio", duration: 0 }); }, { render: "none" });
           n++; last = id;
-        } catch (e) { this.toast("Не удалось загрузить " + f.name + ": " + (e.message || e), true); }
+        } catch (e) { this.toast(T("Не удалось загрузить ") + f.name + ": " + (e.message || e), true); }
       }
-      if (n) { this.renderAll(); this.toast(`Аудио загружено: ${n} · перетащите его на аудиодорожку или в референсы отрезка`); }
+      if (n) { this.renderAll(); this.toast(T("Аудио загружено: {0} · перетащите его на аудиодорожку или в референсы отрезка", n)); }
       return last;
     },
 
@@ -72,14 +73,14 @@ export function installAudio(Editor, { C, h, ICON }) {
       lane = Math.max(0, Math.min(LANES - 1, lane));
       this.mutate((p) => { p.audio.clips.push({ id, asset, lane, start: Math.max(0, Math.round(start * C.FPS) / C.FPS), in: 0, length: 0, volume: lane >= MUSIC ? 0.8 : 1, fade_in: 0, fade_out: 0 }); p.audio.clips.sort((a, b) => a.start - b.start || a.lane - b.lane); });
       this.selAudio = id; this.selMarker = null; this.audioPanelRefresh(); this.renderTimeline();
-      this.toast(lane >= MUSIC ? "Музыка: играет поверх звука видео (не фиксируется, не референс) · громкость и фейды — правый клик" : "Клип на аудиодорожке: звук зафиксирован, видео подстроится под него");
+      this.toast(lane >= MUSIC ? T("Музыка: играет поверх звука видео (не фиксируется, не референс) · громкость и фейды — правый клик") : T("Клип на аудиодорожке: звук зафиксирован, видео подстроится под него"));
     },
 
     /** S on a selected audio clip: split it at the playhead. */
     splitAudio() {
       const c = this.audioClipById(this.selAudio); if (!c) return false;
       const sp = this.clipSpan(c), t = this.playhead / C.FPS, local = t - sp.start;
-      if (local <= 0.05 || local >= sp.len - 0.05) { this.toast("Поставьте плейхед внутрь выбранного аудиоклипа", true); return true; }
+      if (local <= 0.05 || local >= sp.len - 0.05) { this.toast(T("Поставьте плейхед внутрь выбранного аудиоклипа"), true); return true; }
       const id = C.newId("ac");
       this.mutate((p) => {
         const x = p.audio.clips.find((k) => k.id === c.id);
@@ -90,7 +91,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         p.audio.clips.sort((a, b) => a.start - b.start || a.lane - b.lane);
       });
       this.selAudio = id; this.audioPanelRefresh();
-      this.toast("Аудиоклип разрезан · Del — удалить выбранный кусок");
+      this.toast(T("Аудиоклип разрезан · Del — удалить выбранный кусок"));
       return true;
     },
 
@@ -98,7 +99,7 @@ export function installAudio(Editor, { C, h, ICON }) {
       if (!this.audioClipById(id)) return false;
       this.mutate((p) => { p.audio.clips = p.audio.clips.filter((c) => c.id !== id); });
       this.selAudio = null; this.audioStop(); this.audioPanelRefresh();
-      this.toast("Аудиоклип удалён · Ctrl+Z — вернуть");
+      this.toast(T("Аудиоклип удалён · Ctrl+Z — вернуть"));
       return true;
     },
 
@@ -125,23 +126,23 @@ export function installAudio(Editor, { C, h, ICON }) {
       const clips = this.p.audio.clips, lock = clips.some((c) => !isMusic(c)), music = clips.some(isMusic);
       const linked = this.host.inputLinked?.("audio_vae");
       const spk = (kind, on, title) => {
-        const b = h("button", { class: "h3z-spk" + (on ? " on" : " off"), title: (on ? "Звук включён" : "Звук выключен") + " — " + title });
+        const b = h("button", { class: "h3z-spk" + (on ? " on" : " off"), title: (on ? T("Звук включён") : T("Звук выключен")) + " — " + title });
         b.textContent = on ? "🔊" : "🔇";
         b.addEventListener("pointerdown", (e) => e.stopPropagation());
         b.onclick = (e) => { e.stopPropagation(); this.setMonitor(kind, !on); };
         return b;
       };
       const row = (top, ...kids) => h("div", { class: "h3z-arow", style: { top: top + "px", height: LANE_H + "px" } }, ...kids);
-      const tip = "Клипы на дорожках 1–2 — основная композиция: звук фиксируется, видео генерируется под него (ритм, липсинк). " +
-        "Аудио в референсах отрезка — только подсказка <Audio N>. Дорожка «Музыка» не фиксируется: микшируется поверх звука видео при воспроизведении и сохранении.";
+      const tip = T("Клипы на дорожках 1–2 — основная композиция: звук фиксируется, видео генерируется под него (ритм, липсинк). ") +
+        T("Аудио в референсах отрезка — только подсказка <Audio N>. Дорожка «Музыка» не фиксируется: микшируется поверх звука видео при воспроизведении и сохранении.");
       H.title = tip;
       H.append(
-        row(0, h("i", { html: ICON.audio }), h("span", { class: "nm" }, "Аудио"),
-          lock && linked === false ? h("span", { class: "h3z-warn", title: "Не подключён вход audio_vae (minimax_h3_audio_vae): без него звук дорожки не фиксируется в генерации, а просто идёт на выход audio." }, "⚠") : null,
-          spk("lock", this.audioMonitor !== false, "слышать дорожку при воспроизведении (звук готового видео при этом приглушается)")),
+        row(0, h("i", { html: ICON.audio }), h("span", { class: "nm" }, T("Аудио")),
+          lock && linked === false ? h("span", { class: "h3z-warn", title: T("Не подключён вход audio_vae (minimax_h3_audio_vae): без него звук дорожки не фиксируется в генерации, а просто идёт на выход audio.") }, "⚠") : null,
+          spk("lock", this.audioMonitor !== false, T("слышать дорожку при воспроизведении (звук готового видео при этом приглушается)"))),
         row(LANE_H + LANE_GAP, h("span", { class: "sub" }, "🔒 2")),
-        row(2 * (LANE_H + LANE_GAP), h("span", { class: "nm music" }, "♫ Музыка"),
-          spk("music", this.musicMonitor !== false, "слышать музыку при воспроизведении" + (music ? "" : " (дорожка пуста)"))));
+        row(2 * (LANE_H + LANE_GAP), h("span", { class: "nm music" }, T("♫ Музыка")),
+          spk("music", this.musicMonitor !== false, T("слышать музыку при воспроизведении") + (music ? "" : T(" (дорожка пуста)")))));
     },
 
     /** Inspector card of the selected audio clip (replaces the old left «Аудио» panel). */
@@ -159,25 +160,25 @@ export function installAudio(Editor, { C, h, ICON }) {
         const v = h("div", { class: "h3z-val" }, Math.round((this.p.audio.video_volume ?? 1) * 100) + "%");
         const spf = () => r.style.setProperty("--p", (r.value / 2 * 100) + "%"); spf();
         r.oninput = () => { spf(); v.textContent = Math.round(r.value * 100) + "%"; this.mutate((p) => { p.audio.video_volume = Number(r.value); }, { coalesce: "vvol", render: "none" }); this.applyVolume(); };
-        return h("div", null, h("div", { class: "h3z-lbl", title: "Громкость сгенерированного звука под дорожкой «Музыка» — в плеере и в «Сохранить видео»" }, "Звук видео под музыкой", h("em", null, "весь ролик")), h("div", { class: "h3z-row" }, r, v)); })();
-      card.append(h("div", { class: "h3z-card-h" }, h("h4", null, (isMusic(c) ? "♫ " : "🔒 ") + "Аудиоклип"),
-          h("button", { class: "h3z-btn sm icon", title: "Закрыть", onclick: () => { this.selAudio = null; this.renderInspector(); this.renderTimeline(); } }, "✕")),
-        h("div", { class: "h3z-afile" }, h("i", { html: ICON.audio }), h("div", null, h("b", null, a?.name || c.asset), h("small", null, `${isMusic(c) ? "музыка" : "дорожка " + (c.lane + 1)} · ${sp.known ? `файл ${this.assetDuration(c.asset).toFixed(2)} с` : "длина файла неизвестна"}`))),
+        return h("div", null, h("div", { class: "h3z-lbl", title: T("Громкость сгенерированного звука под дорожкой «Музыка» — в плеере и в «Сохранить видео»") }, T("Звук видео под музыкой"), h("em", null, T("весь ролик"))), h("div", { class: "h3z-row" }, r, v)); })();
+      card.append(h("div", { class: "h3z-card-h" }, h("h4", null, (isMusic(c) ? "♫ " : "🔒 ") + T("Аудиоклип")),
+          h("button", { class: "h3z-btn sm icon", title: T("Закрыть"), onclick: () => { this.selAudio = null; this.renderInspector(); this.renderTimeline(); } }, "✕")),
+        h("div", { class: "h3z-afile" }, h("i", { html: ICON.audio }), h("div", null, h("b", null, a?.name || c.asset), h("small", null, `${isMusic(c) ? T("музыка") : T("дорожка ") + (c.lane + 1)} · ${sp.known ? T("файл {0} с", this.assetDuration(c.asset).toFixed(2)) : T("длина файла неизвестна")}`))),
         h("div", { class: "h3z-arows" },
-          h("div", { class: "h3z-field" }, h("div", { class: "h3z-lbl" }, "Дорожка"), h("div", { class: "h3z-pills" },
-            [[0, "🔒 1"], [1, "🔒 2"], [2, "♫ Музыка"]].map(([l, t]) => h("div", { class: "h3z-pill" + (c.lane === l ? " on" : ""), title: l >= MUSIC ? "Музыка поверх видео: не фиксируется, только микс при воспроизведении и сохранении" : "Основная композиция: звук фиксируется в генерации", onclick: () => this.mutate((p) => { p.audio.clips.find((k) => k.id === c.id).lane = l; }) }, t)))),
-          num("Громкость, %", (c.volume ?? 1) * 100, (x, v) => { x.volume = Math.min(2, v / 100); }, isMusic(c) ? "0–200" : "меняет фиксируемый звук"),
-          num("Фейд в начале", c.fade_in || 0, (x, v) => { x.fade_in = v; }, "с"),
-          num("Фейд в конце", c.fade_out || 0, (x, v) => { x.fade_out = v; }, "с"),
-          num("Старт на таймлайне", sp.start, (x, v) => { x.start = v; }, "с"),
-          num("Начало в файле", sp.in, (x, v) => { x.in = v; }, "с"),
-          num("Длина", sp.len, (x, v) => { x.length = v; }, c.length > 0 ? "с" : "с · до конца файла"),
-          h("div", { class: "h3z-field" }, h("div", { class: "h3z-lbl" }, "Конец на таймлайне", h("em", null, "с")), h("div", { class: "h3z-in ro" }, sp.end.toFixed(2)))),
+          h("div", { class: "h3z-field" }, h("div", { class: "h3z-lbl" }, T("Дорожка")), h("div", { class: "h3z-pills" },
+            [[0, "🔒 1"], [1, "🔒 2"], [2, T("♫ Музыка")]].map(([l, t]) => h("div", { class: "h3z-pill" + (c.lane === l ? " on" : ""), title: l >= MUSIC ? T("Музыка поверх видео: не фиксируется, только микс при воспроизведении и сохранении") : T("Основная композиция: звук фиксируется в генерации"), onclick: () => this.mutate((p) => { p.audio.clips.find((k) => k.id === c.id).lane = l; }) }, t)))),
+          num(T("Громкость, %"), (c.volume ?? 1) * 100, (x, v) => { x.volume = Math.min(2, v / 100); }, isMusic(c) ? "0–200" : T("меняет фиксируемый звук")),
+          num(T("Фейд в начале"), c.fade_in || 0, (x, v) => { x.fade_in = v; }, T("с")),
+          num(T("Фейд в конце"), c.fade_out || 0, (x, v) => { x.fade_out = v; }, T("с")),
+          num(T("Старт на таймлайне"), sp.start, (x, v) => { x.start = v; }, T("с")),
+          num(T("Начало в файле"), sp.in, (x, v) => { x.in = v; }, T("с")),
+          num(T("Длина"), sp.len, (x, v) => { x.length = v; }, c.length > 0 ? T("с") : T("с · до конца файла")),
+          h("div", { class: "h3z-field" }, h("div", { class: "h3z-lbl" }, T("Конец на таймлайне"), h("em", null, T("с"))), h("div", { class: "h3z-in ro" }, sp.end.toFixed(2)))),
         isMusic(c) || this.p.audio.clips.some(isMusic) ? vv : "",
         h("div", { class: "h3z-row" },
-          h("button", { class: "h3z-btn sm", html: ICON.cut + "<span>Разрезать (S)</span>", onclick: () => this.splitAudio() }),
-          a && !a.virtual ? h("button", { class: "h3z-btn sm", html: "<span>✎ Файл…</span>", title: "Открыть файл в редакторе ассета", onclick: () => this.openAssetEditor?.(a.id) }) : null,
-          h("button", { class: "h3z-btn sm danger", html: ICON.trash + "<span>Удалить (Del)</span>", onclick: () => this.deleteAudio() })));
+          h("button", { class: "h3z-btn sm", html: ICON.cut + T("<span>Разрезать (S)</span>"), onclick: () => this.splitAudio() }),
+          a && !a.virtual ? h("button", { class: "h3z-btn sm", html: T("<span>✎ Файл…</span>"), title: T("Открыть файл в редакторе ассета"), onclick: () => this.openAssetEditor?.(a.id) }) : null,
+          h("button", { class: "h3z-btn sm danger", html: ICON.trash + T("<span>Удалить (Del)</span>"), onclick: () => this.deleteAudio() })));
       return card;
     },
 
@@ -185,16 +186,16 @@ export function installAudio(Editor, { C, h, ICON }) {
     audioTiles(used = new Set()) {
       return this.audioAssets().map((a) => {
         const ref = this.audioRefOf(a.id), pk = this.peaksFor(ref), dur = this.assetDuration(a.id);
-        const card = h("div", { class: "h3z-asset audio" + (a.virtual ? " virtual" : "") + (used.has(a.id) ? " used" : ""), draggable: "true", title: `${a.name}\nПеретащите на аудиодорожку (основная композиция) или на отрезок (референс <Audio N>).` });
+        const card = h("div", { class: "h3z-asset audio" + (a.virtual ? " virtual" : "") + (used.has(a.id) ? " used" : ""), draggable: "true", title: T("{0}\nПеретащите на аудиодорожку (основная композиция) или на отрезок (референс <Audio N>).", a.name) });
         const cv = h("canvas", { class: "wf", width: 240, height: 70 });
         drawPeaks(cv, pk, 0, pk?.duration || 1, "rgba(251,191,36,.9)");
-        const play = h("button", { class: "h3z-btn sm icon play", title: ref ? "Прослушать" : "Файл появится после первого запуска", html: this._previewId === a.id ? ICON.pause : ICON.play });
+        const play = h("button", { class: "h3z-btn sm icon play", title: ref ? T("Прослушать") : T("Файл появится после первого запуска"), html: this._previewId === a.id ? ICON.pause : ICON.play });
         play.onclick = (e) => { e.stopPropagation(); this.previewAsset(a.id); };
         if (!ref) play.disabled = true;
-        card.append(h("div", { class: "cat audio" }, a.virtual ? "Вход" : "Аудио"), cv, play,
-          h("div", { class: "cap" }, h("div", null, a.name), h("small", null, dur ? C.fmtTime(dur) : a.virtual ? "после запуска" : "…")));
+        card.append(h("div", { class: "cat audio" }, a.virtual ? T("Вход") : T("Аудио")), cv, play,
+          h("div", { class: "cap" }, h("div", null, a.name), h("small", null, dur ? C.fmtTime(dur) : a.virtual ? T("после запуска") : "…")));
         if (!a.virtual) {
-          const del = h("div", { class: "del", title: "Убрать из проекта (файл остаётся в input)", html: ICON.trash.replace("<svg", '<svg style="width:13px;height:13px"') });
+          const del = h("div", { class: "del", title: T("Убрать из проекта (файл остаётся в input)"), html: ICON.trash.replace("<svg", '<svg style="width:13px;height:13px"') });
           del.onclick = (e) => { e.stopPropagation(); this.mutate((p) => { p.assets = p.assets.filter((x) => x.id !== a.id); p.audio.clips = p.audio.clips.filter((c) => c.asset !== a.id); for (const s of p.segments) s.refs = s.refs.filter((r) => r !== a.id); }); };
           card.append(del);
         }
@@ -202,7 +203,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         card.onclick = () => this.toggleRef(this.sel, a.id);
         if (!a.virtual) card.addEventListener("dblclick", (e) => { e.stopPropagation(); this.openAssetEditor(a.id); });
         card.addEventListener("contextmenu", (e) => this.assetMenu?.(e, a));
-        if (a.orig) card.append(h("div", { class: "edt", title: "Обработанная копия (оригинал сохранён)" }, "✎"));
+        if (a.orig) card.append(h("div", { class: "edt", title: T("Обработанная копия (оригинал сохранён)") }, "✎"));
         return card;
       });
     },
@@ -221,9 +222,9 @@ export function installAudio(Editor, { C, h, ICON }) {
     renderAudioTrack(at, ppf) {
       const pps = ppf * C.FPS, clips = this.p.audio.clips;
       this.renderAudioHead();
-      for (let l = 0; l < LANES; l++) at.append(h("div", { class: "h3z-alane" + (l >= MUSIC ? " music" : ""), style: { top: l * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } }, l >= MUSIC && !clips.some(isMusic) ? h("span", null, "♫ Музыка — перетащите аудио сюда: играет поверх звука видео, не фиксируется") : null));
+      for (let l = 0; l < LANES; l++) at.append(h("div", { class: "h3z-alane" + (l >= MUSIC ? " music" : ""), style: { top: l * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } }, l >= MUSIC && !clips.some(isMusic) ? h("span", null, T("♫ Музыка — перетащите аудио сюда: играет поверх звука видео, не фиксируется")) : null));
       if (!clips.length) at.append(h("div", { class: "h3z-audio none", style: { left: "1px", width: Math.max(260, this.totalFrames() * ppf - 3) + "px", height: LANE_H + "px" } },
-        h("span", null, "Звук генерирует H3 · перетащите сюда аудио из ассетов — оно станет основной композицией (звук фиксируется)")));
+        h("span", null, T("Звук генерирует H3 · перетащите сюда аудио из ассетов — оно станет основной композицией (звук фиксируется)"))));
       for (const c of clips) {
         const sp = this.clipSpan(c), a = this.audioAsset(c.asset);
         const x0 = sp.start * pps, wd = Math.max(16, sp.len * pps - 2);
@@ -236,10 +237,10 @@ export function installAudio(Editor, { C, h, ICON }) {
           drawPeaks(cv, pk, sp.in, sp.in + cw / pps, "rgba(255,255,255,.85)");
           el.append(cv);
         } else el.append(h("div", { class: "wv" }));
-        el.append(h("span", { class: "lbl" }, (isMusic(c) ? "♫ " : "🔒 ") + (a?.name || c.asset), h("small", null, (sp.in ? ` · с ${sp.in.toFixed(1)} с` : "") + ((c.volume ?? 1) !== 1 ? ` · ${Math.round(c.volume * 100)}%` : ""))));
+        el.append(h("span", { class: "lbl" }, (isMusic(c) ? "♫ " : "🔒 ") + (a?.name || c.asset), h("small", null, (sp.in ? T(" · с {0} с", sp.in.toFixed(1)) : "") + ((c.volume ?? 1) !== 1 ? ` · ${Math.round(c.volume * 100)}%` : ""))));
         if (c.fade_in > 0) el.append(h("div", { class: "fd in", style: { width: Math.min(wd, c.fade_in * pps) + "px" } }));
         if (c.fade_out > 0) el.append(h("div", { class: "fd out", style: { width: Math.min(wd, c.fade_out * pps) + "px" } }));
-        const hl = h("div", { class: "th l", title: "Подрезать начало" }), hr = h("div", { class: "th r", title: "Подрезать конец" });
+        const hl = h("div", { class: "th l", title: T("Подрезать начало") }), hr = h("div", { class: "th r", title: T("Подрезать конец") });
         el.append(hl, hr);
         el.addEventListener("pointerdown", (e) => this.audioDrag(e, c.id, e.target === hl ? "l" : e.target === hr ? "r" : "move"));
         el.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selAudio = c.id; this.renderTimeline(); this.audioMenu ? this.audioMenu(e, c.id) : this.selectAudio(c.id); });
@@ -278,7 +279,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         } else len = Math.max(0.2, snap(sp0.len + dt));
         if (dur) len = Math.min(len, Math.max(0.2, dur - tin));
         tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
-        tip.textContent = kind === "move" ? `старт ${st.toFixed(2)} с · дорожка ${lane + 1}` : `с ${tin.toFixed(2)} с · длина ${len.toFixed(2)} с`;
+        tip.textContent = kind === "move" ? T("старт {0} с · дорожка {1}", st.toFixed(2), lane + 1) : T("с {0} с · длина {1} с", tin.toFixed(2), len.toFixed(2));
         this.mutate((p) => {
           const x = p.audio.clips.find((k) => k.id === id); if (!x) return;
           x.start = st; x.in = tin; x.lane = lane;

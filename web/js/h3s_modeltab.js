@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // «Модели» rail tab: quick access to model presets, model files and the LoRA stack (rows with on/off, strength ▲▼,
 // ⓘ details, drag to reorder) with a searchable folder picker for models/loras. Own code; the layout follows the
 // idea of Pixaroma's LoRA Loader (ideas only).
@@ -92,8 +93,8 @@ export function installModelTab(Editor, { C, h }) {
       this.mpStyle();
       if (!document.getElementById("h3z-mt-style")) document.head.append(h("style", { id: "h3z-mt-style" }, MT_CSS));
       this._mtSel = this.sel;
-      L.append(h("div", { class: "h3z-card h3z-glass h3z-mt" }, h("div", { class: "h3z-card-h" }, h("h4", null, "Модели и LoRA"),
-        h("em", { class: "h3z-note" }, "библиотека пресетов — общая для всех проектов")), this.mpManager()));
+      L.append(h("div", { class: "h3z-card h3z-glass h3z-mt" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Модели и LoRA")),
+        h("em", { class: "h3z-note" }, T("библиотека пресетов — общая для всех проектов"))), this.mpManager()));
     },
     /** LoRA stack of preset pr; ed(fn, msg) edits the library preset. */
     mpLoraStack(pr, ed, miss) {
@@ -102,15 +103,15 @@ export function installModelTab(Editor, { C, h }) {
       this._lrInfo = this._lrInfo || new Set();
       const box = h("div", { class: "h3z-lr-stack" });
       const add = h("button", { class: "h3z-btn h3z-lr-add", disabled: n >= C.MAX_PRESET_LORAS || !files.length || undefined,
-        title: files.length ? `Добавить LoRA из models/loras (до ${C.MAX_PRESET_LORAS})` : "В models/loras нет файлов — «⟳ Обновить списки»" }, "＋ Добавить LoRA");
+        title: files.length ? T("Добавить LoRA из models/loras (до {0})", C.MAX_PRESET_LORAS) : T("В models/loras нет файлов — «⟳ Обновить списки»") }, T("＋ Добавить LoRA"));
       add.onclick = () => this.mpLoraPicker(add, "", (f) => ed((p) => { p.loras.push({ file: f, on: true, sm: 1, sc: 1 }); }));
-      const master = h("div", { class: "h3z-sw" + (on && on === n ? " on" : on ? " mixed" : ""), title: on ? "Выключить все LoRA" : "Включить все LoRA" });
+      const master = h("div", { class: "h3z-sw" + (on && on === n ? " on" : on ? " mixed" : ""), title: on ? T("Выключить все LoRA") : T("Включить все LoRA") });
       master.onclick = () => n && ed((p) => { const v = !p.loras.some((l) => l.on); p.loras.forEach((l) => { l.on = v; }); });
-      box.append(add, h("div", { class: "h3z-lr-bar" }, master, h("span", null, h("b", null, `${on} / ${n}`), " вкл."),
-        h("em", { class: "h3z-note", style: "margin-left:auto" }, n > 1 ? "порядок — перетаскиванием ⋮⋮" : "")));
+      box.append(add, h("div", { class: "h3z-lr-bar" }, master, h("span", null, h("b", null, `${on} / ${n}`), T(" вкл.")),
+        h("em", { class: "h3z-note", style: "margin-left:auto" }, n > 1 ? T("порядок — перетаскиванием ⋮⋮") : "")));
       pr.loras.forEach((l, k) => {
         const row = h("div", { class: "h3z-lr" + (l.on ? " on" : " off") });
-        const grip = h("div", { class: "grip", draggable: "true", title: "Перетащите, чтобы поменять порядок" }, "⋮⋮");
+        const grip = h("div", { class: "grip", draggable: "true", title: T("Перетащите, чтобы поменять порядок") }, "⋮⋮");
         grip.addEventListener("dragstart", (e) => { this._lrDrag = k; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(k)); });
         row.addEventListener("dragover", (e) => { if (this._lrDrag == null) return; e.preventDefault(); row.classList.add("drop"); });
         row.addEventListener("dragleave", () => row.classList.remove("drop"));
@@ -118,24 +119,24 @@ export function installModelTab(Editor, { C, h }) {
           if (from == null || from === k) return; ed((p) => { const [x] = p.loras.splice(from, 1); p.loras.splice(k, 0, x); }); });
         grip.addEventListener("dragend", () => { this._lrDrag = null; });
         const dir = parts(l.file).slice(0, -1).join(" / ");
-        const nm = h("div", { class: "nm" + (miss?.has(l.file) ? " miss" : ""), title: l.file + (miss?.has(l.file) ? "\n⚠ нет файла" : "") + "\nКлик — выбрать другую LoRA" },
-          h("b", null, stem(l.file) || "— выберите —"), h("small", null, (miss?.has(l.file) ? "⚠ нет файла · " : "") + (dir || "models/loras")));
+        const nm = h("div", { class: "nm" + (miss?.has(l.file) ? " miss" : ""), title: l.file + (miss?.has(l.file) ? T("\n⚠ нет файла") : "") + T("\nКлик — выбрать другую LoRA") },
+          h("b", null, stem(l.file) || T("— выберите —")), h("small", null, (miss?.has(l.file) ? T("⚠ нет файла · ") : "") + (dir || "models/loras")));
         nm.onclick = () => this.mpLoraPicker(nm, l.file, (f) => ed((p) => { p.loras[k].file = f; }));
         const linked = l.sm === l.sc;
         const setS = (v) => ed((p) => { v = Math.round(Math.max(-10, Math.min(10, v)) * 100) / 100; const x = p.loras[k]; if (x.sm === x.sc) x.sc = v; x.sm = v; });
         const num = h("input", { type: "number", step: 0.05, min: -10, max: 10, value: Number(l.sm).toFixed(2),
-          title: linked ? "Сила LoRA (модель и энкодер вместе); ⓘ — отдельно для энкодера" : `Сила для модели; энкодер ${l.sc} (ⓘ)` });
+          title: linked ? T("Сила LoRA (модель и энкодер вместе); ⓘ — отдельно для энкодера") : T("Сила для модели; энкодер {0} (ⓘ)", l.sc) });
         num.onchange = () => setS(Number(num.value) || 0);
         num.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") num.blur(); });
         num.addEventListener("wheel", (e) => { if (document.activeElement !== num) return; e.preventDefault(); setS(Number(l.sm) + (e.deltaY < 0 ? 0.05 : -0.05)); }, { passive: false });
         const st = h("div", { class: "st" }, num, h("div", { class: "ud" },
           h("button", { title: "+0.05", onclick: () => setS(Number(l.sm) + 0.05) }, "▲"), h("button", { title: "−0.05", onclick: () => setS(Number(l.sm) - 0.05) }, "▼")));
         const key = pr.id + "|" + k;
-        const inf = h("button", { class: "inf" + (this._lrInfo.has(key) ? " on" : ""), title: "Подробнее: путь, сила для энкодера", html: IC.info });
+        const inf = h("button", { class: "inf" + (this._lrInfo.has(key) ? " on" : ""), title: T("Подробнее: путь, сила для энкодера"), html: IC.info });
         inf.onclick = () => { this._lrInfo.has(key) ? this._lrInfo.delete(key) : this._lrInfo.add(key); this.mpRefreshManager(); };
-        const sw = h("div", { class: "h3z-sw" + (l.on ? " on" : ""), title: l.on ? "Выключить (останется в списке, в ключ кэша не входит)" : "Включить" });
+        const sw = h("div", { class: "h3z-sw" + (l.on ? " on" : ""), title: l.on ? T("Выключить (останется в списке, в ключ кэша не входит)") : T("Включить") });
         sw.onclick = () => ed((p) => { p.loras[k].on = !p.loras[k].on; });
-        const x = h("button", { class: "x", title: "Убрать LoRA из стека" }, "✕");
+        const x = h("button", { class: "x", title: T("Убрать LoRA из стека") }, "✕");
         x.onclick = () => ed((p) => { p.loras.splice(k, 1); });
         row.append(grip, nm, st, inf, sw, x);
         if (this._lrInfo.has(key)) {
@@ -143,8 +144,8 @@ export function installModelTab(Editor, { C, h }) {
           sc.onchange = () => ed((p) => { p.loras[k].sc = Math.round((Number(sc.value) || 0) * 100) / 100; });
           sc.addEventListener("keydown", (e) => e.stopPropagation());
           row.append(h("div", { class: "h3z-lr-info" }, h("code", null, "models/loras/" + l.file),
-            h("label", null, "сила энкодера ", sc), h("span", { class: "h3z-note" }, linked ? "связана с силой модели" : "отдельно от модели"),
-            linked ? null : h("button", { class: "h3z-btn sm", onclick: () => ed((p) => { p.loras[k].sc = p.loras[k].sm; }) }, "связать")));
+            h("label", null, T("сила энкодера "), sc), h("span", { class: "h3z-note" }, linked ? T("связана с силой модели") : T("отдельно от модели")),
+            linked ? null : h("button", { class: "h3z-btn sm", onclick: () => ed((p) => { p.loras[k].sc = p.loras[k].sm; }) }, T("связать"))));
         }
         box.append(row);
       });
@@ -163,7 +164,7 @@ export function installModelTab(Editor, { C, h }) {
       pop.style.width = W + "px";
       const below = window.innerHeight - r.bottom;
       if (below > 320) pop.style.top = r.bottom + 4 + "px"; else pop.style.bottom = window.innerHeight - r.top + 4 + "px";
-      const inp = h("input", { class: "q", placeholder: "Поиск по всем папкам…", spellcheck: "false" });
+      const inp = h("input", { class: "q", placeholder: T("Поиск по всем папкам…"), spellcheck: "false" });
       const crumbs = h("div", { class: "crumbs" }), ls = h("div", { class: "ls" });
       pop.append(h("div", { class: "top", html: IC.search }, inp), crumbs, ls);
       const row = (cls, icon, name, ...tail) => { const r = h("div", { class: "row " + cls }, name); r.insertAdjacentHTML("afterbegin", icon); tail.forEach((t) => t && r.append(t)); return r; };
@@ -172,15 +173,15 @@ export function installModelTab(Editor, { C, h }) {
         crumbs.replaceChildren(); ls.replaceChildren(); rows = [];
         const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
         if (terms.length) {
-          crumbs.append(h("span", null, `Найдено во всех папках`));
+          crumbs.append(h("span", null, T("Найдено во всех папках")));
           const hits = files.filter((f) => terms.every((t) => f.toLowerCase().includes(t)));
           for (const f of hits.slice(0, 400)) {
             const dir = parts(f).slice(0, -1).join(" / ");
             rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f)), dir ? h("span", { class: "d" }, dir) : null), () => pick(f)]);
           }
-          if (!hits.length) ls.append(h("div", { class: "empty" }, "Ничего не найдено"));
+          if (!hits.length) ls.append(h("div", { class: "empty" }, T("Ничего не найдено")));
         } else {
-          const all = h("a", { class: path.length ? "" : "on" }, "Все LoRA"); all.onclick = () => { path = []; hi = 0; paint(); };
+          const all = h("a", { class: path.length ? "" : "on" }, T("Все LoRA")); all.onclick = () => { path = []; hi = 0; paint(); };
           crumbs.append(all);
           path.forEach((p, j) => { const a = h("a", { class: j === path.length - 1 ? "on" : "" }, p); a.onclick = () => { path = path.slice(0, j + 1); hi = 0; paint(); }; crumbs.append(h("i", null, "/"), a); });
           const pre = path.length ? path.join("/") + "/" : "";
@@ -190,11 +191,11 @@ export function installModelTab(Editor, { C, h }) {
             const rest = parts(f).slice(path.length);
             if (rest.length > 1) sub.set(rest[0], (sub.get(rest[0]) || 0) + 1); else here.push(f);
           }
-          if (path.length) rows.push([row("back", IC.back, h("span", { class: "n" }, "Назад")), () => { path = path.slice(0, -1); hi = 0; paint(); }]);
+          if (path.length) rows.push([row("back", IC.back, h("span", { class: "n" }, T("Назад"))), () => { path = path.slice(0, -1); hi = 0; paint(); }]);
           for (const [d, c] of [...sub].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: "base" })))
-            rows.push([row("fold", IC.folder, h("span", { class: "n" }, d), h("span", { class: "c", title: `${c} файл.` }, String(c))), () => { path = [...path, d]; hi = 0; paint(); }]);
+            rows.push([row("fold", IC.folder, h("span", { class: "n" }, d), h("span", { class: "c", title: T("{0} файл.", c) }, String(c))), () => { path = [...path, d]; hi = 0; paint(); }]);
           for (const f of here) rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f))), () => pick(f)]);
-          if (!rows.length) ls.append(h("div", { class: "empty" }, "Пусто"));
+          if (!rows.length) ls.append(h("div", { class: "empty" }, T("Пусто")));
         }
         hi = Math.min(hi, Math.max(0, rows.length - 1));
         rows.forEach(([el, fn], j) => { el.onclick = fn; if (j === hi) el.classList.add("hi"); ls.append(el); });

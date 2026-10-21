@@ -24,14 +24,15 @@ import { installModelTab } from "./h3s_modeltab.js";
 import { installGaps } from "./h3s_gaps.js";
 import { installTimer } from "./h3s_timer.js";
 import { installChars } from "./h3s_chars.js";
+import { T, plural, tServer } from "./h3s_i18n.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
   ["#10b981", "#14b8a6"], ["#3b82f6", "#06b6d4"], ["#a855f7", "#ec4899"], ["#84cc16", "#10b981"],
 ];
-const CAT = { character: "Персонажи", location: "Локации", other: "Другое", audio: "Аудио", video: "Видео" };
-const SEAM_TXT = { ok: "шов незаметен", soft: "лёгкий скачок", hard: "резкий шов" };
-const CAT1 = { character: "Персонаж", location: "Локация", other: "Другое", audio: "Аудио", video: "Видео" };
+const CAT = { character: T("Персонажи"), location: T("Локации"), other: T("Другое"), audio: T("Аудио"), video: T("Видео") };
+const SEAM_TXT = { ok: T("шов незаметен"), soft: T("лёгкий скачок"), hard: T("резкий шов") };
+const CAT1 = { character: T("Персонаж"), location: T("Локация"), other: T("Другое"), audio: T("Аудио"), video: T("Видео") };
 const LAYOUT_KEY = "h3zs.layout.v1";
 const ZMIN = 1 / 16, ZMAX = 64; // timeline zoom relative to "fit"
 const loadLS = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
@@ -88,7 +89,6 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 // zoom slider 0..100 <-> zoom ZMIN..ZMAX (log scale)
 const zoomOf = (v) => Math.pow(2, Math.log2(1 / 16) + v / 100 * (Math.log2(64) - Math.log2(1 / 16)));
 const zoomPos = (z) => Math.round((Math.log2(z) - Math.log2(1 / 16)) / (Math.log2(64) - Math.log2(1 / 16)) * 100);
-const plural = (n, a, b, c) => { const m = n % 10, mm = n % 100; return m === 1 && mm !== 11 ? a : m >= 2 && m <= 4 && (mm < 10 || mm >= 20) ? b : c; };
 const isTyping = (e) => { const t = e.target; return !!t && !t.classList?.contains("h3z-sink") && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable); };
 const isAudio = (f) => (f.type || "").startsWith("audio/") || /\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(f.name || "");
 const isImage = (f) => (f.type || "").startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(f.name || "");
@@ -206,13 +206,13 @@ export class H3Editor {
     return i === null ? n < this.p.segments.length : i >= n;
   }
   /** «Маркер → конец»: the user's explicit one-click move of the fixed marker to the end of the last clip. */
-  markerToEnd() { const c = this.contentFrames(); if (c > 0) { this.setEnd(c); this.toast(`Маркер конца перенесён в конец последнего клипа (${(c / C.FPS).toFixed(2)} с)`); } }
+  markerToEnd() { const c = this.contentFrames(); if (c > 0) { this.setEnd(c); this.toast(T("Маркер конца перенесён в конец последнего клипа ({0} с)", (c / C.FPS).toFixed(2))); } }
   /** After a clip was added past a fixed marker: say so and offer the move (the marker itself stays put). */
   pastMarkerHint() {
     if (!this._pastMarkerCheck) return false;
     this._pastMarkerCheck = false;
     if (!this.pastMarker()) return false;
-    this.toast("Клип за маркером конца («Длина: Фикс») — он не будет сгенерирован, пока вы не сдвинете маркер", false, { label: "Маркер → конец", fn: () => this.markerToEnd() });
+    this.toast(T("Клип за маркером конца («Длина: Фикс») — он не будет сгенерирован, пока вы не сдвинете маркер"), false, { label: T("Маркер → конец"), fn: () => this.markerToEnd() });
     return true;
   }
 
@@ -237,8 +237,8 @@ export class H3Editor {
     this.renderAll();
   }
 
-  undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); this.toast("Отменено"); }
-  redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); this.toast("Повторено"); }
+  undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); this.toast(T("Отменено")); }
+  redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); this.toast(T("Повторено")); }
 
   scheduleSave() { clearTimeout(this._saveT); this._saveT = setTimeout(() => this.flushSave(), 250); }
   flushSave() {
@@ -259,9 +259,9 @@ export class H3Editor {
     $.left = h("div", { class: "h3z-panel h3z-glass" });
     $.center = h("div", { class: "h3z-center h3z-glass" });
     $.insp = h("div", { class: "h3z-insp" });
-    $.splitL = h("div", { class: "h3z-split v sl", title: "Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию" });
-    $.splitR = h("div", { class: "h3z-split v sr", title: "Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию" });
-    $.splitT = h("div", { class: "h3z-split hz", title: "Тяните, чтобы изменить высоту таймлайна · двойной клик — по умолчанию" });
+    $.splitL = h("div", { class: "h3z-split v sl", title: T("Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию") });
+    $.splitR = h("div", { class: "h3z-split v sr", title: T("Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию") });
+    $.splitT = h("div", { class: "h3z-split hz", title: T("Тяните, чтобы изменить высоту таймлайна · двойной клик — по умолчанию") });
     $.body = h("div", { class: "h3z-body" }, $.tools, $.left, $.splitL, $.center, $.splitR, $.insp);
     $.tl = h("div", { class: "h3z-tl h3z-glass" });
     this.applyLayout();
@@ -339,47 +339,47 @@ export class H3Editor {
     if (btn) { btn.disabled = true; btn.style.opacity = ".6"; }
     try {
       await this.host.freeMemory();
-      this.toast(this.run?.active ? "Память будет освобождена сразу после текущей генерации" : "Модели выгружены из видеопамяти и ОЗУ — следующая генерация загрузит их заново");
-    } catch (e) { this.toast("Не удалось очистить память: " + (e.message || e), true); }
+      this.toast(this.run?.active ? T("Память будет освобождена сразу после текущей генерации") : T("Модели выгружены из видеопамяти и ОЗУ — следующая генерация загрузит их заново"));
+    } catch (e) { this.toast(T("Не удалось очистить память: ") + (e.message || e), true); }
     finally { if (btn) { btn.disabled = false; btn.style.opacity = ""; } }
   }
 
   renderHeader() {
     const $ = this.$, est = C.estimate(this.p), kind = C.runKind(this.p.settings);
     $.head.innerHTML = "";
-    const name = h("input", { class: "h3z-pname", value: this.p.name, spellcheck: "false", title: "Название проекта" });
+    const name = h("input", { class: "h3z-pname", value: this.p.name, spellcheck: "false", title: T("Название проекта") });
     name.addEventListener("input", () => this.mutate((p) => { p.name = name.value; }, { coalesce: "pname", render: "none" }));
     const chips = h("div", { class: "h3z-chips" },
-      h("span", { class: "h3z-chip" }, h("b", null, est.segments), plural(est.segments, "отрезок", "отрезка", "отрезков")),
-      h("span", { class: "h3z-chip" }, h("b", null, C.fmtTime(est.seconds)), `${est.frames} кадр.`),
+      h("span", { class: "h3z-chip" }, h("b", null, est.segments), plural(est.segments, T("отрезок"), T("отрезка"), T("отрезков"))),
+      h("span", { class: "h3z-chip" }, h("b", null, C.fmtTime(est.seconds)), T("{0} кадр.", est.frames)),
       h("span", { class: "h3z-chip" }, h("b", null, `${est.width}×${est.height}`), "24 fps"),
-      h("span", { class: "h3z-chip", title: "Сумма шагов по всем отрезкам (кэшированные отрезки не пересчитываются)" }, h("b", null, est.steps_total), "шагов"),
+      h("span", { class: "h3z-chip", title: T("Сумма шагов по всем отрезкам (кэшированные отрезки не пересчитываются)") }, h("b", null, est.steps_total), T("шагов")),
       this.timeEstimateChip(est));
     if (est.warnings.length) {
-      const w = h("span", { class: "h3z-chip warn", title: "Предупреждения перед запуском — нажмите, чтобы посмотреть" }, `⚠ ${est.warnings.length}`);
+      const w = h("span", { class: "h3z-chip warn", title: T("Предупреждения перед запуском — нажмите, чтобы посмотреть") }, `⚠ ${est.warnings.length}`);
       w.onclick = () => this.toggleWarnings(est.warnings);
       chips.append(w);
     }
-    const undo = h("button", { class: "h3z-btn icon", title: "Отменить (Ctrl+Z)", html: ICON.undo, disabled: !this.undoStack.length, onclick: () => this.undo() });
-    const redo = h("button", { class: "h3z-btn icon", title: "Повторить (Ctrl+Shift+Z)", html: ICON.redo, disabled: !this.redoStack.length, onclick: () => this.redo() });
+    const undo = h("button", { class: "h3z-btn icon", title: T("Отменить (Ctrl+Z)"), html: ICON.undo, disabled: !this.undoStack.length, onclick: () => this.undo() });
+    const redo = h("button", { class: "h3z-btn icon", title: T("Повторить (Ctrl+Shift+Z)"), html: ICON.redo, disabled: !this.redoStack.length, onclick: () => this.redo() });
     let action;
     if (this.run.active) {
-      $.runPill = h("div", { class: "h3z-run" }, h("i", { style: { width: "0%" } }), h("div", { class: "sp" }), h("span", null, "Запуск…"));
-      action = [$.runPill, h("button", { class: "h3z-btn danger", html: ICON.stop + "<span>Стоп</span>", title: "Прервать генерацию", onclick: () => this.stop() })];
+      $.runPill = h("div", { class: "h3z-run" }, h("i", { style: { width: "0%" } }), h("div", { class: "sp" }), h("span", null, T("Запуск…")));
+      action = [$.runPill, h("button", { class: "h3z-btn danger", html: ICON.stop + T("<span>Стоп</span>"), title: T("Прервать генерацию"), onclick: () => this.stop() })];
     } else {
       $.runPill = null;
-      action = [h("button", { class: "h3z-btn", html: ICON.save + "<span>Сохранить видео</span>", title: "Сохранить ролик, фрагмент или отрезок в mp4 в выбранную папку (с музыкой)", onclick: () => this.saveDialog() }),
+      action = [h("button", { class: "h3z-btn", html: ICON.save + T("<span>Сохранить видео</span>"), title: T("Сохранить ролик, фрагмент или отрезок в mp4 в выбранную папку (с музыкой)"), onclick: () => this.saveDialog() }),
         this.finalHeaderButton(),
         this.upHeaderButton(),
-        h("button", { class: "h3z-btn primary", html: ICON.spark + "<span>Сгенерировать</span>" + (kind === "draft" ? "<small class='q'>черновик</small>" : kind === "refine" ? "<small class='q'>финал ↑</small>" : ""),
-          title: "Поставить в очередь ComfyUI (Ctrl+Enter). Готовые неизменённые отрезки берутся из кэша" + (kind === "draft" ? "\nЧерновик: маленький размер, быстро — для подбора промптов и дублей" : kind === "refine" ? "\nФинал из черновика: каждый черновик увеличивается и дорабатывается (звук черновика сохраняется 1:1)" : ""), onclick: () => this.generate() })];
+        h("button", { class: "h3z-btn primary", html: ICON.spark + T("<span>Сгенерировать</span>") + (kind === "draft" ? T("<small class='q'>черновик</small>") : kind === "refine" ? T("<small class='q'>финал ↑</small>") : ""),
+          title: T("Поставить в очередь ComfyUI (Ctrl+Enter). Готовые неизменённые отрезки берутся из кэша") + (kind === "draft" ? T("\nЧерновик: маленький размер, быстро — для подбора промптов и дублей") : kind === "refine" ? T("\nФинал из черновика: каждый черновик увеличивается и дорабатывается (звук черновика сохраняется 1:1)") : ""), onclick: () => this.generate() })];
     }
     $.head.append(
       h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
       name, chips, this.timerEl(), undo, redo,
-      h("button", { class: "h3z-btn", html: ICON.broom + "<span>Очистить память</span>", title: "Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)", onclick: (e) => this.freeMemory(e.currentTarget) }),
+      h("button", { class: "h3z-btn", html: ICON.broom + T("<span>Очистить память</span>"), title: T("Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)"), onclick: (e) => this.freeMemory(e.currentTarget) }),
       ...action.filter(Boolean),
-      h("button", { class: "h3z-btn icon", title: "Свернуть (Esc)", html: ICON.close, onclick: () => this.close() }));
+      h("button", { class: "h3z-btn icon", title: T("Свернуть (Esc)"), html: ICON.close, onclick: () => this.close() }));
     this.updateRunUI();
   }
 
@@ -389,7 +389,7 @@ export class H3Editor {
     const its = this.items(), sigs = this.sigs();
     let units = 0;
     its.forEach((it, i) => { const s = this.p.segments[i]; if (!(s.result && s.result.sig === sigs[i])) units += C.effectiveParams(this.p, i).steps * it.frames * est.width * est.height / 1e6; });
-    return h("span", { class: "h3z-chip", title: "Оценка по скорости прошлого запуска; готовые неизменённые отрезки берутся из кэша" }, "≈", h("b", null, units ? C.fmtDur(units * rate) : "из кэша"));
+    return h("span", { class: "h3z-chip", title: T("Оценка по скорости прошлого запуска; готовые неизменённые отрезки берутся из кэша") }, "≈", h("b", null, units ? C.fmtDur(units * rate) : T("из кэша")));
   }
 
   toggleWarnings(list) {
@@ -402,20 +402,20 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ tools + left panel
   /** «22 кадр. ≈ 0.92 с» for an overlap in blocks. */
-  ovLabel(o) { const f = C.overlapFrames(o); return o > 0 ? `${f} кадр. ≈ ${(f / C.FPS).toFixed(2)} с` + (f % 3 === 0 ? " · точно по сетке звука" : "") : "нет (только последний кадр)"; }
+  ovLabel(o) { const f = C.overlapFrames(o); return o > 0 ? T("{0} кадр. ≈ {1} с", f, (f / C.FPS).toFixed(2)) + (f % 3 === 0 ? T(" · точно по сетке звука") : "") : T("нет (только последний кадр)"); }
 
   /** Per-segment overlap override (-1 = global). */
   setSegOverlap(i, o) {
     this.mutate((p) => { p.segments[i].overlap_blocks = o; });
     const it = this.items()[i], want = C.wantedOverlap(this.p, i);
-    if (want > 0 && it.overlap < C.overlapFrames(want)) this.toast(`Перекрытие ${C.overlapFrames(want)} кадр. не помещается — используется ${it.overlap || 0} кадр. (удлините этот или предыдущий отрезок)`, true);
+    if (want > 0 && it.overlap < C.overlapFrames(want)) this.toast(T("Перекрытие {0} кадр. не помещается — используется {1} кадр. (удлините этот или предыдущий отрезок)", C.overlapFrames(want), it.overlap || 0), true);
   }
 
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
     const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
-    t.append(tool("assets", ICON.assets, "Ассеты"), tool("chars", ICON.chars, "Персонажи"), tool("gallery", ICON.gallery, "Галерея"), tool("projects", ICON.projects, "Проекты"), tool("models", ICON.models, "Модели"), tool("settings", ICON.settings, "Настройки"), tool("keys", ICON.keys, "Клавиши"), h("div", { class: "sp" }), tool("help", ICON.help, "Справка"), tool("about", ICON.info, "Инфо"));
+    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персонажи")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }), tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
 
   renderLeft() {
@@ -476,53 +476,53 @@ export class H3Editor {
   renderAssets(L) {
     const fileIn = h("input", { type: "file", accept: this.filter === "audio" ? "audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus" : this.filter === "video" ? "video/*,.mp4,.mov,.webm,.mkv" : "image/*,audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv", multiple: true, style: { display: "none" } });
     fileIn.onchange = () => { this.uploadFiles([...fileIn.files]); fileIn.value = ""; };
-    const pills = h("div", { class: "h3z-pills" }, [["all", "Все"], ["character", "Персон."], ["location", "Локации"], ["other", "Другое"], ["audio", "♪ Аудио"], ["video", "🎞 Видео"]].map(([k, l]) =>
-      h("div", { class: "h3z-pill" + (this.filter === k ? " on" : ""), title: k === "all" ? "Все ассеты" : CAT[k], onclick: () => { this.filter = k; this.renderLeft(); } }, l)));
-    const drop = h("div", { class: "h3z-drop", html: ICON.upload + (this.filter === "audio" ? "Перетащите аудио сюда" : this.filter === "video" ? "Перетащите видео сюда" : "Перетащите картинки, аудио или видео сюда") + "<br>или нажмите, чтобы выбрать" + (this.filter !== "all" ? `<br><small>в «${CAT[this.filter]}»</small>` : "") });
+    const pills = h("div", { class: "h3z-pills" }, [["all", T("Все")], ["character", T("Персон.")], ["location", T("Локации")], ["other", T("Другое")], ["audio", T("♪ Аудио")], ["video", T("🎞 Видео")]].map(([k, l]) =>
+      h("div", { class: "h3z-pill" + (this.filter === k ? " on" : ""), title: k === "all" ? T("Все ассеты") : CAT[k], onclick: () => { this.filter = k; this.renderLeft(); } }, l)));
+    const drop = h("div", { class: "h3z-drop", html: ICON.upload + (this.filter === "audio" ? T("Перетащите аудио сюда") : this.filter === "video" ? T("Перетащите видео сюда") : T("Перетащите картинки, аудио или видео сюда")) + T("<br>или нажмите, чтобы выбрать") + (this.filter !== "all" ? T("<br><small>в «{0}»</small>", CAT[this.filter]) : "") });
     drop.onclick = () => fileIn.click();
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const all = [...(e.dataTransfer?.files || [])], fs = all.filter((f) => isImage(f) || isAudio(f) || isVideo(f)); if (all.length > fs.length) this.toast(`Формат не поддерживается: ${all.filter((f) => !fs.includes(f)).map((f) => f.name).join(", ")}`, true); if (fs.length) this.uploadFiles(fs); });
+    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const all = [...(e.dataTransfer?.files || [])], fs = all.filter((f) => isImage(f) || isAudio(f) || isVideo(f)); if (all.length > fs.length) this.toast(T("Формат не поддерживается: {0}", all.filter((f) => !fs.includes(f)).map((f) => f.name).join(", ")), true); if (fs.length) this.uploadFiles(fs); });
     const used = new Set(this.seg()?.refs || []);
     const list = this.p.assets.filter((a) => a.category !== "audio" && a.category !== "video" && (this.filter === "all" || a.category === this.filter));
     const audioTiles = (this.filter === "all" || this.filter === "audio" ? this.audioTiles(used) : []).concat(this.filter === "all" || this.filter === "video" ? this.videoTiles(used) : []);
     const grid = h("div", { class: "h3z-agrid" }, audioTiles, list.map((a) => {
-      const cat = h("div", { class: "cat " + a.category, title: "Сменить категорию" }, CAT1[a.category]);
+      const cat = h("div", { class: "cat " + a.category, title: T("Сменить категорию") }, CAT1[a.category]);
       cat.onclick = (e) => { e.stopPropagation(); const i = (C.CATEGORY_ORDER.indexOf(a.category) + 1) % 3; this.mutate((p) => { p.assets.find((x) => x.id === a.id).category = C.CATEGORY_ORDER[i]; }); };
-      const del = h("div", { class: "del", title: "Убрать из проекта (файл остаётся в input)", html: ICON.trash.replace("<svg", '<svg style="width:13px;height:13px"') });
+      const del = h("div", { class: "del", title: T("Убрать из проекта (файл остаётся в input)"), html: ICON.trash.replace("<svg", '<svg style="width:13px;height:13px"') });
       del.onclick = (e) => { e.stopPropagation(); this.mutate((p) => { p.assets = p.assets.filter((x) => x.id !== a.id); for (const s of p.segments) s.refs = s.refs.filter((r) => r !== a.id); }); };
-      const card = h("div", { class: "h3z-asset" + (used.has(a.id) ? " used" : ""), draggable: "true", title: `${a.name}\nКлик — добавить в выбранный отрезок / убрать. Можно перетащить на отрезок.` },
+      const card = h("div", { class: "h3z-asset" + (used.has(a.id) ? " used" : ""), draggable: "true", title: T("{0}\nКлик — добавить в выбранный отрезок / убрать. Можно перетащить на отрезок.", a.name) },
         h("img", { src: this.assetUrl(a), loading: "lazy", draggable: "false" }), cat, del, h("div", { class: "cap" }, h("div", null, a.name)));
       card.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-h3s-asset", a.id); e.dataTransfer.effectAllowed = "copy"; });
       card.onclick = () => this.toggleRef(this.sel, a.id);
       card.addEventListener("dblclick", (e) => { e.stopPropagation(); this.openAssetEditor(a.id); });
       card.addEventListener("contextmenu", (e) => this.assetMenu(e, a));
-      if (a.orig) card.append(h("div", { class: "edt", title: "Обработанная копия (оригинал сохранён)" }, "✎"));
+      if (a.orig) card.append(h("div", { class: "edt", title: T("Обработанная копия (оригинал сохранён)") }, "✎"));
       return card;
     }));
     L.append(
-      h("div", { class: "h3z-ph" }, h("h3", null, "Ассеты ", h("small", null, this.p.assets.length || "")), h("button", { class: "h3z-btn sm", html: ICON.upload + "<span>Загрузить</span>", onclick: () => fileIn.click() })),
-      h("div", { class: "h3z-scroll" }, pills, drop, list.length || audioTiles.length ? grid : h("div", { class: "h3z-empty" }, this.p.assets.length ? "В этой категории пусто" : "Загрузите референсы персонажей, локаций и предметов. В промптах отрезков они станут <Picture N>."), fileIn));
+      h("div", { class: "h3z-ph" }, h("h3", null, T("Ассеты "), h("small", null, this.p.assets.length || "")), h("button", { class: "h3z-btn sm", html: ICON.upload + T("<span>Загрузить</span>"), onclick: () => fileIn.click() })),
+      h("div", { class: "h3z-scroll" }, pills, drop, list.length || audioTiles.length ? grid : h("div", { class: "h3z-empty" }, this.p.assets.length ? T("В этой категории пусто") : T("Загрузите референсы персонажей, локаций и предметов. В промптах отрезков они станут <Picture N>.")), fileIn));
   }
 
   renderKeys(L) {
-    const k = [["Пробел", "воспроизвести / пауза"], ["S", "разрезать отрезок по плейхеду"], ["Del", "удалить отрезок"], ["D", "дублировать отрезок"],
-      ["E", "продлить (+ отрезок в конце)"], ["Ctrl+Z", "отменить"], ["Ctrl+Shift+Z, Ctrl+Y", "повторить"], ["← / →", "кадр назад / вперёд (Shift — 1 с)"],
-      ["Home / End", "в начало / в конец"], ["[ / ]", "предыдущий / следующий отрезок"], ["+ / −, Ctrl+колесо", "масштаб таймлайна"], ["Ctrl+Enter", "сгенерировать"],
-      ["M", "маркер на плейхеде"], ["R", "✂ Участок: выделить и пересоздать часть ролика"], ["ПКМ по отрезку", "меню: новый дубль, разрезать, маркер…"],
-      ["Esc", "свернуть редактор"], ["Ctrl+V", "вставить картинку в ассеты"]];
-    L.append(h("div", { class: "h3z-ph" }, h("h3", null, "Горячие клавиши")), h("div", { class: "h3z-scroll" }, h("div", { class: "h3z-keys" }, k.map(([a, b]) => [h("div", null, h("kbd", null, a)), h("div", { class: "h3z-note" }, b)]))));
+    const k = [[T("Пробел"), T("воспроизвести / пауза")], ["S", T("разрезать отрезок по плейхеду")], ["Del", T("удалить отрезок")], ["D", T("дублировать отрезок")],
+      ["E", T("продлить (+ отрезок в конце)")], ["Ctrl+Z", T("отменить")], ["Ctrl+Shift+Z, Ctrl+Y", T("повторить")], ["← / →", T("кадр назад / вперёд (Shift — 1 с)")],
+      ["Home / End", T("в начало / в конец")], ["[ / ]", T("предыдущий / следующий отрезок")], [T("+ / −, Ctrl+колесо"), T("масштаб таймлайна")], ["Ctrl+Enter", T("сгенерировать")],
+      ["M", T("маркер на плейхеде")], ["R", T("✂ Участок: выделить и пересоздать часть ролика")], [T("ПКМ по отрезку"), T("меню: новый дубль, разрезать, маркер…")],
+      ["Esc", T("свернуть редактор")], ["Ctrl+V", T("вставить картинку в ассеты")]];
+    L.append(h("div", { class: "h3z-ph" }, h("h3", null, T("Горячие клавиши"))), h("div", { class: "h3z-scroll" }, h("div", { class: "h3z-keys" }, k.map(([a, b]) => [h("div", null, h("kbd", null, a)), h("div", { class: "h3z-note" }, b)]))));
   }
 
   renderAbout(L) {
     const est = C.estimate(this.p);
-    L.append(h("div", { class: "h3z-ph" }, h("h3", null, "Как это работает")), h("div", { class: "h3z-scroll" }, h("div", { class: "h3z-card", style: { padding: 0 } },
-      h("div", { class: "h3z-note", html: "Каждый отрезок — отдельная генерация H3 длиной <b>17k+5</b> кадров (24 fps). Отрезок в режиме <b>«Продление»</b> начинается с хвоста предыдущего: кадры перекрытия фиксируются в латенте и подаются как ключевой клип, а последний кадр предыдущего отрезка добавляется ещё одним <b>&lt;Picture N&gt;</b>. Так персонажи и свет не «плывут» между отрезками." }),
-      h("div", { class: "h3z-note", html: "<b>«Новая сцена»</b> — монтажная склейка: отрезок генерируется с нуля, без связи с предыдущим." }),
-      h("div", { class: "h3z-note", html: "Готовые отрезки кэшируются в <b>output/h3zerostudio/" + esc(this.p.id) + "</b>. Повторный запуск пропускает неизменённые отрезки; изменение отрезка пересчитывает его и все продолжения после него." }),
-      h("div", { class: "h3z-note", html: `Обучающий диапазон H3 — ${C.TRAINED_MIN_FRAMES}–${C.TRAINED_MAX_FRAMES} кадров (${(C.TRAINED_MIN_FRAMES / 24).toFixed(1)}–${(C.TRAINED_MAX_FRAMES / 24).toFixed(1)} с) на отрезок. Сейчас в проекте: ${est.frames} кадров, ${est.seconds.toFixed(1)} с.` }),
-      h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", title: "Готовые дубли остаются (восстановятся без генерации)", onclick: () => this.clearCache() }),
-      h("button", { class: "h3z-btn sm danger", title: "Кэш и все готовые дубли (кроме зафиксированных)", onclick: () => this.clearCache(true) }, "…и дубли"))));
+    L.append(h("div", { class: "h3z-ph" }, h("h3", null, T("Как это работает"))), h("div", { class: "h3z-scroll" }, h("div", { class: "h3z-card", style: { padding: 0 } },
+      h("div", { class: "h3z-note", html: T("Каждый отрезок — отдельная генерация H3 длиной <b>17k+5</b> кадров (24 fps). Отрезок в режиме <b>«Продление»</b> начинается с хвоста предыдущего: кадры перекрытия фиксируются в латенте и подаются как ключевой клип, а последний кадр предыдущего отрезка добавляется ещё одним <b>&lt;Picture N&gt;</b>. Так персонажи и свет не «плывут» между отрезками.") }),
+      h("div", { class: "h3z-note", html: T("<b>«Новая сцена»</b> — монтажная склейка: отрезок генерируется с нуля, без связи с предыдущим.") }),
+      h("div", { class: "h3z-note", html: T("Готовые отрезки кэшируются в <b>output/h3zerostudio/") + esc(this.p.id) + T("</b>. Повторный запуск пропускает неизменённые отрезки; изменение отрезка пересчитывает его и все продолжения после него.") }),
+      h("div", { class: "h3z-note", html: T("Обучающий диапазон H3 — {0}–{1} кадров ({2}–{3} с) на отрезок. Сейчас в проекте: {4} кадров, {5} с.", C.TRAINED_MIN_FRAMES, C.TRAINED_MAX_FRAMES, (C.TRAINED_MIN_FRAMES / 24).toFixed(1), (C.TRAINED_MAX_FRAMES / 24).toFixed(1), est.frames, est.seconds.toFixed(1)) }),
+      h("button", { class: "h3z-btn sm danger", html: ICON.broom + T("<span>Очистить кэш проекта</span>"), title: T("Готовые дубли остаются (восстановятся без генерации)"), onclick: () => this.clearCache() }),
+      h("button", { class: "h3z-btn sm danger", title: T("Кэш и все готовые дубли (кроме зафиксированных)"), onclick: () => this.clearCache(true) }, T("…и дубли")))));
   }
 
   // ------------------------------------------------------------------ assets ops
@@ -532,7 +532,7 @@ export class H3Editor {
     const video = files.filter((f) => isVideo(f) && !(f.type || "").startsWith("audio/"));
     const audio = files.filter((f) => isAudio(f) && !isImage(f) && !video.includes(f));
     files = files.filter((f) => isImage(f));
-    if (video.length) this.toast(`Загрузка видео: ${video.length}… (большие файлы — до минуты)`);
+    if (video.length) this.toast(T("Загрузка видео: {0}… (большие файлы — до минуты)", video.length));
     if (video.length) await this.uploadVideoAssets(video);
     if (audio.length) await this.uploadAudioAssets(audio);
     if (!files.length) return;
@@ -545,13 +545,13 @@ export class H3Editor {
         const name = (f.name && f.name !== "image.png" ? f.name : r.name).replace(/\.[^.]+$/, "");
         this.mutate((p) => { p.assets.push({ id, name, file: r.name, subfolder: r.subfolder || "", type: r.type || "input", category: cat }); }, { render: "none" });
         n++;
-      } catch (e) { this.toast("Не удалось загрузить " + f.name + ": " + (e.message || e), true); }
+      } catch (e) { this.toast(T("Не удалось загрузить ") + f.name + ": " + (e.message || e), true); }
     }
-    if (n) { this.renderAll(); this.toast(`Загружено: ${n}`); }
+    if (n) { this.renderAll(); this.toast(T("Загружено: {0}", n)); }
   }
 
   toggleRef(i, id) {
-    if (!this.seg(i)) return this.toast("Сначала добавьте отрезок", true);
+    if (!this.seg(i)) return this.toast(T("Сначала добавьте отрезок"), true);
     this.mutate((p) => { const seg = p.segments[i]; seg.refs = seg.refs.includes(id) ? seg.refs.filter((r) => r !== id) : [...seg.refs, id]; });
   }
 
@@ -583,9 +583,9 @@ export class H3Editor {
     if (this.selMarker) I.append(this.markerCard());
     { const ac = this.audioClipCard?.(); if (ac) I.append(ac); }
     if (this.sel >= 0 && this.seg()) I.append(this.segmentCard());
-    else I.append(h("div", { class: "h3z-card h3z-glass" }, h("div", { class: "h3z-card-h" }, h("h4", null, "Нет отрезков")),
-      h("div", { class: "h3z-note" }, "Добавьте первый отрезок — кнопкой ниже или «+ Отрезок» на таймлайне."),
-      h("button", { class: "h3z-btn primary", html: ICON.plus + "<span>Добавить отрезок</span>", onclick: () => this.extend() })));
+    else I.append(h("div", { class: "h3z-card h3z-glass" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Нет отрезков"))),
+      h("div", { class: "h3z-note" }, T("Добавьте первый отрезок — кнопкой ниже или «+ Отрезок» на таймлайне.")),
+      h("button", { class: "h3z-btn primary", html: ICON.plus + T("<span>Добавить отрезок</span>"), onclick: () => this.extend() })));
     I.append(this.globalCard());
     this.keepDetails(I);
     I.scrollTop = keepScroll ? top : 0;
@@ -608,11 +608,11 @@ export class H3Editor {
   /** Seam rating of the join on the left of clip i (measured after generation; only for a current result). */
   seamQ(i) { const s = this.p.segments[i]; const q = s?.result?.seam; return i > 0 && q && q.verdict && s.link === "extend" && !this.isStale(i) ? q : null; }
   seamTip(i, q) {
-    return `Шов ${i}→${i + 1}: ${SEAM_TXT[q.verdict]} (скачок ×${q.ratio} к обычному движению кадра; < 1.2 — незаметен, < 1.8 — лёгкий)`
-      + (q.raw ? `\nВыравнивание яркости и цвета: до ×${q.raw.ratio} (${SEAM_TXT[q.raw.verdict]}) → после ×${q.ratio}`
-        + (q.level?.offset ? ` · сдвиг ${q.level.offset.map((x) => (x > 0 ? "+" : "") + x).join("/")} (R/G/B из 255)` : "") : "")
-      + (q.audio ? `\nЗвук: скачок громкости ${q.audio.db} дБ` + (q.audio.warn ? " — заметно" : "") : "")
-      + (q.verdict !== "ok" || q.audio?.warn ? "\n«Ещё дубль» (новый сид) обычно даёт более гладкий стык" : "");
+    return T("Шов {0}→{1}: {2} (скачок ×{3} к обычному движению кадра; < 1.2 — незаметен, < 1.8 — лёгкий)", i, i + 1, SEAM_TXT[q.verdict], q.ratio)
+      + (q.raw ? T("\nВыравнивание яркости и цвета: до ×{0} ({1}) → после ×{2}", q.raw.ratio, SEAM_TXT[q.raw.verdict], q.ratio)
+        + (q.level?.offset ? T(" · сдвиг {0} (R/G/B из 255)", q.level.offset.map((x) => (x > 0 ? "+" : "") + x).join("/")) : "") : "")
+      + (q.audio ? T("\nЗвук: скачок громкости {0} дБ", q.audio.db) + (q.audio.warn ? T(" — заметно") : "") : "")
+      + (q.verdict !== "ok" || q.audio?.warn ? T("\n«Ещё дубль» (новый сид) обычно даёт более гладкий стык") : "");
   }
 
   field(label, input, cls = "") { return h("div", { class: "h3z-field " + cls }, h("div", { class: "h3z-lbl" }, label), input); }
@@ -626,37 +626,37 @@ export class H3Editor {
   segmentCard() {
     const i = this.sel, s = this.seg(), it = this.items()[i], pal = PALETTE[s.color % PALETTE.length];
     const card = h("div", { class: "h3z-card h3z-glass" });
-    const name = h("input", { class: "h3z-in", value: s.name, placeholder: `Отрезок ${i + 1}`, style: { padding: "6px 9px", fontWeight: 600 } });
+    const name = h("input", { class: "h3z-in", value: s.name, placeholder: T("Отрезок {0}", i + 1), style: { padding: "6px 9px", fontWeight: 600 } });
     name.oninput = () => this.mutate((p) => { p.segments[i].name = name.value; }, { coalesce: "name" + s.id, render: "light" });
     const colors = h("div", { class: "h3z-colors" }, PALETTE.slice(0, 6).map((c, ci) => h("span", { class: s.color % PALETTE.length === ci ? "on" : "", style: { background: `linear-gradient(135deg,${c[0]},${c[1]})` }, onclick: () => this.mutate((p) => { p.segments[i].color = ci; }) })));
     card.append(h("div", { class: "h3z-card-h" },
       h("span", { class: "h3z-num", style: { background: `linear-gradient(135deg,${pal[0]},${pal[1]})` } }, i + 1), name, colors,
-      h("button", { class: "h3z-btn sm icon danger", title: "Удалить отрезок (Del)", html: ICON.trash, onclick: () => this.deleteSeg(i) })));
+      h("button", { class: "h3z-btn sm icon danger", title: T("Удалить отрезок (Del)"), html: ICON.trash, onclick: () => this.deleteSeg(i) })));
     // link
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Связь с предыдущим", h("em", null, s.gap ? `промежуток ${s.gap} кадр. — новая сцена` : i === 0 ? "первый отрезок" : s.link === "extend" ? (it.overlap ? `перекрытие ${it.overlap} кадр.` : "только последний кадр") : "монтажная склейка")),
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Связь с предыдущим"), h("em", null, s.gap ? T("промежуток {0} кадр. — новая сцена", s.gap) : i === 0 ? T("первый отрезок") : s.link === "extend" ? (it.overlap ? T("перекрытие {0} кадр.", it.overlap) : T("только последний кадр")) : T("монтажная склейка"))),
       h("div", { class: "h3z-pills" },
-        h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" && !s.gap ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; p.segments[i].gap = 0; }), title: "Продолжить предыдущий отрезок: перекрытие + последний кадр как референс" + (s.gap ? " (промежуток будет убран)" : "") }, "⟶ Продление"),
-        h("div", { class: "h3z-pill" + (i > 0 && (s.link === "cut" || s.gap) ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: "Новая сцена без связи с предыдущим" }, "✂ Новая сцена"))));
-    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), `Шов ${i}→${i + 1}: ${SEAM_TXT[sq.verdict]} · ×${sq.ratio}` + (sq.raw ? ` (без выравнивания ×${sq.raw.ratio})` : "")
-      + (sq.audio?.warn ? ` · звук: скачок ${sq.audio.db} дБ` : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, " — «Ещё дубль» может дать ровнее") : null)); }
+        h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" && !s.gap ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; p.segments[i].gap = 0; }), title: T("Продолжить предыдущий отрезок: перекрытие + последний кадр как референс") + (s.gap ? T(" (промежуток будет убран)") : "") }, T("⟶ Продление")),
+        h("div", { class: "h3z-pill" + (i > 0 && (s.link === "cut" || s.gap) ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: T("Новая сцена без связи с предыдущим") }, T("✂ Новая сцена")))));
+    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), T("Шов {0}→{1}: {2} · ×{3}", i, i + 1, SEAM_TXT[sq.verdict], sq.ratio) + (sq.raw ? T(" (без выравнивания ×{0})", sq.raw.ratio) : "")
+      + (sq.audio?.warn ? T(" · звук: скачок {0} дБ", sq.audio.db) : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, T(" — «Ещё дубль» может дать ровнее")) : null)); }
     if (s.gap) {
       const gIn = h("input", { class: "h3z-in", type: "number", min: 0, max: C.MAX_GAP, value: s.gap || 0, style: { width: "84px", padding: "4px 8px" },
-        title: "Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. перетаскивание клипа на таймлайне (магнит выключен) делает то же" });
+        title: T("Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. перетаскивание клипа на таймлайне (магнит выключен) делает то же") });
       gIn.onchange = () => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+gIn.value || 0))); });
-      card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, "Промежуток перед отрезком"), gIn,
-        h("em", { style: { opacity: .7, fontSize: "11px" } }, `${(s.gap / C.FPS).toFixed(2)} с`),
-        h("button", { class: "h3z-btn sm", onclick: () => this.fillGapSpan(i), title: "Участок ✂ поверх промежутка: генерация связки между сценами" }, "✂ Заполнить"),
-        h("button", { class: "h3z-btn sm", onclick: () => this.removeGap(i) }, "✕ Убрать")));
+      card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, T("Промежуток перед отрезком")), gIn,
+        h("em", { style: { opacity: .7, fontSize: "11px" } }, T("{0} с", (s.gap / C.FPS).toFixed(2))),
+        h("button", { class: "h3z-btn sm", onclick: () => this.fillGapSpan(i), title: T("Участок ✂ поверх промежутка: генерация связки между сценами") }, T("✂ Заполнить")),
+        h("button", { class: "h3z-btn sm", onclick: () => this.removeGap(i) }, T("✕ Убрать"))));
     }
     if (i > 0 && s.link === "extend" && !s.gap && !C.isFootage(s)) {
       const gO = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0);
-      const ovS = h("select", { class: "h3z-sel sm", title: "Перекрытие этого стыка: сколько кадров (и звука) нового отрезка берётся из хвоста предыдущего. Сетка H3: 17·k + 5 кадров." },
-        h("option", { value: -1, selected: (s.overlap_blocks ?? -1) < 0 }, `по умолчанию (${this.ovLabel(gO)})`),
+      const ovS = h("select", { class: "h3z-sel sm", title: T("Перекрытие этого стыка: сколько кадров (и звука) нового отрезка берётся из хвоста предыдущего. Сетка H3: 17·k + 5 кадров.") },
+        h("option", { value: -1, selected: (s.overlap_blocks ?? -1) < 0 }, T("по умолчанию ({0})", this.ovLabel(gO))),
         Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => h("option", { value: o, selected: s.overlap_blocks === o }, this.ovLabel(o))));
       ovS.onchange = () => this.setSegOverlap(i, Number(ovS.value));
       const want = C.wantedOverlap(this.p, i), fit = want > 0 && it.overlap < C.overlapFrames(want);
-      card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Перекрытие", h("em", null, it.overlap ? `сейчас ${it.overlap} кадр. ≈ ${(it.overlap / C.FPS).toFixed(2)} с` : "нет")), ovS,
-        fit ? h("div", { class: "h3z-note err" }, `Запрошено ${C.overlapFrames(want)} кадр., помещается ${it.overlap || 0}: перекрытие должно быть короче обоих отрезков.`) : null));
+      card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Перекрытие"), h("em", null, it.overlap ? T("сейчас {0} кадр. ≈ {1} с", it.overlap, (it.overlap / C.FPS).toFixed(2)) : T("нет"))), ovS,
+        fit ? h("div", { class: "h3z-note err" }, T("Запрошено {0} кадр., помещается {1}: перекрытие должно быть короче обоих отрезков.", C.overlapFrames(want), it.overlap || 0)) : null));
     }
     if (s.source) card.append(this.footageBlock(i));
     // duration
@@ -664,28 +664,28 @@ export class H3Editor {
     const rng = h("input", { class: "h3z-range", type: "range", min: kMin, max: kMax, step: 1, value: (s.frames - 5) / 17 });
     const setP = () => rng.style.setProperty("--p", ((rng.value - kMin) / Math.max(1, kMax - kMin) * 100) + "%");
     setP();
-    const val = h("div", { class: "h3z-val", html: `${(s.frames / 24).toFixed(2)} с <small>${s.frames} кадр.</small>` });
-    rng.oninput = () => { setP(); const f = 17 * Number(rng.value) + 5; val.innerHTML = `${(f / 24).toFixed(2)} с <small>${f} кадр.</small>`; this.mutate((p) => { p.segments[i].frames = f; }, { coalesce: "dur" + s.id, render: "light" }); };
+    const val = h("div", { class: "h3z-val", html: T("{0} с <small>{1} кадр.</small>", (s.frames / 24).toFixed(2), s.frames) });
+    rng.oninput = () => { setP(); const f = 17 * Number(rng.value) + 5; val.innerHTML = T("{0} с <small>{1} кадр.</small>", (f / 24).toFixed(2), f); this.mutate((p) => { p.segments[i].frames = f; }, { coalesce: "dur" + s.id, render: "light" }); };
     rng.onchange = () => this.renderInspector();
-    const quick = h("div", { class: "h3z-qs" }, [3, 5, 8, 10, 12, 15].map((sec) => { const f = Math.max(C.snapFrames(sec * 24), 17 * kMin + 5); return h("span", { class: "h3z-q" + (f === s.frames ? " on" : ""), onclick: () => this.mutate((p) => { p.segments[i].frames = f; }), title: `${f} кадров` }, sec + " с"); }));
+    const quick = h("div", { class: "h3z-qs" }, [3, 5, 8, 10, 12, 15].map((sec) => { const f = Math.max(C.snapFrames(sec * 24), 17 * kMin + 5); return h("span", { class: "h3z-q" + (f === s.frames ? " on" : ""), onclick: () => this.mutate((p) => { p.segments[i].frames = f; }), title: T("{0} кадров", f) }, sec + T(" с")); }));
     const rangeWarn = s.frames < C.TRAINED_MIN_FRAMES || s.frames > C.TRAINED_MAX_FRAMES;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Длительность", h("em", { style: rangeWarn ? { color: "var(--warn)" } : null }, rangeWarn ? "⚠ вне 124–362 кадров" : "сетка H3: 17k+5")), h("div", { class: "h3z-row" }, rng, val), h("div", { style: { marginTop: "8px" } }, quick)));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Длительность"), h("em", { style: rangeWarn ? { color: "var(--warn)" } : null }, rangeWarn ? T("⚠ вне 124–362 кадров") : T("сетка H3: 17k+5"))), h("div", { class: "h3z-row" }, rng, val), h("div", { style: { marginTop: "8px" } }, quick)));
     // prompt
-    const ta = h("textarea", { class: "h3z-ta", placeholder: "Что происходит в этом отрезке: действие, камера, звук…  Ссылки на референсы — <Picture N> (клик по чипу вставит).", spellcheck: "false" });
+    const ta = h("textarea", { class: "h3z-ta", placeholder: T("Что происходит в этом отрезке: действие, камера, звук…  Ссылки на референсы — <Picture N> (клик по чипу вставит)."), spellcheck: "false" });
     ta.value = s.prompt;
     ta.oninput = () => this.mutate((p) => { p.segments[i].prompt = ta.value; }, { coalesce: "prompt" + s.id, render: "light" });
     this.$.segPrompt = ta;
     const segId = s.id;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Промпт отрезка", h("em", null, "добавляется к общему"),
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Промпт отрезка"), h("em", null, T("добавляется к общему")),
       this.peButton(() => { const k = this.p.segments.findIndex((x) => x.id === segId), sg = this.p.segments[k];
-        return { title: `Промпт отрезка ${k + 1}` + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
+        return { title: T("Промпт отрезка {0}", k + 1) + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
           apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }; })), ta));
     // refs
     const refs = C.orderedRefs(this.p, s);
     const box = h("div", { class: "h3z-refs" });
     refs.forEach((a, n) => {
-      const chip = h("div", { class: "h3z-ref", title: `${CAT1[a.category]} «${a.name}» · клик — вставить <Picture ${n + 1}> в промпт` }, h("img", { src: this.assetUrl(a) }), h("span", { class: "tg" }, `<Picture ${n + 1}>`), h("span", null, a.name.slice(0, 14)));
-      const x = h("span", { class: "x", title: "Убрать" }, "✕");
+      const chip = h("div", { class: "h3z-ref", title: T("{0} «{1}» · клик — вставить <Picture {2}> в промпт", CAT1[a.category], a.name, n + 1) }, h("img", { src: this.assetUrl(a) }), h("span", { class: "tg" }, `<Picture ${n + 1}>`), h("span", null, a.name.slice(0, 14)));
+      const x = h("span", { class: "x", title: T("Убрать") }, "✕");
       x.onclick = (e) => { e.stopPropagation(); this.toggleRef(i, a.id); };
       chip.append(x);
       chip.onclick = () => this.insertTag(`<Picture ${n + 1}>`);
@@ -694,12 +694,12 @@ export class H3Editor {
       box.append(chip);
     });
     const cp = C.continuityPicture(this.p, i);
-    if (cp) box.append(h("div", { class: "h3z-ref auto", title: "Последний кадр предыдущего отрезка добавляется автоматически" }, h("span", { class: "ico", html: ICON.link.replace("<svg", '<svg style="width:14px;height:14px"') }), h("span", { class: "tg" }, `<Picture ${cp}>`), h("span", null, `кадр отрезка ${i}`)));
+    if (cp) box.append(h("div", { class: "h3z-ref auto", title: T("Последний кадр предыдущего отрезка добавляется автоматически") }, h("span", { class: "ico", html: ICON.link.replace("<svg", '<svg style="width:14px;height:14px"') }), h("span", { class: "tg" }, `<Picture ${cp}>`), h("span", null, T("кадр отрезка {0}", i))));
     const nVid = this.videoRefChips(i, box);
     const arefs = C.audioRefs(this.p, s);
     arefs.forEach((a, n) => {
-      const chip = h("div", { class: "h3z-ref aud" + (n >= C.MAX_REF_AUDIOS ? " over" : ""), title: `Аудио-референс «${a.name}» · только подсказка для этого отрезка (звук генерируется заново) · клик — вставить <Audio ${n + 1}>` }, h("span", { class: "ico" }, "♪"), h("span", { class: "tg" }, `<Audio ${n + 1}>`), h("span", null, a.name.slice(0, 14)));
-      const x = h("span", { class: "x", title: "Убрать" }, "✕");
+      const chip = h("div", { class: "h3z-ref aud" + (n >= C.MAX_REF_AUDIOS ? " over" : ""), title: T("Аудио-референс «{0}» · только подсказка для этого отрезка (звук генерируется заново) · клик — вставить <Audio {1}>", a.name, n + 1) }, h("span", { class: "ico" }, "♪"), h("span", { class: "tg" }, `<Audio ${n + 1}>`), h("span", null, a.name.slice(0, 14)));
+      const x = h("span", { class: "x", title: T("Убрать") }, "✕");
       x.onclick = (e) => { e.stopPropagation(); this.toggleRef(i, a.id); };
       chip.append(x);
       chip.onclick = () => this.insertTag(`<Audio ${n + 1}>`);
@@ -707,15 +707,15 @@ export class H3Editor {
       chip.oncontextmenu = (e) => this.assetMenu(e, a);
       box.append(chip);
     });
-    if (!refs.length && !arefs.length && !nVid) box.append(h("span", { class: "hint" }, "Перетащите сюда картинку, аудио или видео из ассетов"));
+    if (!refs.length && !arefs.length && !nVid) box.append(h("span", { class: "hint" }, T("Перетащите сюда картинку, аудио или видео из ассетов")));
     box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("over"); });
     box.addEventListener("dragleave", () => box.classList.remove("over"));
     box.addEventListener("drop", (e) => { e.preventDefault(); box.classList.remove("over"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) this.addRef(i, id); });
     const nRefs = refs.length + (cp ? 1 : 0);
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Референсы", h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, `${nRefs} / ${C.MAX_REF_IMAGES} карт.` + (nVid ? ` · ${nVid} / ${C.MAX_REF_VIDEOS} видео` : "") + (arefs.length ? ` · ${arefs.length} / ${C.MAX_REF_AUDIOS} аудио` : "") + " · порядок: персонажи, локации, другое")), box));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Референсы"), h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, T("{0} / {1} карт.", nRefs, C.MAX_REF_IMAGES) + (nVid ? T(" · {0} / {1} видео", nVid, C.MAX_REF_VIDEOS) : "") + (arefs.length ? T(" · {0} / {1} аудио", arefs.length, C.MAX_REF_AUDIOS) : "") + T(" · порядок: персонажи, локации, другое"))), box));
     { const cb = this.charChips({ seg: i }); if (cb) card.append(cb); }
     this.$.finalBox = h("div", { class: "h3z-final" });
-    card.append(h("details", { class: "h3z-det" }, h("summary", null, "Итоговый промпт"), h("div", { class: "in" }, this.$.finalBox)));
+    card.append(h("details", { class: "h3z-det" }, h("summary", null, T("Итоговый промпт")), h("div", { class: "in" }, this.$.finalBox)));
     this.renderFinalPrompt();
     { const mb = this.mpSegBlock(i); if (mb) card.append(mb); }
     card.append(this.overridesBlock(i));
@@ -728,7 +728,7 @@ export class H3Editor {
 
   renderFinalPrompt() {
     const b = this.$.finalBox; if (!b || this.sel < 0 || !this.seg()) return;
-    const t = C.composePrompt(this.p, this.sel) || "(пусто)";
+    const t = C.composePrompt(this.p, this.sel) || T("(пусто)");
     b.innerHTML = esc(t).replace(/&lt;(Picture|Audio) (\d+)&gt;/g, "<mark>&lt;$1 $2&gt;</mark>");
   }
 
@@ -745,7 +745,7 @@ export class H3Editor {
 
   overridesBlock(i) {
     const s = this.seg(i), g = this.p.settings, ov = s.overrides;
-    const label = { seed: "сид", steps: "шаги", cfg: "cfg", denoise: "denoise", shift_video: "shift видео", shift_audio: "shift аудио", sampler: "сэмплер", scheduler: "расписание" };
+    const label = { seed: T("сид"), steps: T("шаги"), cfg: "cfg", denoise: "denoise", shift_video: T("shift видео"), shift_audio: T("shift аудио"), sampler: T("сэмплер"), scheduler: T("расписание") };
     const num = (key, step, ph) => {
       const inp = h("input", { class: "h3z-in", type: "number", step, value: key in ov ? ov[key] : "", placeholder: ph });
       inp.onchange = () => this.mutate((p) => { const o = p.segments[i].overrides; if (inp.value === "") delete o[key]; else o[key] = Number(inp.value); });
@@ -758,27 +758,27 @@ export class H3Editor {
     };
     const n = Object.keys(ov).length;
     return h("details", { class: "h3z-det", open: n > 0 },
-      h("summary", null, "Свои параметры отрезка", n ? h("span", { class: "cnt" }, n) : null),
+      h("summary", null, T("Свои параметры отрезка"), n ? h("span", { class: "cnt" }, n) : null),
       h("div", { class: "in" },
-        h("div", { class: "h3z-grid3" }, num("seed", 1, `авто ${Number(g.seed) + i}`), num("steps", 1, g.steps), num("cfg", 0.1, g.cfg)),
+        h("div", { class: "h3z-grid3" }, num("seed", 1, T("авто {0}", Number(g.seed) + i)), num("steps", 1, g.steps), num("cfg", 0.1, g.cfg)),
         h("div", { class: "h3z-grid3" }, num("denoise", 0.01, g.denoise), num("shift_video", 0.1, g.shift_video), num("shift_audio", 0.1, g.shift_audio)),
         h("div", { class: "h3z-grid2" }, sel("sampler", this.opts.samplers), sel("scheduler", this.opts.schedulers)),
-        n ? h("button", { class: "h3z-btn sm", onclick: () => this.mutate((p) => { p.segments[i].overrides = {}; }) }, "Сбросить к общим")
-          : h("div", { class: "h3z-note" }, "Пустое поле — берётся общее значение. Сид по умолчанию: общий + номер отрезка − 1.")));
+        n ? h("button", { class: "h3z-btn sm", onclick: () => this.mutate((p) => { p.segments[i].overrides = {}; }) }, T("Сбросить к общим"))
+          : h("div", { class: "h3z-note" }, T("Пустое поле — берётся общее значение. Сид по умолчанию: общий + номер отрезка − 1."))));
   }
 
   statusLine(i) {
     const s = this.seg(i), r = s.result;
-    if (!r) return h("div", { class: "h3z-st-host", "data-i": i, "data-stale": "-" }, h("div", { class: "h3z-status none" }, "Ещё не сгенерирован"));
+    if (!r) return h("div", { class: "h3z-st-host", "data-i": i, "data-stale": "-" }, h("div", { class: "h3z-status none" }, T("Ещё не сгенерирован")));
     const stale = !!(r.sig && r.sig !== this.sigs()[i]);
-    const st = h("div", { class: "h3z-status" + (stale ? " stale" : "") }, stale ? "⟳ Изменён после генерации — пересчитается" : `✓ Готов · ${r.frames || s.frames} кадр.${r.cached ? " · из кэша" : ""}`);
-    if (r.video) st.append(h("button", { class: "h3z-btn sm", style: { marginLeft: "auto" }, onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, "Смотреть"));
+    const st = h("div", { class: "h3z-status" + (stale ? " stale" : "") }, stale ? T("⟳ Изменён после генерации — пересчитается") : T("✓ Готов · {0} кадр.{1}", r.frames || s.frames, r.cached ? T(" · из кэша") : ""));
+    if (r.video) st.append(h("button", { class: "h3z-btn sm", style: { marginLeft: "auto" }, onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, T("Смотреть")));
     const host = (...kids) => h("div", { class: "h3z-st-host", "data-i": i, "data-stale": String(stale) }, ...kids);
     if (!stale || !this.restoreTake(i)) return host(st);
     const panel = h("div", { class: "h3z-rs-host" });   // «↺ Восстановить»: put the take's inputs back, the key matches again
     if (this._rsOpen === i) { this._rsOpen = null; requestAnimationFrame(() => { this.restorePanel(i, panel); panel.scrollIntoView?.({ block: "nearest" }); }); }
-    st.append(h("button", { class: "h3z-btn sm", title: "Показать, что изменилось с этого дубля, и вернуть прежние значения — без перегенерации",
-      onclick: () => (panel.childNodes.length ? panel.replaceChildren() : this.restorePanel(i, panel)) }, "↺ Восстановить"));
+    st.append(h("button", { class: "h3z-btn sm", title: T("Показать, что изменилось с этого дубля, и вернуть прежние значения — без перегенерации"),
+      onclick: () => (panel.childNodes.length ? panel.replaceChildren() : this.restorePanel(i, panel)) }, T("↺ Восстановить")));
     return host(st, panel);
   }
 
@@ -793,44 +793,44 @@ export class H3Editor {
 
   globalCard() {
     const g = this.p.settings;
-    const card = h("div", { class: "h3z-card h3z-glass" }, h("div", { class: "h3z-card-h" }, h("h4", null, "Ролик"), h("em", { class: "h3z-note" }, this.globScope() ? "настройки: для всех проектов" : "настройки: свои у проекта")));
+    const card = h("div", { class: "h3z-card h3z-glass" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Ролик")), h("em", { class: "h3z-note" }, this.globScope() ? T("настройки: для всех проектов") : T("настройки: свои у проекта"))));
     const set = (k, v, opt) => this.mutate((p) => { p.settings[k] = v; }, opt);
-    const gp = h("textarea", { class: "h3z-ta", placeholder: "Общий промпт для всех отрезков: стиль, персонажи, мир, качество…", spellcheck: "false" }); gp.value = g.prompt;
+    const gp = h("textarea", { class: "h3z-ta", placeholder: T("Общий промпт для всех отрезков: стиль, персонажи, мир, качество…"), spellcheck: "false" }); gp.value = g.prompt;
     gp.oninput = () => set("prompt", gp.value, { coalesce: "gprompt", render: "light" });
-    const neg = h("textarea", { class: "h3z-ta sm", placeholder: "Негатив (работает при cfg > 1)", spellcheck: "false" }); neg.value = g.negative;
+    const neg = h("textarea", { class: "h3z-ta sm", placeholder: T("Негатив (работает при cfg > 1)"), spellcheck: "false" }); neg.value = g.negative;
     neg.oninput = () => set("negative", neg.value, { coalesce: "gneg", render: "light" });
     const peG = (key, title, kind, ph) => this.peButton(() => ({ title, value: this.p.settings[key] ?? "", ctx: { kind }, placeholder: ph, apply: (t) => this.mutate((p) => { p.settings[key] = t; }) }));
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Общий промпт", h("em", null, "в начале каждого отрезка"), peG("prompt", "Общий промпт (для всех отрезков)", "global", gp.placeholder)), gp),
-      h("div", null, h("div", { class: "h3z-lbl" }, "Негатив", h("em", null, Number(g.cfg) === 1 ? "не используется при cfg 1" : ""), peG("negative", "Негатив", "negative", neg.placeholder)), neg));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Общий промпт"), h("em", null, T("в начале каждого отрезка")), peG("prompt", T("Общий промпт (для всех отрезков)"), "global", gp.placeholder)), gp),
+      h("div", null, h("div", { class: "h3z-lbl" }, T("Негатив"), h("em", null, Number(g.cfg) === 1 ? T("не используется при cfg 1") : ""), peG("negative", T("Негатив"), "negative", neg.placeholder)), neg));
     card.append(this.mpProjectBlock());
     // resolution
     const [w, hh] = C.resolution(g);
     const custom = g.res_mode === "custom";
     const asp = h("div", { class: "h3z-pills" }, Object.keys(C.ASPECTS).map((a) => h("div", { class: "h3z-pill" + (!custom && g.aspect === a ? " on" : "") + (custom ? " dis" : ""), onclick: () => set("aspect", a) }, a)));
-    const mode = h("div", { class: "h3z-pills" }, [["mp", "Мегапиксели"], ["custom", "Свои W×H"]].map(([k, l]) => h("div", { class: "h3z-pill" + (g.res_mode === k ? " on" : ""), onclick: () => this.mutate((p) => { if (k === "custom") { const r = C.resolution(p.settings); p.settings.width = r[0]; p.settings.height = r[1]; } p.settings.res_mode = k; }) }, l)));
+    const mode = h("div", { class: "h3z-pills" }, [["mp", T("Мегапиксели")], ["custom", T("Свои W×H")]].map(([k, l]) => h("div", { class: "h3z-pill" + (g.res_mode === k ? " on" : ""), onclick: () => this.mutate((p) => { if (k === "custom") { const r = C.resolution(p.settings); p.settings.width = r[0]; p.settings.height = r[1]; } p.settings.res_mode = k; }) }, l)));
     let resRow;
     if (custom) {
       const wi = h("input", { class: "h3z-in", type: "number", step: 32, min: 32, value: g.width }), hi = h("input", { class: "h3z-in", type: "number", step: 32, min: 32, value: g.height });
       wi.onchange = () => set("width", C.snap32(wi.value)); hi.onchange = () => set("height", C.snap32(hi.value));
-      resRow = h("div", { class: "h3z-grid2" }, this.field("ширина", wi), this.field("высота", hi));
+      resRow = h("div", { class: "h3z-grid2" }, this.field(T("ширина"), wi), this.field(T("высота"), hi));
     } else {
       const r = h("input", { class: "h3z-range", type: "range", min: 0.15, max: 1.2, step: 0.01, value: g.megapixels });
       const setP = () => r.style.setProperty("--p", ((r.value - 0.15) / 1.05 * 100) + "%"); setP();
       const v = h("div", { class: "h3z-val", html: `${w}×${hh} <small>${Number(g.megapixels).toFixed(2)} MP</small>` });
       r.oninput = () => { setP(); const res = C.resolution({ ...g, megapixels: Number(r.value) }); v.innerHTML = `${res[0]}×${res[1]} <small>${Number(r.value).toFixed(2)} MP</small>`; this.mutate((p) => { p.settings.megapixels = Number(r.value); }, { coalesce: "mp", render: "light" }); };
       r.onchange = () => this.renderAll();
-      const presets = h("div", { class: "h3z-qs" }, [[0.3, "~416p"], [0.5, "~544p"], [0.7, "~640p"], [0.98, "768p (офиц.)"]].map(([m, l]) => h("span", { class: "h3z-q" + (Math.abs(g.megapixels - m) < 0.005 ? " on" : ""), onclick: () => set("megapixels", m) }, l)));
+      const presets = h("div", { class: "h3z-qs" }, [[0.3, "~416p"], [0.5, "~544p"], [0.7, "~640p"], [0.98, T("768p (офиц.)")]].map(([m, l]) => h("span", { class: "h3z-q" + (Math.abs(g.megapixels - m) < 0.005 ? " on" : ""), onclick: () => set("megapixels", m) }, l)));
       resRow = h("div", null, h("div", { class: "h3z-row" }, r, v), h("div", { style: { marginTop: "8px" } }, presets));
     }
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Разрешение", h("em", null, `${w}×${hh} · кратно 32`)), h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, asp, mode, resRow)));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Разрешение"), h("em", null, T("{0}×{1} · кратно 32", w, hh))), h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, asp, mode, resRow)));
     // seed; the set-once settings (stages, sampling, upscale, seams, cache, preview, models) live in «Настройки»
     const seedIn = h("input", { class: "h3z-in", type: "number", step: 1, min: 0, value: g.seed });
     seedIn.onchange = () => set("seed", Math.max(0, Math.trunc(Number(seedIn.value) || 0)));
-    const dice = h("button", { class: "h3z-btn sm icon", title: "Случайный сид", html: ICON.dice, onclick: () => set("seed", Math.floor(Math.random() * 2 ** 40)) });
+    const dice = h("button", { class: "h3z-btn sm icon", title: T("Случайный сид"), html: ICON.dice, onclick: () => set("seed", Math.floor(Math.random() * 2 ** 40)) });
     const [dw, dh] = C.workResolution(g, "draft");
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Сид", h("em", null, "отрезок N получает сид + N − 1")), h("div", { class: "h3z-row" }, seedIn, dice)),
-      h("button", { class: "h3z-btn sm h3z-setlink", title: "Этапы генерации, сэмплер, шаги, cfg, апскейл, продление и звук, кэш, превью, модели — в «Настройках» (слева)",
-        html: ICON.settings + `<span>${g.final_mode === "refine" ? `2 этапа · ${dw}×${dh} → ${w}×${hh}` : `1 этап · ${w}×${hh}`} · ${g.steps} шаг. · cfg ${g.cfg} · ${g.sampler}</span>`, onclick: () => this.openSettings("Генерация") }));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Сид"), h("em", null, T("отрезок N получает сид + N − 1"))), h("div", { class: "h3z-row" }, seedIn, dice)),
+      h("button", { class: "h3z-btn sm h3z-setlink", title: T("Этапы генерации, сэмплер, шаги, cfg, апскейл, продление и звук, кэш, превью, модели — в «Настройках» (слева)"),
+        html: ICON.settings + T("<span>{0} · {1} шаг. · cfg {2} · {3}</span>", g.final_mode === "refine" ? T("2 этапа · {0}×{1} → {2}×{3}", dw, dh, w, hh) : T("1 этап · {0}×{1}", w, hh), g.steps, g.cfg, g.sampler), onclick: () => this.openSettings(T("Генерация")) }));
     return card;
   }
 
@@ -844,19 +844,19 @@ export class H3Editor {
     $.video = h("video", { playsinline: true, preload: "auto" });
     $.video.addEventListener("ended", () => this.onEnded());
     $.video.addEventListener("loadedmetadata", () => this.layoutStage());
-    $.playBtn = h("button", { class: "h3z-play", html: ICON.play, title: "Пробел", onclick: () => this.togglePlay() });
+    $.playBtn = h("button", { class: "h3z-play", html: ICON.play, title: T("Пробел"), onclick: () => this.togglePlay() });
     $.time = h("div", { class: "h3z-time" });
-    $.volBtn = h("button", { class: "h3z-btn icon", title: "Звук вкл/выкл", onclick: () => { this.vol.muted = !this.vol.muted; this.userGesture = true; this.autoMuted = false; saveLS("h3zs.volume", this.vol); this.applyVolume(); } });
-    $.volR = h("input", { class: "h3z-range vol", type: "range", min: 0, max: 1, step: 0.02, value: this.vol.v, title: "Громкость" });
+    $.volBtn = h("button", { class: "h3z-btn icon", title: T("Звук вкл/выкл"), onclick: () => { this.vol.muted = !this.vol.muted; this.userGesture = true; this.autoMuted = false; saveLS("h3zs.volume", this.vol); this.applyVolume(); } });
+    $.volR = h("input", { class: "h3z-range vol", type: "range", min: 0, max: 1, step: 0.02, value: this.vol.v, title: T("Громкость") });
     $.volR.oninput = () => { this.vol.v = Number($.volR.value); this.vol.muted = this.vol.v === 0; this.userGesture = true; this.autoMuted = false; saveLS("h3zs.volume", this.vol); this.applyVolume(); };
     $.center.append(h("div", { class: "h3z-pv-top" }, $.pvTabs, $.pvInfo), $.stage,
       h("div", { class: "h3z-transport" },
-        h("button", { class: "h3z-btn icon", html: ICON.prev, title: "К предыдущему отрезку ([)", onclick: () => this.jumpSeg(-1) }),
+        h("button", { class: "h3z-btn icon", html: ICON.prev, title: T("К предыдущему отрезку ([)"), onclick: () => this.jumpSeg(-1) }),
         $.playBtn,
-        h("button", { class: "h3z-btn icon", html: ICON.next, title: "К следующему отрезку (])", onclick: () => this.jumpSeg(1) }),
+        h("button", { class: "h3z-btn icon", html: ICON.next, title: T("К следующему отрезку (])"), onclick: () => this.jumpSeg(1) }),
         $.time, h("div", { class: "grow" }),
-        h("button", { class: "h3z-btn icon", html: H3Editor.VIEWER_ICONS.view, title: "Удобный просмотр: масштаб до ×4, покадрово, скорость, петля (двойной клик по кадру)", onclick: () => this.viewerFromPlayer() }),
-        h("button", { class: "h3z-btn icon h3z-fsbtn", html: H3Editor.VIEWER_ICONS.fs, title: "Плеер во весь экран (F) · Esc — выйти", onclick: () => this.toggleMainFullscreen() }),
+        h("button", { class: "h3z-btn icon", html: H3Editor.VIEWER_ICONS.view, title: T("Удобный просмотр: масштаб до ×4, покадрово, скорость, петля (двойной клик по кадру)"), onclick: () => this.viewerFromPlayer() }),
+        h("button", { class: "h3z-btn icon h3z-fsbtn", html: H3Editor.VIEWER_ICONS.fs, title: T("Плеер во весь экран (F) · Esc — выйти"), onclick: () => this.toggleMainFullscreen() }),
         h("div", { class: "h3z-volume" }, $.volBtn, $.volR)), this.buildDyn());
     $.stage.addEventListener("dblclick", (e) => { if (e.target.closest("button, a, input")) return; this.viewerFromPlayer(); });
     this.applyVolume();
@@ -868,7 +868,7 @@ export class H3Editor {
     const $ = this.$, v = this.vol.muted ? 0 : this.vol.v;
     if ($.video) { $.video.volume = clamp(this.vol.v * (this.p.audio?.video_volume ?? 1), 0, 1); $.video.muted = !!this.vol.muted || !!this.autoMuted; }
     this.livePlayer?.setVolume?.(clamp(v, 0, 1), !!this.vol.muted || !!this.autoMuted);
-    if ($.volBtn) { $.volBtn.innerHTML = this.vol.muted || !v || this.autoMuted ? ICON.mute : ICON.vol; $.volBtn.classList.toggle("warn", !!this.autoMuted); $.volBtn.title = this.autoMuted ? "Браузер запустил видео без звука — нажмите, чтобы включить звук" : "Звук вкл/выкл"; }
+    if ($.volBtn) { $.volBtn.innerHTML = this.vol.muted || !v || this.autoMuted ? ICON.mute : ICON.vol; $.volBtn.classList.toggle("warn", !!this.autoMuted); $.volBtn.title = this.autoMuted ? T("Браузер запустил видео без звука — нажмите, чтобы включить звук") : T("Звук вкл/выкл"); }
     if ($.volR) { $.volR.value = this.vol.muted ? 0 : this.vol.v; $.volR.style.setProperty("--p", (Number($.volR.value) * 100) + "%"); }
   }
 
@@ -910,9 +910,9 @@ export class H3Editor {
     const src = this.currentSource();
     const whole = src && (src.kind === "comp" || (src.kind === "full" && !src.old));
     $.pvTabs.append(
-      h("div", { class: "h3z-pill" + (whole ? " on" : "") + (fullOk || this.p.segments.length ? "" : " dis"), title: this.fullCurrent() ? "Готовый итоговый ролик" : "Сборка таймлайна на лету: готовые дубли, футаж, заглушки на месте несгенерированных отрезков + звуковая дорожка и музыка", onclick: () => { this.pvMode = "full"; this.renderPreview(); } }, "Весь ролик"),
-      h("div", { class: "h3z-pill" + (src && !whole && !src.old ? " on" : ""), onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, this.sel >= 0 ? `Отрезок ${this.sel + 1}` : "Отрезок"),
-      this.hasOldFull() ? h("div", { class: "h3z-pill old" + (src?.old ? " on" : ""), title: "Прошлый итог · устарел: последний собранный ролик не совпадает с текущим таймлайном", onclick: () => { this.pvMode = "old"; this.renderPreview(); } }, "Прошлый итог", h("i", { class: "dot", "aria-label": "устарел" })) : "");
+      h("div", { class: "h3z-pill" + (whole ? " on" : "") + (fullOk || this.p.segments.length ? "" : " dis"), title: this.fullCurrent() ? T("Готовый итоговый ролик") : T("Сборка таймлайна на лету: готовые дубли, футаж, заглушки на месте несгенерированных отрезков + звуковая дорожка и музыка"), onclick: () => { this.pvMode = "full"; this.renderPreview(); } }, T("Весь ролик")),
+      h("div", { class: "h3z-pill" + (src && !whole && !src.old ? " on" : ""), onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, this.sel >= 0 ? T("Отрезок {0}", this.sel + 1) : T("Отрезок")),
+      this.hasOldFull() ? h("div", { class: "h3z-pill old" + (src?.old ? " on" : ""), title: T("Прошлый итог · устарел: последний собранный ролик не совпадает с текущим таймлайном"), onclick: () => { this.pvMode = "old"; this.renderPreview(); } }, T("Прошлый итог"), h("i", { class: "dot", "aria-label": T("устарел") })) : "");
     const [w, hh] = C.resolution(this.p.settings);
     for (const c of [...$.frame.children]) if (c !== $.video && c !== $.live) c.remove();
     if (src?.kind === "comp") {
@@ -924,11 +924,11 @@ export class H3Editor {
         if (!$.video.parentElement) $.frame.append($.video);
       }
       const its = this.items(), done = its.filter((it, i) => i < this.genCount() && this.seg(i)?.result?.video && !this.isStale(i)).length;
-      $.frame.append(h("div", { class: "h3z-badge-live" }, "Весь ролик · сборка таймлайна",
-        src.seg >= 0 ? ` · отрезок ${src.seg + 1}` + (src.region ? ` · ✂ участок ${this.regionNo(src.region)}` : src.foot ? " · футаж" : src.ph ? " · заглушка" : "") : " · пустота",
-        src.stale ? h("span", { style: { color: "var(--warn)" } }, " · дубль устарел") : null,
-        this.p.result?.full?.video ? h("span", { style: { color: "var(--warn)" } }, " · итог устарел") : null));
-      $.pvInfo.textContent = `${this.totalFrames()} кадров · ${(this.totalFrames() / C.FPS).toFixed(1)} с · готово ${done}/${this.genCount()} · «Сгенерировать» соберёт итог`;
+      $.frame.append(h("div", { class: "h3z-badge-live" }, T("Весь ролик · сборка таймлайна"),
+        src.seg >= 0 ? T(" · отрезок {0}", src.seg + 1) + (src.region ? T(" · ✂ участок {0}", this.regionNo(src.region)) : src.foot ? T(" · футаж") : src.ph ? T(" · заглушка") : "") : T(" · пустота"),
+        src.stale ? h("span", { style: { color: "var(--warn)" } }, T(" · дубль устарел")) : null,
+        this.p.result?.full?.video ? h("span", { style: { color: "var(--warn)" } }, T(" · итог устарел")) : null));
+      $.pvInfo.textContent = T("{0} кадров · {1} с · готово {2}/{3} · «Сгенерировать» соберёт итог", this.totalFrames(), (this.totalFrames() / C.FPS).toFixed(1), done, this.genCount());
       if (!src.ph) this.syncVideoToPlayhead();
     } else if (src) {
       const url = this.host.url(src.ref);
@@ -937,16 +937,16 @@ export class H3Editor {
       if (!$.video.parentElement) $.frame.append($.video);
       const segStale = src.kind === "segment" && !src.foot && this.seg().result.sig && this.seg().result.sig !== this.sigs()[this.sel];
       const stale = src.kind === "full" ? (src.old || this.fullStale()) : segStale;
-      $.frame.append(h("div", { class: "h3z-badge-live" }, src.kind === "full" ? (src.old ? "Прошлый итог" : "Весь ролик") : `Отрезок ${this.sel + 1}` + (src.foot ? (src.src ? " · исходник (будет перегенерирован)" : " · футаж") : ""), stale ? h("span", { style: { color: "var(--warn)" } }, " · устарел") : null));
-      $.pvInfo.textContent = src.kind === "full" ? `${this.p.result.full.frames} кадров · ${(this.p.result.full.frames / 24).toFixed(1)} с` : `${(src.foot ? 0 : this.seg().result.frames) || this.seg().frames} кадров` + (src.foot && src.off ? ` · из файла с ${src.off.toFixed(2)} с` : "");
+      $.frame.append(h("div", { class: "h3z-badge-live" }, src.kind === "full" ? (src.old ? T("Прошлый итог") : T("Весь ролик")) : T("Отрезок {0}", this.sel + 1) + (src.foot ? (src.src ? T(" · исходник (будет перегенерирован)") : T(" · футаж")) : ""), stale ? h("span", { style: { color: "var(--warn)" } }, T(" · устарел")) : null));
+      $.pvInfo.textContent = src.kind === "full" ? T("{0} кадров · {1} с", this.p.result.full.frames, (this.p.result.full.frames / 24).toFixed(1)) : T("{0} кадров", (src.foot ? 0 : this.seg().result.frames) || this.seg().frames) + (src.foot && src.off ? T(" · из файла с {0} с", src.off.toFixed(2)) : "");
       this.syncVideoToPlayhead();
     } else {
       this.src = null;
       if ($.video.parentElement) { $.video.pause(); $.video.removeAttribute("src"); $.video.dataset.src = ""; $.video.remove(); }
       $.frame.append(h("div", { class: "h3z-ph-empty" },
         h("div", { class: "tag" }, `${w}×${hh} · 24 fps`),
-        h("div", { class: "big", html: ICON.spark }), h("b", null, "Превью появится после генерации"),
-        h("div", { class: "h3z-note" }, this.p.segments.length ? "Нажмите «Сгенерировать»: отрезки пойдут по очереди, готовые сразу появятся здесь и на таймлайне." : "Добавьте отрезок на таймлайне, напишите промпт и добавьте референсы.")));
+        h("div", { class: "big", html: ICON.spark }), h("b", null, T("Превью появится после генерации")),
+        h("div", { class: "h3z-note" }, this.p.segments.length ? T("Нажмите «Сгенерировать»: отрезки пойдут по очереди, готовые сразу появятся здесь и на таймлайне.") : T("Добавьте отрезок на таймлайне, напишите промпт и добавьте референсы."))));
       $.pvInfo.textContent = "";
     }
     this.layoutStage();
@@ -1079,35 +1079,35 @@ export class H3Editor {
 
   updateTime() {
     const t = this.$.time; if (!t) return;
-    t.innerHTML = `<b>${C.fmtTime(this.playhead / C.FPS)}</b> / ${C.fmtTime(this.totalFrames() / C.FPS)} · кадр ${Math.round(this.playhead)}`;
+    t.innerHTML = T("<b>{0}</b> / {1} · кадр {2}", C.fmtTime(this.playhead / C.FPS), C.fmtTime(this.totalFrames() / C.FPS), Math.round(this.playhead));
   }
 
   // ------------------------------------------------------------------ timeline
   buildTimeline() {
     const $ = this.$;
-    $.zoomR = h("input", { class: "h3z-range", type: "range", min: 0, max: 100, step: 1, value: 0, title: "Масштаб (Ctrl+колесо, + / −)" });
+    $.zoomR = h("input", { class: "h3z-range", type: "range", min: 0, max: 100, step: 1, value: 0, title: T("Масштаб (Ctrl+колесо, + / −)") });
     $.zoomR.oninput = () => { this.zoom = zoomOf(Number($.zoomR.value)); this.syncZoomUI(); this.renderTimeline(); this.scrollToPlayhead(); };
-    $.endIn = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0.5, title: "Длина ролика в секундах: всё, что за маркером конца, не генерируется" });
+    $.endIn = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0.5, title: T("Длина ролика в секундах: всё, что за маркером конца, не генерируется") });
     $.endIn.onchange = () => { const v = Number($.endIn.value); this.setEnd(v > 0 ? Math.round(v * C.FPS) : 0); };
     $.endAuto = h("div", { class: "h3z-pills h3z-endmode" },
-      h("div", { class: "h3z-pill", "data-m": "auto", title: "Авто: конец ролика = конец последнего отрезка", onclick: () => this.setEndMode("auto") }, "Авто"),
-      h("div", { class: "h3z-pill", "data-m": "fixed", title: "Фикс: маркер конца стоит на месте; удаление или укорачивание отрезков оставляет пустоту перед ним (заполните её «Продлить»)", onclick: () => this.setEndMode("fixed") }, "Фикс"));
+      h("div", { class: "h3z-pill", "data-m": "auto", title: T("Авто: конец ролика = конец последнего отрезка"), onclick: () => this.setEndMode("auto") }, T("Авто")),
+      h("div", { class: "h3z-pill", "data-m": "fixed", title: T("Фикс: маркер конца стоит на месте; удаление или укорачивание отрезков оставляет пустоту перед ним (заполните её «Продлить»)"), onclick: () => this.setEndMode("fixed") }, T("Фикс")));
     $.tlInfo = h("div", { class: "h3z-note" });
     const B = (icon, label, title, fn) => h("button", { class: "h3z-btn sm" + (label ? "" : " icon"), html: icon + (label ? `<span>${label}</span>` : ""), title, onclick: fn });
     $.tl.append(h("div", { class: "h3z-tl-bar" },
-      B(ICON.plus, "Отрезок", "Добавить отрезок в конец (E)", () => this.extend()),
-      B(ICON.cut, "Разрезать", "Разрезать выбранный отрезок по плейхеду (S)", () => this.split()),
-      B(ICON.copy, "", "Дублировать (D)", () => this.duplicate()),
-      B(ICON.trash, "", "Удалить (Del)", () => this.deleteSeg(this.sel)),
-      h("button", { class: "h3z-btn sm", html: '<b style="color:#fbbf24">◆</b><span>Маркер</span>', title: "Маркер на плейхеде (M): заметка, событие в промпте или усиление персонажа", onclick: () => this.addMarker() }),
+      B(ICON.plus, T("Отрезок"), T("Добавить отрезок в конец (E)"), () => this.extend()),
+      B(ICON.cut, T("Разрезать"), T("Разрезать выбранный отрезок по плейхеду (S)"), () => this.split()),
+      B(ICON.copy, "", T("Дублировать (D)"), () => this.duplicate()),
+      B(ICON.trash, "", T("Удалить (Del)"), () => this.deleteSeg(this.sel)),
+      h("button", { class: "h3z-btn sm", html: T("<b style=\"color:#fbbf24\">◆</b><span>Маркер</span>"), title: T("Маркер на плейхеде (M): заметка, событие в промпте или усиление персонажа"), onclick: () => this.addMarker() }),
       ...this.regionToolbar(),
       this.magnetButton(),
-      h("div", { class: "sep" }), h("div", { class: "h3z-endbox", title: "Маркер конца ролика (красный флажок на линейке): за ним всё приглушено и не генерируется" }, h("span", null, "Длина ролика"), $.endIn, h("span", null, "с"), $.endAuto),
+      h("div", { class: "sep" }), h("div", { class: "h3z-endbox", title: T("Маркер конца ролика (красный флажок на линейке): за ним всё приглушено и не генерируется") }, h("span", null, T("Длина ролика")), $.endIn, h("span", null, T("с")), $.endAuto),
       h("div", { class: "sep" }), $.tlInfo, h("div", { class: "grow" }),
-      h("div", { class: "h3z-zoom" }, B(ICON.minus || "−", "", "Отдалить (−)", () => this.setZoomBy(0.7)), $.zoomR, B(ICON.plus, "", "Приблизить (+)", () => this.setZoomBy(1.4)),
-        B(ICON.fit, "", "Вписать весь ролик", () => this.fitZoom()))));
+      h("div", { class: "h3z-zoom" }, B(ICON.minus || "−", "", T("Отдалить (−)"), () => this.setZoomBy(0.7)), $.zoomR, B(ICON.plus, "", T("Приблизить (+)"), () => this.setZoomBy(1.4)),
+        B(ICON.fit, "", T("Вписать весь ролик"), () => this.fitZoom()))));
     $.heads = h("div", { class: "h3z-heads" },
-      h("div", { class: "h3z-thead v", html: ICON.film + "<span>Видео</span>" }),
+      h("div", { class: "h3z-thead v", html: ICON.film + T("<span>Видео</span>") }),
       $.aHead = h("div", { class: "h3z-thead a" }));
     $.tscroll = h("div", { class: "h3z-tscroll" });
     $.tinner = h("div", { class: "h3z-tinner" });
@@ -1187,7 +1187,7 @@ export class H3Editor {
   setEndMode(m) {
     const cur = this.totalFrames();
     this.mutate((p) => { p.end_mode = m; p.end = m === "auto" ? 0 : (p.end || cur); });
-    this.toast(m === "auto" ? "Длина: авто — конец ролика следует за последним отрезком" : "Длина: фикс — маркер конца стоит на месте, пока вы его не сдвинете");
+    this.toast(m === "auto" ? T("Длина: авто — конец ролика следует за последним отрезком") : T("Длина: фикс — маркер конца стоит на месте, пока вы его не сдвинете"));
   }
   /** Fill the empty tail before a fixed end marker with a new segment continuing the last one (link «продолжение»,
    *  17-frame grid). Works whether or not the last clip is generated: the queue renders them in order.
@@ -1205,7 +1205,7 @@ export class H3Editor {
     this.sel = this.p.segments.length - 1; this.pvMode = "segment"; this.selGap = null; this.selRegion = null; this.selAudio = null;
     const it = this.items()[this.sel]; this.playhead = it.start + (this.sel ? it.overlap : 0);
     this.renderAll(); this.scrollToPlayhead();
-    if (!fits) this.toast(`Пустота длиннее одного отрезка H3: добавлен отрезок ${(s.frames / C.FPS).toFixed(2)} с, до маркера осталось ${((this.p.end - it.end) / C.FPS).toFixed(2)} с — кликните ещё раз`);
+    if (!fits) this.toast(T("Пустота длиннее одного отрезка H3: добавлен отрезок {0} с, до маркера осталось {1} с — кликните ещё раз", (s.frames / C.FPS).toFixed(2), ((this.p.end - it.end) / C.FPS).toFixed(2)));
   }
   endDrag(e) {
     if (e.button !== 0) return;
@@ -1217,7 +1217,7 @@ export class H3Editor {
       const near = edges.find((x) => Math.abs(x - f) * this.ppf < 7); if (near !== undefined && !ev.altKey) f = near;
       if (ev.shiftKey) f = Math.round(f / C.FPS) * C.FPS;
       tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
-      tip.textContent = `конец ролика ${C.fmtTime(f / C.FPS)} · ${f} кадр.`;
+      tip.textContent = T("конец ролика {0} · {1} кадр.", C.fmtTime(f / C.FPS), f);
       this.mutate((p) => { p.end = f; p.end_mode = "fixed"; }, { coalesce: "enddrag" + e.clientX, render: "none" });
       this.renderTimeline(); this.renderHeader();
     };
@@ -1247,7 +1247,7 @@ export class H3Editor {
     const W = Math.max($.tscroll.clientWidth, Math.ceil(total * ppf) + 150);
     const inner = $.tinner; inner.innerHTML = ""; inner.style.width = W + "px";
     // ruler
-    const ruler = h("div", { class: "h3z-ruler", title: "Клик / перетаскивание — переместить плейхед" });
+    const ruler = h("div", { class: "h3z-ruler", title: T("Клик / перетаскивание — переместить плейхед") });
     const pps = ppf * C.FPS;
     const step = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120].find((s) => s * pps >= 70) || 300;
     for (let t = 0; t * pps < W; t += step) {
@@ -1272,41 +1272,41 @@ export class H3Editor {
       else if (res?.strip) this.clipThumbs(clip, res, it, ov, wd);
       const refs = C.orderedRefs(this.p, s);
       clip.append(h("div", { class: "c" },
-        h("div", { class: "t" }, h("span", { class: "n" }, i + 1), h("span", { class: "nm" }, s.name || `Отрезок ${i + 1}`), h("span", { class: "d" }, `${(it.frames / 24).toFixed(1)} с`)),
-        wd > 120 ? h("div", { class: "p" }, (s.prompt || "").trim() || h("i", { style: { opacity: 0.6 } }, "без промпта")) : null,
+        h("div", { class: "t" }, h("span", { class: "n" }, i + 1), h("span", { class: "nm" }, s.name || T("Отрезок {0}", i + 1)), h("span", { class: "d" }, T("{0} с", (it.frames / 24).toFixed(1)))),
+        wd > 120 ? h("div", { class: "p" }, (s.prompt || "").trim() || h("i", { style: { opacity: 0.6 } }, T("без промпта"))) : null,
         h("div", { class: "rf" }, wd > 90 ? refs.slice(0, 5).map((a) => h("img", { src: this.assetUrl(a), title: a.name, draggable: "false" })) : null,
-          i > 0 && wd > 70 ? h("span", { class: "lk" }, it.gap ? "⟷ после промежутка" : s.link === "extend" ? "⟶ продл." : "✂ сцена") : null)));
+          i > 0 && wd > 70 ? h("span", { class: "lk" }, it.gap ? T("⟷ после промежутка") : s.link === "extend" ? T("⟶ продл.") : T("✂ сцена")) : null)));
       {   // per-clip «Сгенерировать» / «Ещё дубль»
         const st = this.segGenState(i);
         const mk = (icon, title, fn, dis) => { const b = h("button", { class: "h3z-cb" + (dis ? " dis" : ""), html: icon, title: dis ? st.why || title : title });
           b.addEventListener("pointerdown", (e) => e.stopPropagation());
           b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); return b; };
         if (!this.run.active) clip.append(h("div", { class: "acts" },
-          mk(ICON.spark, stale || !res ? "Сгенерировать только этот отрезок" : "Отрезок готов", () => this.genSegment(i), !st.ok || !(stale || !res)),
-          mk(ICON.dice, "Ещё дубль (новый сид)", () => this.newTake(i), !st.ok),
+          mk(ICON.spark, stale || !res ? T("Сгенерировать только этот отрезок") : T("Отрезок готов"), () => this.genSegment(i), !st.ok || !(stale || !res)),
+          mk(ICON.dice, T("Ещё дубль (новый сид)"), () => this.newTake(i), !st.ok),
           this.finalClipButton(i, wd),
           this.upClipButton(i, mk)));
         this.upClipTags(clip, i);
       }
-      if (out) clip.append(h("div", { class: "bd out" }, "за концом"));
+      if (out) clip.append(h("div", { class: "bd out" }, T("за концом")));
       else if (res) {
-        const q = res.kind === "draft" ? "черновик" : res.kind === "refine" ? "финал ↑" : "";
+        const q = res.kind === "draft" ? T("черновик") : res.kind === "refine" ? T("финал ↑") : "";
         const needFinal = stale && res.kind === "draft" && C.runKind(this.p.settings) !== "draft";
-        clip.append(h("div", { class: "bd " + (needFinal ? "draft" : stale ? "stale" : res.cached ? "cache" : "ok"), title: needFinal ? "Черновик — клик: «↑ Финал из черновика» для этого отрезка" : "",
+        clip.append(h("div", { class: "bd " + (needFinal ? "draft" : stale ? "stale" : res.cached ? "cache" : "ok"), title: needFinal ? T("Черновик — клик: «↑ Финал из черновика» для этого отрезка") : "",
           onpointerdown: needFinal ? (e) => e.stopPropagation() : null, onclick: needFinal ? (e) => { e.stopPropagation(); this.finalFromDraft([i]); } : null },
-          needFinal ? "черновик → финал" : (stale ? "изменён" : res.cached ? "кэш ✓" : "готов ✓") + (q && !stale ? " · " + q : "")));
+          needFinal ? T("черновик → финал") : (stale ? T("изменён") : res.cached ? T("кэш ✓") : T("готов ✓")) + (q && !stale ? " · " + q : "")));
         if (stale && !needFinal && !out && !s.freeze && this.restoreTake(i)) clip.append(this.clipRestoreButton(i, wd));
       }
       if ((s.takes || []).length > 1 && wd > 60) {
         const k = this.takeIndex(s, s.active_take);
-        const tb = h("div", { class: "tk", title: `Дубль ${k + 1} из ${s.takes.length} · клик — следующий дубль` }, h("i", null, "▣"), `${k + 1}/${s.takes.length}`);
+        const tb = h("div", { class: "tk", title: T("Дубль {0} из {1} · клик — следующий дубль", k + 1, s.takes.length) }, h("i", null, "▣"), `${k + 1}/${s.takes.length}`);
         tb.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); this.cycleTake(i); });
         clip.append(tb);
       }
-      if (s.source) clip.append(h("div", { class: "foot", title: s.source.denoise ? `Футаж, перегенерация (denoise ${s.source.denoise})` : "Футаж как есть" }, s.source.denoise ? "🎞↻" : "🎞"));
-      if (s.freeze) clip.append(h("div", { class: "frz", title: "Зафиксирован: никогда не перегенерируется. Разморозить — в карточке или меню" }, "🔒 зафиксирован"));
+      if (s.source) clip.append(h("div", { class: "foot", title: s.source.denoise ? T("Футаж, перегенерация (denoise {0})", s.source.denoise) : T("Футаж как есть") }, s.source.denoise ? "🎞↻" : "🎞"));
+      if (s.freeze) clip.append(h("div", { class: "frz", title: T("Зафиксирован: никогда не перегенерируется. Разморозить — в карточке или меню") }, T("🔒 зафиксирован")));
       clip.append(h("div", { class: "pg" }, h("i", { style: { width: "0%" } })));
-      const hr = h("div", { class: "hr", title: "Тяните, чтобы изменить длину (шаг 17 кадров)" });
+      const hr = h("div", { class: "hr", title: T("Тяните, чтобы изменить длину (шаг 17 кадров)") });
       if (i === its.length - 1 || its[i + 1].gap) clip.append(hr); // inner boundaries use the seam handle (roll edit)
       hr.addEventListener("pointerdown", (e) => this.resizeStart(e, i));
       clip.addEventListener("pointerdown", (e) => { if (e.target !== hr) this.clipDown(e, i); });
@@ -1314,14 +1314,14 @@ export class H3Editor {
       this.clipHover(clip, i);
       clip.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].some((t) => t === "application/x-h3s-asset" || t === "application/x-h3s-card")) { e.preventDefault(); clip.classList.add("dropover"); } });
       clip.addEventListener("dragleave", () => clip.classList.remove("dropover"));
-      clip.addEventListener("drop", (e) => { e.preventDefault(); clip.classList.remove("dropover"); const cid = e.dataTransfer.getData("application/x-h3s-card"); if (cid) { this.sel = i; this.charAdd({ seg: i }, cid); return; } const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { this.sel = i; this.addRef(i, id); this.toast((this.p.assets.find((a) => a.id === id)?.category === "video" ? "Видео-референс <Video> добавлен в отрезок " : "Референс добавлен в отрезок ") + (i + 1)); } });
+      clip.addEventListener("drop", (e) => { e.preventDefault(); clip.classList.remove("dropover"); const cid = e.dataTransfer.getData("application/x-h3s-card"); if (cid) { this.sel = i; this.charAdd({ seg: i }, cid); return; } const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { this.sel = i; this.addRef(i, id); this.toast((this.p.assets.find((a) => a.id === id)?.category === "video" ? T("Видео-референс <Video> добавлен в отрезок ") : T("Референс добавлен в отрезок ")) + (i + 1)); } });
       vt.append(clip);
       $.clips[i] = clip;
       { const sq = this.seamQ(i); if (sq) { const m = h("div", { class: "h3z-seamq " + sq.verdict, style: { left: (it.start + it.overlap) * ppf + "px" }, title: this.seamTip(i, sq) });
         m.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.sel = i; this.selAudio = null; this.renderAll(); } }); vt.append(m); } }
-      if (i > 0 && s.link === "cut") vt.append(h("div", { class: "h3z-cutmark", style: { left: it.start * ppf + "px" }, title: "Монтажная склейка" }));
+      if (i > 0 && s.link === "cut") vt.append(h("div", { class: "h3z-cutmark", style: { left: it.start * ppf + "px" }, title: T("Монтажная склейка") }));
       if (i > 0 && it.overlap) vt.append(h("div", { class: "h3z-ovl", style: { left: it.start * ppf + 1 + "px", width: Math.max(2, it.overlap * ppf - 1) + "px" },
-        title: `Перекрытие ${i}→${i + 1}: ${it.overlap} кадр. ≈ ${(it.overlap / C.FPS).toFixed(2)} с — отрезок ${i + 1} продолжает хвост отрезка ${i} (видео и звук)` },
+        title: T("Перекрытие {0}→{1}: {2} кадр. ≈ {3} с — отрезок {4} продолжает хвост отрезка {5} (видео и звук)", i, i + 1, it.overlap, (it.overlap / C.FPS).toFixed(2), i + 1, i) },
         it.overlap * ppf > 34 ? h("span", null, `⟷ ${it.overlap}`) : null));
       if (i > 0 && it.overlap) { const ovl = vt.lastChild;
         ovl.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.sel = i; this.selAudio = null; this.pvMode = "segment"; this.renderAll(); } });
@@ -1330,7 +1330,7 @@ export class H3Editor {
     this.renderGaps(vt, its, ppf);
     for (let i = 0; i + 1 < its.length; i++) {
       if (its[i + 1].gap) continue;   // a gap: each side has its own length handle
-      const seam = h("div", { class: "h3z-seam", style: { left: its[i].end * ppf + "px" }, title: "Тяните шов: длины соседних отрезков меняются вместе (сетка 17 кадров), общая длина не меняется.\nShift — менять только левый отрезок" }, h("span", null, "⟷"));
+      const seam = h("div", { class: "h3z-seam", style: { left: its[i].end * ppf + "px" }, title: T("Тяните шов: длины соседних отрезков меняются вместе (сетка 17 кадров), общая длина не меняется.\nShift — менять только левый отрезок") }, h("span", null, "⟷"));
       seam.addEventListener("pointerdown", (e) => this.rollStart(e, i));
       vt.append(seam);
     }
@@ -1338,12 +1338,12 @@ export class H3Editor {
     const endX = (its.length ? its[its.length - 1].end : 0) * ppf + 10;
     const gapF = this.p.end_mode !== "auto" && this.p.end > 0 ? this.p.end - this.contentFrames() : 0;
     if (gapF > 0 && its.length) {
-      const g = h("div", { class: "h3z-gap", style: { left: this.contentFrames() * ppf + "px", width: gapF * ppf + "px" }, title: `Пусто ${(gapF / C.FPS).toFixed(2)} с до маркера конца — не генерируется, ролик будет короче.\nКлик — новый отрезок-продолжение; маркер конца встанет на его конец (сетка H3) · или растяните последний отрезок` },
-        gapF * ppf > 90 ? h("span", null, `пусто ${(gapF / C.FPS).toFixed(1)} с · клик — заполнить`) : null);
+      const g = h("div", { class: "h3z-gap", style: { left: this.contentFrames() * ppf + "px", width: gapF * ppf + "px" }, title: T("Пусто {0} с до маркера конца — не генерируется, ролик будет короче.\nКлик — новый отрезок-продолжение; маркер конца встанет на его конец (сетка H3) · или растяните последний отрезок", (gapF / C.FPS).toFixed(2)) },
+        gapF * ppf > 90 ? h("span", null, T("пусто {0} с · клик — заполнить", (gapF / C.FPS).toFixed(1))) : null);
       g.addEventListener("click", (e) => { e.stopPropagation(); this.fillEnd(); });
       vt.append(g);
     }
-    const ext = h("div", { class: "h3z-ext", style: { left: (gapF > 0 && its.length ? this.p.end * ppf + 10 : endX) + "px" }, title: "Продлить ролик: новый отрезок продолжит последний (E)\nСюда же можно перетащить видео из ассетов — футаж", html: ICON.plus + `<span>${its.length ? (gapF > 0 ? "Заполнить" : "Продлить") : "Отрезок"}</span><small>${gapF > 0 ? "до маркера" : "+5 с"}</small>`, onclick: () => (gapF > 0 ? this.fillEnd() : this.extend()) });
+    const ext = h("div", { class: "h3z-ext", style: { left: (gapF > 0 && its.length ? this.p.end * ppf + 10 : endX) + "px" }, title: T("Продлить ролик: новый отрезок продолжит последний (E)\nСюда же можно перетащить видео из ассетов — футаж"), html: ICON.plus + `<span>${its.length ? (gapF > 0 ? T("Заполнить") : T("Продлить")) : T("Отрезок")}</span><small>${gapF > 0 ? T("до маркера") : T("+5 с")}</small>`, onclick: () => (gapF > 0 ? this.fillEnd() : this.extend()) });
     vt.append(ext);
     const isVid = (e) => [...(e.dataTransfer?.types || [])].includes("application/x-h3s-video");
     vt.addEventListener("dragover", (e) => { if (isVid(e) && !e.target.closest(".h3z-clip")) { e.preventDefault(); ext.classList.add("dropover"); } });
@@ -1358,7 +1358,7 @@ export class H3Editor {
     this.renderMarkers(inner, ppf);
     // video end marker: everything after it is dimmed and not generated
     inner.append(h("div", { class: "h3z-beyond", style: { left: vEnd * ppf + "px", width: Math.max(0, W - vEnd * ppf) + "px" } }));
-    const flag = h("div", { class: "h3z-vend" + (hasEnd ? " set" : ""), style: { left: vEnd * ppf + "px" }, title: `Конец ролика ${C.fmtTime(vEnd / C.FPS)} (${vEnd} кадр.)${hasEnd ? "" : " · авто: конец последнего отрезка"}\nТяните, чтобы задать длину ролика (Shift — по секундам, прилипает к краям отрезков) · двойной клик — авто` }, h("span", null, "конец"));
+    const flag = h("div", { class: "h3z-vend" + (hasEnd ? " set" : ""), style: { left: vEnd * ppf + "px" }, title: T("Конец ролика {0} ({1} кадр.){2}\nТяните, чтобы задать длину ролика (Shift — по секундам, прилипает к краям отрезков) · двойной клик — авто", C.fmtTime(vEnd / C.FPS), vEnd, hasEnd ? "" : T(" · авто: конец последнего отрезка")) }, h("span", null, T("конец")));
     flag.addEventListener("pointerdown", (e) => this.endDrag(e));
     flag.addEventListener("dblclick", () => this.setEnd(0));
     inner.append(flag);
@@ -1367,7 +1367,7 @@ export class H3Editor {
     $.phead = h("div", { class: "h3z-phead" });
     inner.append($.phead);
     const est = C.estimate(this.p);
-    $.tlInfo.textContent = `${est.frames} кадров · сетка H3: 17 кадров` + (nGen < its.length ? ` · ${its.length - nGen} отр. за концом` : "");
+    $.tlInfo.textContent = T("{0} кадров · сетка H3: 17 кадров", est.frames) + (nGen < its.length ? T(" · {0} отр. за концом", its.length - nGen) : "");
     this.updatePlayhead();
     this.updateRunUI();
     this.regionPopover();
@@ -1423,7 +1423,7 @@ export class H3Editor {
         clip.classList.remove("dragging"); clip.style.transform = "";
         if (target !== i) {
           this.mutate((p) => { const [s] = p.segments.splice(i, 1); p.segments.splice(target, 0, s); }, { render: "none" });
-          this.sel = target; this.renderAll(); this.toast(`Отрезок перемещён на позицию ${target + 1} · продления пересчитаются`);
+          this.sel = target; this.renderAll(); this.toast(T("Отрезок перемещён на позицию {0} · продления пересчитаются", target + 1));
         }
       } else this.clipClick(ev, i);
     };
@@ -1443,7 +1443,7 @@ export class H3Editor {
 
   resizeStart(e, i) {
     e.preventDefault(); e.stopPropagation();
-    if (this.seg(i)?.freeze) { this.toast("Отрезок зафиксирован — длину не изменить. Разморозьте его", true); return; }
+    if (this.seg(i)?.freeze) { this.toast(T("Отрезок зафиксирован — длину не изменить. Разморозьте его"), true); return; }
     const it = this.items()[i], minF = Math.max(C.MIN_FRAMES, i > 0 && it.overlap ? it.overlap + 17 : C.MIN_FRAMES);
     const tip = h("div", { class: "h3z-tip" }); document.body.append(tip);
     let first = true;
@@ -1451,7 +1451,7 @@ export class H3Editor {
       const f = Math.max(minF, C.snapFrames(this.frameAt(ev.clientX) - it.start));
       tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
       const warn = f < C.TRAINED_MIN_FRAMES || f > C.TRAINED_MAX_FRAMES;
-      tip.innerHTML = `${f} кадр. · ${(f / 24).toFixed(2)} с${warn ? ' <span style="color:#fbbf24">⚠ вне 124–362</span>' : ""}`;
+      tip.innerHTML = T("{0} кадр. · {1} с{2}", f, (f / 24).toFixed(2), warn ? T(" <span style=\"color:#fbbf24\">⚠ вне 124–362</span>") : "");
       if (f !== this.seg(i).frames) {
         this.mutate((p) => { p.segments[i].frames = f; }, { coalesce: first ? null : "resize" + i, render: "light" });
         first = false; this.lastCoalesce = { key: "resize" + i, t: Date.now() };
@@ -1467,7 +1467,7 @@ export class H3Editor {
     if (e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     const its = this.items(), A = this.seg(i), B = this.seg(i + 1);
-    if (A?.freeze || (B?.freeze && !e.shiftKey)) { this.toast("Шов у зафиксированного отрезка не двигается" + (A?.freeze ? "" : " (Shift — менять только левый отрезок)"), true); return; }
+    if (A?.freeze || (B?.freeze && !e.shiftKey)) { this.toast(T("Шов у зафиксированного отрезка не двигается") + (A?.freeze ? "" : T(" (Shift — менять только левый отрезок)")), true); return; }
     if (!A || !B) return;
     const o = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0), ovf = o ? C.overlapFrames(o) : 0;
     const ext = (k) => k > 0 && this.p.segments[k]?.link === "extend" && ovf;
@@ -1486,7 +1486,7 @@ export class H3Editor {
       const fa = fa0 + 17 * k, fb = ripple ? fb0 : fb0 - 17 * k;
       const warn = (f) => (f < C.TRAINED_MIN_FRAMES || f > C.TRAINED_MAX_FRAMES ? ' <span style="color:#fbbf24">⚠</span>' : "");
       tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
-      tip.innerHTML = `${ripple ? "только левый · " : ""}${i + 1}: ${(fa / 24).toFixed(2)} с${warn(fa)} · ${i + 2}: ${(fb / 24).toFixed(2)} с${warn(fb)}`;
+      tip.innerHTML = T("{0}{1}: {2} с{3} · {4}: {5} с{6}", ripple ? T("только левый · ") : "", i + 1, (fa / 24).toFixed(2), warn(fa), i + 2, (fb / 24).toFixed(2), warn(fb));
       const key = fa + ":" + fb;
       if (key === last) return;
       last = key;
@@ -1513,14 +1513,14 @@ export class H3Editor {
     const it = this.items()[this.sel]; this.playhead = it.start + (this.sel ? it.overlap : 0);
     this.pvMode = "segment";
     this.renderAll(); this.scrollToPlayhead();
-    if (!this.pastMarkerHint()) this.toast(this.sel ? "Отрезок добавлен — продолжит предыдущий" : "Первый отрезок добавлен");
+    if (!this.pastMarkerHint()) this.toast(this.sel ? T("Отрезок добавлен — продолжит предыдущий") : T("Первый отрезок добавлен"));
   }
 
   duplicate() {
     const s = this.seg(); if (!s) return;
     const d = JSON.parse(JSON.stringify(s)); d.id = C.newId("s"); delete d.result; d.color = (s.color + 1) % 6;
     this.mutate((p) => { p.segments.splice(this.sel + 1, 0, d); }, { render: "none" });
-    this.sel++; this.renderAll(); if (!this.pastMarkerHint()) this.toast("Отрезок продублирован");
+    this.sel++; this.renderAll(); if (!this.pastMarkerHint()) this.toast(T("Отрезок продублирован"));
   }
 
   deleteSeg(i) {
@@ -1529,7 +1529,7 @@ export class H3Editor {
     // the gap before the deleted clip stays (moves to the next clip): gaps are only removed on purpose
     this.mutate((p) => { const [d] = p.segments.splice(i, 1); if (d?.gap && p.segments[i]) p.segments[i].gap = Math.min(C.MAX_GAP, (p.segments[i].gap || 0) + d.gap); }, { render: "none" });
     this.sel = Math.min(i, this.p.segments.length - 1);
-    this.renderAll(); this.toast("Отрезок удалён · Ctrl+Z — вернуть");
+    this.renderAll(); this.toast(T("Отрезок удалён · Ctrl+Z — вернуть"));
   }
 
   split() {
@@ -1537,17 +1537,17 @@ export class H3Editor {
     const it = this.items()[i], local = this.playhead - it.start;
     const ov = i > 0 ? it.overlap : 0, minF = Math.max(C.MIN_FRAMES, ov ? ov + 17 : C.MIN_FRAMES);
     const o = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0), ovf = o ? C.overlapFrames(o) : 0;
-    if (s.freeze) return this.toast("Отрезок зафиксирован — разморозьте, чтобы резать", true);
+    if (s.freeze) return this.toast(T("Отрезок зафиксирован — разморозьте, чтобы резать"), true);
     const foot = C.isFootage(s);   // footage used as is: the second piece continues in the file, no overlap
     const f1 = C.snapFrames(local);
     const f2 = C.snapFrames(s.frames - f1 + (foot ? 0 : ovf));
-    if (local <= ov + 8 || f1 < minF || f1 >= s.frames || f2 <= (foot ? 0 : ovf)) return this.toast("Поставьте плейхед внутрь выбранного отрезка, подальше от краёв", true);
+    if (local <= ov + 8 || f1 < minF || f1 >= s.frames || f2 <= (foot ? 0 : ovf)) return this.toast(T("Поставьте плейхед внутрь выбранного отрезка, подальше от краёв"), true);
     const b = JSON.parse(JSON.stringify(s)); b.id = C.newId("s"); b.link = "extend"; b.color = (s.color + 1) % 6; delete b.result;
     b.takes = []; b.active_take = null; b.freeze = null;
     if (b.source) b.source.in = s.source.in + f1 - (foot ? 0 : ovf);
     this.mutate((p) => { p.segments[i].frames = f1; b.frames = f2; p.segments.splice(i + 1, 0, b); }, { render: "none" });
     this.sel = i + 1; this.renderAll();
-    this.toast(`Разрезано: ${f1} + ${f2} кадр. (сетка 17k+5${ovf ? `, перекрытие ${ovf}` : ""})`);
+    this.toast(T("Разрезано: {0} + {1} кадр. (сетка 17k+5{2})", f1, f2, ovf ? T(", перекрытие {0}", ovf) : ""));
   }
 
   // ------------------------------------------------------------------ keys
@@ -1584,8 +1584,8 @@ export class H3Editor {
   /** upto: -1 = whole project, i = only segments 0..i (cached ones are reused). */
   async generate({ upto = -1, only = -1, kind = "", region = "", audio = null } = {}) {
     if (this.run.active) return;
-    if (!this.p.segments.length) return this.toast("Добавьте хотя бы один отрезок", true);
-    const hard = C.estimate(this.p).warnings.filter((w) => w.includes("максимум"));
+    if (!this.p.segments.length) return this.toast(T("Добавьте хотя бы один отрезок"), true);
+    const hard = C.estimate(this.p).warnings.filter((w) => [T("максимум"), "максимум"].some((x) => w.includes(x)));
     if (hard.length) return this.toast(hard[0], true);
     // kind: one stage for this run only (✎ Черновик / ✦ Чистовик of a clip, «↑ Финал»), the project mode stays
     if (region && !this.region(region)) region = "";
@@ -1599,22 +1599,22 @@ export class H3Editor {
     if (this.root) { this.renderHeader(); this.renderInspector(); }
     try {
       await this.host.queue(); setTimeout(() => this.timerSync?.(), 1500);
-      if (this.run.queued) this.toast(region ? `В очереди: участок ${this.regionNo(region)}` : this.p.run.upto >= 0 ? `В очереди: отрезки 1–${this.p.run.upto + 1} (следующие — позже)` : "Поставлено в очередь ComfyUI");
-    } catch (e) { this.run = { active: false }; if (this.root) { this.renderHeader(); this.renderInspector(); } this.toast("Не удалось поставить в очередь: " + (e.message || e), true); }
+      if (this.run.queued) this.toast(region ? T("В очереди: участок {0}", this.regionNo(region)) : this.p.run.upto >= 0 ? T("В очереди: отрезки 1–{0} (следующие — позже)", this.p.run.upto + 1) : T("Поставлено в очередь ComfyUI"));
+    } catch (e) { this.run = { active: false }; if (this.root) { this.renderHeader(); this.renderInspector(); } this.toast(T("Не удалось поставить в очередь: ") + (e.message || e), true); }
     finally { this.p.run = { upto: -1, only: -1, kind: "", region: "" }; this.flushSave(); } // the queued prompt already holds the scoped copy
   }
 
-  async stop() { try { await this.host.interrupt(); this.toast("Останавливаю…"); } catch (e) { this.toast("Не удалось прервать", true); } }
+  async stop() { try { await this.host.interrupt(); this.toast(T("Останавливаю…")); } catch (e) { this.toast(T("Не удалось прервать"), true); } }
 
   /** «Очистить кэш» keeps the finished takes (latent sidecars, masters, previews): they come back without
    *  sampling or decoding. With `takes` everything of the project goes, except frozen clips. */
   async clearCache(takes = false) {
-    if (takes && !confirm("Удалить кэш и все готовые дубли проекта? Незафиксированные отрезки придётся генерировать заново.")) return;
+    if (takes && !confirm(T("Удалить кэш и все готовые дубли проекта? Незафиксированные отрезки придётся генерировать заново."))) return;
     try {
       const r = await this.host.clearCache(this.p.id, takes);
       if (takes) this.mutate((p) => { for (const s of p.segments) if (!s.freeze) { delete s.result; s.takes = []; s.active_take = null; } p.result = null; });
-      this.toast(`Кэш очищен (${r?.removed ?? 0} файлов)` + (takes ? "" : " · готовые дубли сохранены"));
-    } catch (e) { this.toast("Не удалось очистить кэш: " + (e.message || e), true); }
+      this.toast(T("Кэш очищен ({0} файлов)", r?.removed ?? 0) + (takes ? "" : T(" · готовые дубли сохранены")));
+    } catch (e) { this.toast(T("Не удалось очистить кэш: ") + (e.message || e), true); }
   }
 
   /** Progress event from the backend (websocket or the polling fallback). Duplicates are dropped by run id
@@ -1668,7 +1668,7 @@ export class H3Editor {
         if (st.progress && !(st.phase && ["up_input", "decode"].includes(st.phase.phase) && st.progress.event === "uptile")) this.onProgress({ ...st.progress, run: st.run, seq: st.seq });
       }
       if (st.done) this.onProgress({ event: "done", run: st.run, ...st.done });
-      else if (!st.active && st.error && this.run?.active) this.onRunEnded("Ошибка: " + st.error);
+      else if (!st.active && st.error && this.run?.active) this.onRunEnded(T("Ошибка: ") + st.error);
     } finally { this._catching = false; }
   }
 
@@ -1711,7 +1711,7 @@ export class H3Editor {
       this.applyFull(d.full, d.segments, d.elapsed, d.audio_source);
       this.run = { active: false };
       this.hideLive(); this.tileOverlay(null);
-      if (this.root) { this.renderAll(); this.toast(d.full?.partial ? `Готово за ${C.fmtDur(d.elapsed)} · следующие отрезки помечены «изменён»` : `Готово за ${C.fmtDur(d.elapsed)}`); }
+      if (this.root) { this.renderAll(); this.toast(d.full?.partial ? T("Готово за {0} · следующие отрезки помечены «изменён»", C.fmtDur(d.elapsed)) : T("Готово за {0}", C.fmtDur(d.elapsed))); }
       this.host.onChange?.(this.p);
       return;
     }
@@ -1777,7 +1777,7 @@ export class H3Editor {
     if (!cur) { cur = h("div", { class: "cur" }); $.tileOv.append(cur); }
     const [y0, y1, x0, x1] = d.rect;
     Object.assign(cur.style, { top: pc(y0, d.lh), height: pc(y1 - y0, d.lh), left: pc(x0, d.lw), width: pc(x1 - x0, d.lw) });
-    $.tileOv.querySelector(".lbl").textContent = (d.chunks > 1 ? `кусок ${d.chunk}/${d.chunks} · ` : "") + `тайл ${d.tile}/${d.tiles} · сетка ${d.cols}×${d.rows} · шаг ${d.step}/${d.steps}` + (d.wins > 1 ? ` · окно ${d.win}/${d.wins}` : "");
+    $.tileOv.querySelector(".lbl").textContent = (d.chunks > 1 ? T("кусок {0}/{1} · ", d.chunk, d.chunks) : "") + T("тайл {0}/{1} · сетка {2}×{3} · шаг {4}/{5}", d.tile, d.tiles, d.cols, d.rows, d.step, d.steps) + (d.wins > 1 ? T(" · окно {0}/{1}", d.win, d.wins) : "");
   }
 
   updateRunUI() {
@@ -1788,21 +1788,21 @@ export class H3Editor {
       const frac = r.total ? Math.min(1, ((r.done || 0) + (u && u.tile ? u.tile / u.tiles : 0)) / r.total) : 0;
       $.runPill.querySelector("i").style.width = (frac * 100).toFixed(1) + "%";
       const pct = Math.round(frac * 100), eta = r.eta != null && r.done ? C.fmtTime(r.eta).replace(/\.\d+$/, "") : "";
-      const inLbl = { learned: "обученный апскейлер", rtx: "RTX VSR" }[r.upInput] || r.upInput || "";
-      const chk = (c, n) => (n > 1 ? ` · кусок ${c}/${n}` : "");
+      const inLbl = { learned: T("обученный апскейлер"), rtx: "RTX VSR" }[r.upInput] || r.upInput || "";
+      const chk = (c, n) => (n > 1 ? T(" · кусок {0}/{1}", c, n) : "");
       const rn = r.region ? this.regionNo(r.region) : 0;
-      const txt = r.queued ? "В очереди ComfyUI…" : r.seg < 0 ? "Подготовка…" :
-        rn && r.phase !== "up_input" ? `✂ Участок ${rn}` + (r.phase === "region_draft" ? " · черновик" : r.kind === "refine" ? " · доработка ↑" : "") + ` · шаг ${r.step}/${r.steps || "…"}` + (r.eta != null && r.done ? ` · осталось ${C.fmtDur(r.eta)}` : "") :
-        r.segCached ? `Отрезок ${r.seg + 1}/${r.segs} · из кэша` :
-        r.phase === "up_input" ? `Апскейл · ${rn ? "участок " + rn : "отр. " + (r.seg + 1)}${chk(r.chunk, r.chunks)} · вход: ${inLbl || "…"} · ${pct}%` :
-        r.phase === "decode" ? `Апскейл · отр. ${r.seg + 1} · декодирование · ${pct}%` :
-        u ? `Апскейл · отр. ${r.seg + 1}` + chk(u.chunk, u.chunks) + (u.wins > 1 ? ` · окно ${u.win}/${u.wins}` : "") + ` · шаг ${u.step}/${u.steps}` + (u.tiles > 1 ? ` · тайл ${u.tile || "…"}/${u.tiles}` : "") + ` · ${pct}%` + (u.eta != null ? ` · ETA ${C.fmtDur(u.eta)}` : "") :
-        `Отрезок ${r.seg + 1}/${r.segs}` + (r.phase === "draft" ? " · черновик" : r.phase === "refine" ? " · доработка ↑" : r.phase === "upscale" ? " · апскейл ↑" : "") + ` · шаг ${r.step}/${r.steps || "…"}` + (r.eta != null && r.done ? ` · осталось ${C.fmtDur(r.eta)}` : "");
+      const txt = r.queued ? T("В очереди ComfyUI…") : r.seg < 0 ? T("Подготовка…") :
+        rn && r.phase !== "up_input" ? T("✂ Участок {0}", rn) + (r.phase === "region_draft" ? T(" · черновик") : r.kind === "refine" ? T(" · доработка ↑") : "") + T(" · шаг {0}/{1}", r.step, r.steps || "…") + (r.eta != null && r.done ? T(" · осталось {0}", C.fmtDur(r.eta)) : "") :
+        r.segCached ? T("Отрезок {0}/{1} · из кэша", r.seg + 1, r.segs) :
+        r.phase === "up_input" ? T("Апскейл · {0}{1} · вход: {2} · {3}%", rn ? T("участок ") + rn : T("отр. ") + (r.seg + 1), chk(r.chunk, r.chunks), inLbl || "…", pct) :
+        r.phase === "decode" ? T("Апскейл · отр. {0} · декодирование · {1}%", r.seg + 1, pct) :
+        u ? T("Апскейл · отр. {0}", r.seg + 1) + chk(u.chunk, u.chunks) + (u.wins > 1 ? T(" · окно {0}/{1}", u.win, u.wins) : "") + T(" · шаг {0}/{1}", u.step, u.steps) + (u.tiles > 1 ? T(" · тайл {0}/{1}", u.tile || "…", u.tiles) : "") + ` · ${pct}%` + (u.eta != null ? ` · ETA ${C.fmtDur(u.eta)}` : "") :
+        T("Отрезок {0}/{1}", r.seg + 1, r.segs) + (r.phase === "draft" ? T(" · черновик") : r.phase === "refine" ? T(" · доработка ↑") : r.phase === "upscale" ? T(" · апскейл ↑") : "") + T(" · шаг {0}/{1}", r.step, r.steps || "…") + (r.eta != null && r.done ? T(" · осталось {0}", C.fmtDur(r.eta)) : "");
       $.runPill.querySelector("span").textContent = txt;
-      $.runPill.title = r.queued ? "Запуск ждёт в очереди ComfyUI" : r.seg < 0 ? "Подготовка запуска" :
-        `Отрезок ${r.seg + 1} из ${r.segs}` + (r.segCached ? " — берётся из кэша" : ` · шаг ${r.step} из ${r.steps || "?"}`) +
-        `\nВсего шагов: ${r.done || 0} из ${r.total || "?"} (${pct}%)` + (r.elapsed != null ? `\nПрошло: ${C.fmtDur(r.elapsed)}` : "") + (eta ? `\nОсталось ≈ ${C.fmtDur(r.eta)}` : "") +
-        (u ? `\nАпскейл${u.chunks > 1 ? ` (кусок ${u.chunk} из ${u.chunks})` : ""}: сетка ${u.cols}×${u.rows}, ${u.ms} мс/тайл, до конца апскейла ≈ ${C.fmtDur(u.eta)}` : "");
+      $.runPill.title = r.queued ? T("Запуск ждёт в очереди ComfyUI") : r.seg < 0 ? T("Подготовка запуска") :
+        T("Отрезок {0} из {1}", r.seg + 1, r.segs) + (r.segCached ? T(" — берётся из кэша") : T(" · шаг {0} из {1}", r.step, r.steps || "?")) +
+        T("\nВсего шагов: {0} из {1} ({2}%)", r.done || 0, r.total || "?", pct) + (r.elapsed != null ? T("\nПрошло: {0}", C.fmtDur(r.elapsed)) : "") + (eta ? T("\nОсталось ≈ {0}", C.fmtDur(r.eta)) : "") +
+        (u ? T("\nАпскейл{0}: сетка {1}×{2}, {3} мс/тайл, до конца апскейла ≈ {4}", u.chunks > 1 ? T(" (кусок {0} из {1})", u.chunk, u.chunks) : "", u.cols, u.rows, u.ms, C.fmtDur(u.eta)) : "");
     }
     ($.clips || []).forEach((c, i) => {
       if (!c) return;
@@ -1817,6 +1817,7 @@ export class H3Editor {
   // ------------------------------------------------------------------ misc
   toast(msg, err = false, action = null) {
     if (!this.root) return;
+    if (typeof msg === "string") msg = tServer(msg);   // server errors inside toasts arrive in Russian
     this.$.toastEl?.remove();
     const t = this.$.toastEl = h("div", { class: "h3z-toast" + (err ? " err" : "") + (action ? " act" : "") }, msg);
     if (action) t.append(h("button", { class: "h3z-btn sm", onclick: () => { t.remove(); action.fn(); } }, action.label));

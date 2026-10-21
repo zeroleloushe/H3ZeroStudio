@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // Gaps on the timeline: with «🧲 Магнит» off (default) a plain drag moves a clip (and everything after it) apart from the previous one. A gap is
 // stored on the clip after it (segment.gap, frames); it is black + silence in the result, makes that clip a new
 // shot, survives delete / reload / save, can be selected (Del removes it) and filled by generation: a ✂ span from
@@ -25,14 +26,14 @@ export function installGaps(Editor, { C, h }) {
     /** (legacy, unused) drag on clip i: its gap (the space before it) follows the mouse; everything after moves along. */
     gapDrag(e, i) {
       e.preventDefault();
-      if (this.run?.active) { this.toast("Идёт генерация — промежутки меняются после неё", true); return; }
+      if (this.run?.active) { this.toast(T("Идёт генерация — промежутки меняются после неё"), true); return; }
       const sx = e.clientX, g0 = this.seg(i).gap || 0, was = this.seg(i).link === "extend" && i > 0 && !g0;
       const tip = h("div", { class: "h3z-tip" }); document.body.append(tip);
       let first = true, cur = g0;
       const move = (ev) => {
         const g = Math.max(0, Math.min(C.MAX_GAP, g0 + Math.round((ev.clientX - sx) / this.ppf)));
         tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
-        tip.textContent = g ? `промежуток ${g} кадр. · ${(g / C.FPS).toFixed(2)} с` : "без промежутка";
+        tip.textContent = g ? T("промежуток {0} кадр. · {1} с", g, (g / C.FPS).toFixed(2)) : T("без промежутка");
         if (g === cur) return;
         cur = g;
         this.mutate((p) => { p.segments[i].gap = g; }, { coalesce: first ? null : "gap" + i, render: "light" });
@@ -43,8 +44,8 @@ export function installGaps(Editor, { C, h }) {
         if (cur !== g0) {
           this.selGap = cur ? this.seg(i).id : null;
           this.renderAll();
-          this.toast(cur ? `Промежуток ${(cur / C.FPS).toFixed(2)} с перед отрезком ${i + 1}` + (was ? " — он больше не продолжает предыдущий (новая сцена)" : "") + " · Ctrl+Z — вернуть"
-            : `Промежуток перед отрезком ${i + 1} убран`);
+          this.toast(cur ? T("Промежуток {0} с перед отрезком {1}", (cur / C.FPS).toFixed(2), i + 1) + (was ? T(" — он больше не продолжает предыдущий (новая сцена)") : "") + T(" · Ctrl+Z — вернуть")
+            : T("Промежуток перед отрезком {0} убран", i + 1));
         }
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
@@ -52,17 +53,17 @@ export function installGaps(Editor, { C, h }) {
     /** «🧲 Магнит» (settings.magnet, default off): effective state for a pointer event — Alt / Ctrl / ⌘ invert it. */
     magnetOn(e) { return !!this.p.settings.magnet !== !!(e && (e.altKey || e.ctrlKey || e.metaKey)); },
     magnetButton() {
-      const b = this.$.magBtn = h("button", { class: "h3z-btn sm h3z-magbtn", html: "<b>🧲</b><span>Магнит</span>" });
+      const b = this.$.magBtn = h("button", { class: "h3z-btn sm h3z-magbtn", html: T("<b>🧲</b><span>Магнит</span>") });
       const paint = () => {
         const on = !!this.p.settings.magnet;
         b.classList.toggle("on", on);
-        b.title = on ? "Магнит включён: клипы прилипают друг к другу, перетаскивание клипа меняет порядок.\nAlt (или Ctrl) при перетаскивании — свободно, с промежутком. Клик — выключить"
-          : "Магнит выключен: перетаскивание клипа сдвигает его (и всё после него) и оставляет промежуток;\nближе 10 px к предыдущему клипу — прилипает. Бросьте на предыдущий клип — порядок поменяется.\nAlt (или Ctrl) при перетаскивании — магнит. Клик — включить";
+        b.title = on ? T("Магнит включён: клипы прилипают друг к другу, перетаскивание клипа меняет порядок.\nAlt (или Ctrl) при перетаскивании — свободно, с промежутком. Клик — выключить")
+          : T("Магнит выключен: перетаскивание клипа сдвигает его (и всё после него) и оставляет промежуток;\nближе 10 px к предыдущему клипу — прилипает. Бросьте на предыдущий клип — порядок поменяется.\nAlt (или Ctrl) при перетаскивании — магнит. Клик — включить");
       };
       b.onclick = () => {
         const on = !this.p.settings.magnet;           // read now: the toolbar is not rebuilt on every change
         this.setOnce("magnet", on, { render: "none" }); paint(); this.renderTimeline();
-        this.toast(on ? "🧲 Магнит включён: клипы прилипают, перетаскивание меняет порядок" : "🧲 Магнит выключен: перетаскивание оставляет промежуток");
+        this.toast(on ? T("🧲 Магнит включён: клипы прилипают, перетаскивание меняет порядок") : T("🧲 Магнит выключен: перетаскивание оставляет промежуток"));
       };
       paint(); b._paint = paint;
       return b;
@@ -79,7 +80,7 @@ export function installGaps(Editor, { C, h }) {
         const dx = ev.clientX - sx;
         if (!dragging && Math.abs(dx) < 5) return;
         if (!dragging) {
-          if (this.run?.active) { this.toast("Идёт генерация — клипы двигаются после неё", true); window.removeEventListener("pointermove", move); return; }
+          if (this.run?.active) { this.toast(T("Идёт генерация — клипы двигаются после неё"), true); window.removeEventListener("pointermove", move); return; }
           dragging = true; tip = h("div", { class: "h3z-tip" }); document.body.append(tip); clip?.classList.add("dragging");
         }
         let want = g0 + Math.round(dx / this.ppf);
@@ -97,11 +98,11 @@ export function installGaps(Editor, { C, h }) {
           const order = its.map((_, k) => k).filter((k) => k !== i);
           ins.style.left = (its[order[target]].start + (order[target] ? its[order[target]].overlap : 0) - (its[order[target]].gap || 0)) * this.ppf + "px";
           const ce = this.$.clips[i]; if (ce) { ce.classList.add("dragging"); ce.style.transform = `translateX(${dx}px) translateY(-4px)`; }
-          tip.textContent = `↔ поставить на место ${target + 1}`;
+          tip.textContent = T("↔ поставить на место {0}", target + 1);
         } else {
           ins?.remove(); ins = null;
           if (this.$.clips[i]) this.$.clips[i].style.transform = "";
-          tip.textContent = g ? `промежуток ${g} кадр. · ${(g / C.FPS).toFixed(2)} с` + (this.p.settings.magnet ? "" : " · Alt — магнит") : "вплотную к предыдущему";
+          tip.textContent = g ? T("промежуток {0} кадр. · {1} с", g, (g / C.FPS).toFixed(2)) + (this.p.settings.magnet ? "" : T(" · Alt — магнит")) : T("вплотную к предыдущему");
           if (g !== cur) {
             cur = g;
             this.mutate((p) => { p.segments[i].gap = g; }, { coalesce: first ? null : "gap" + i, render: "light" });
@@ -117,12 +118,12 @@ export function installGaps(Editor, { C, h }) {
         if (!dragging) return this.clipClick(ev, i);
         if (target !== i) {
           this.mutate((p) => { const [s] = p.segments.splice(i, 1); s.gap = g0; p.segments.splice(target, 0, s); if (cur !== g0) { /* gap edits of this drag are undone by the reorder */ } }, { render: "none" });
-          this.sel = target; this.renderAll(); this.toast(`Отрезок перемещён на позицию ${target + 1} · Ctrl+Z — вернуть`);
+          this.sel = target; this.renderAll(); this.toast(T("Отрезок перемещён на позицию {0} · Ctrl+Z — вернуть", target + 1));
           return;
         }
         this.renderAll();
-        if (cur !== g0) this.toast(cur ? `Промежуток ${(cur / C.FPS).toFixed(2)} с перед отрезком ${i + 1}` + (wasExt ? " — он больше не продолжает предыдущий (новая сцена)" : "") + " · Ctrl+Z — вернуть"
-          : `Отрезок ${i + 1} вплотную к предыдущему` + (this.seg(i).link === "extend" && i > 0 ? " — снова продолжение" : ""));
+        if (cur !== g0) this.toast(cur ? T("Промежуток {0} с перед отрезком {1}", (cur / C.FPS).toFixed(2), i + 1) + (wasExt ? T(" — он больше не продолжает предыдущий (новая сцена)") : "") + T(" · Ctrl+Z — вернуть")
+          : T("Отрезок {0} вплотную к предыдущему", i + 1) + (this.seg(i).link === "extend" && i > 0 ? T(" — снова продолжение") : ""));
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
     },
@@ -137,14 +138,14 @@ export function installGaps(Editor, { C, h }) {
         if (over.some((x) => x.take)) continue;      // filled: the span draws its frames there (menu: «Убрать заполнение»)
         const id = this.p.segments[it.index].id, w = it.gap * ppf;
         const el = h("div", { class: "h3z-tgap" + (this.selGap === id ? " sel" : ""), style: { left: (it.start - it.gap) * ppf + "px", width: Math.max(3, w) + "px" },
-          title: `Промежуток ${it.gap} кадр. (${(it.gap / C.FPS).toFixed(2)} с): чёрный кадр и тишина.\n«✂ Заполнить» — мост/пролог поверх него · клик — выбрать (Del — убрать) · правый клик — меню.\nПеретаскивание клипа (магнит выключен) — изменить` },
-          w > 150 ? h("span", { class: "dur" }, `⟷ ${(it.gap / C.FPS).toFixed(1)} с`) : null);
+          title: T("Промежуток {0} кадр. ({1} с): чёрный кадр и тишина.\n«✂ Заполнить» — мост/пролог поверх него · клик — выбрать (Del — убрать) · правый клик — меню.\nПеретаскивание клипа (магнит выключен) — изменить", it.gap, (it.gap / C.FPS).toFixed(2)) },
+          w > 150 ? h("span", { class: "dur" }, T("⟷ {0} с", (it.gap / C.FPS).toFixed(1))) : null);
         // always-visible actions: «✂ Заполнить» (bridge / prologue span, its card opens) and ✕ remove
-        const fill = h("button", { class: "gb fill" + (w < 104 ? " icon" : ""), title: it.index > 0 ? `Заполнить промежуток генерацией: мост ${it.index} → ${it.index + 1} (конец сцены до и начало следующей — контекст)` : "Заполнить промежуток генерацией: пролог перед отрезком 1 (контекст — начало отрезка)",
-          html: w < 104 ? "✂" : "✂ <span>Заполнить</span>" });
+        const fill = h("button", { class: "gb fill" + (w < 104 ? " icon" : ""), title: it.index > 0 ? T("Заполнить промежуток генерацией: мост {0} → {1} (конец сцены до и начало следующей — контекст)", it.index, it.index + 1) : T("Заполнить промежуток генерацией: пролог перед отрезком 1 (контекст — начало отрезка)"),
+          html: w < 104 ? "✂" : T("✂ <span>Заполнить</span>") });
         fill.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
         fill.addEventListener("click", (e) => { e.stopPropagation(); this.selGap = null; if (over.length) { this.selRegion = over[0].rg.id; this.renderTimeline(); } else this.fillGapSpan(it.index); });
-        const del = w >= 46 ? h("button", { class: "gb del", title: "Убрать промежуток (Del)", html: "✕" }) : null;
+        const del = w >= 46 ? h("button", { class: "gb del", title: T("Убрать промежуток (Del)"), html: "✕" }) : null;
         del?.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
         del?.addEventListener("click", (e) => { e.stopPropagation(); this.removeGap(it.index); });
         el.append(h("div", { class: "acts" }, fill, del));
@@ -155,21 +156,21 @@ export function installGaps(Editor, { C, h }) {
     },
     gapMenu(e, i) {
       const g = this.seg(i)?.gap || 0;
-      this.openMenu(e, `Промежуток ${g} кадр. · ${(g / C.FPS).toFixed(2)} с`, [
-        { label: i > 0 ? `✂ Заполнить генерацией (мост ${i} → ${i + 1})` : "✂ Заполнить генерацией (пролог)", fn: () => this.fillGapSpan(i),
-          title: "Участок поверх промежутка: конец предыдущей сцены и начало следующей — контекст, середина генерируется" },
-        { label: "✕ Убрать промежуток", hint: "Del", fn: () => this.removeGap(i), danger: true },
+      this.openMenu(e, T("Промежуток {0} кадр. · {1} с", g, (g / C.FPS).toFixed(2)), [
+        { label: i > 0 ? T("✂ Заполнить генерацией (мост {0} → {1})", i, i + 1) : T("✂ Заполнить генерацией (пролог)"), fn: () => this.fillGapSpan(i),
+          title: T("Участок поверх промежутка: конец предыдущей сцены и начало следующей — контекст, середина генерируется") },
+        { label: T("✕ Убрать промежуток"), hint: "Del", fn: () => this.removeGap(i), danger: true },
       ]);
     },
     removeGap(i) {
       if (!this.seg(i)?.gap) return;
       this.mutate((p) => { p.segments[i].gap = 0; }, { render: "none" });
-      this.selGap = null; this.renderAll(); this.toast("Промежуток убран · Ctrl+Z — вернуть");
+      this.selGap = null; this.renderAll(); this.toast(T("Промежуток убран · Ctrl+Z — вернуть"));
     },
     /** A ✂ span over the gap with clean context on both sides: the end of the shot before and the start of the next. */
     fillGapSpan(i) {
       const it = this.items()[i];
-      if (!it?.gap) { this.toast("Промежутка здесь уже нет — обновите выделение", true); this.renderTimeline(); return null; }
+      if (!it?.gap) { this.toast(T("Промежутка здесь уже нет — обновите выделение"), true); this.renderTimeline(); return null; }
       const s0 = it.start - it.gap;
       const id = this.addRegion(Math.max(0, s0 - (i > 0 ? 8 : 0)), it.start + 8);
       if (id) { this.selRegion = id; this.renderTimeline(); }

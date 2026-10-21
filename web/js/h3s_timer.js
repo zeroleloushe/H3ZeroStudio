@@ -1,7 +1,8 @@
+import { T } from "./h3s_i18n.js";
 // H3ZeroStudio: generation timer in the header + history of the last runs.
 // Based on the server's run record (/h3zero/runs: start / end / status), so a reload or a background tab keeps the
 // right time. Ticks every second while running; afterwards it keeps the final time, coloured by the result.
-const ST = { running: "идёт", done: "готово", error: "ошибка", interrupted: "прервано" };
+const ST = { running: T("идёт"), done: T("готово"), error: T("ошибка"), interrupted: T("прервано") };
 const ICONS = { running: "●", done: "✓", error: "✕", interrupted: "■" };
 
 export const TIMER_CSS = `
@@ -35,7 +36,7 @@ export function installTimer(Editor, { h }) {
     timerEl() {
       if (!document.getElementById("h3z-timer-style")) document.head.append(h("style", { id: "h3z-timer-style" }, TIMER_CSS));
       if (!this.$.timer) {
-        this.$.timer = h("button", { class: "h3z-timer idle", title: "Время генерации · клик — последние запуски" }, h("i", null, "◷"), h("span", null, "--:--"));
+        this.$.timer = h("button", { class: "h3z-timer idle", title: T("Время генерации · клик — последние запуски") }, h("i", null, "◷"), h("span", null, "--:--"));
         this.$.timer.onclick = (e) => { e.stopPropagation(); this.timerPopover(); };
       }
       this.timerPaint();
@@ -65,7 +66,7 @@ export function installTimer(Editor, { h }) {
       el.className = "h3z-timer " + r.status;
       el.firstChild.textContent = ICONS[r.status] || "◷";
       el.lastChild.textContent = fmtClock(sec);
-      el.title = `${r.what || "запуск"} · ${r.stage || ""} · ${ST[r.status] || r.status}` + (r.error ? `\n${r.error}` : "") + "\nКлик — последние запуски";
+      el.title = `${r.what || T("запуск")} · ${r.stage || ""} · ${ST[r.status] || r.status}` + (r.error ? `\n${r.error}` : "") + T("\nКлик — последние запуски");
     },
 
     timerPopover(refresh = false) {
@@ -74,13 +75,13 @@ export function installTimer(Editor, { h }) {
       const hist = this._tm?.hist || [];
       const rows = hist.length ? hist.map((r) => {
         const sec = r.status === "running" ? (Date.now() + (this._tm.off || 0)) / 1000 - r.start : r.dur ?? 0;
-        const res = r.status === "done" && (r.generated != null) ? ` · сгенерировано ${r.generated}, из кэша ${r.cached}` : r.error ? ` · ${r.error}` : "";
+        const res = r.status === "done" && (r.generated != null) ? T(" · сгенерировано {0}, из кэша {1}", r.generated, r.cached) : r.error ? ` · ${r.error}` : "";
         return h("div", { class: "row" }, h("span", { class: r.status }, ICONS[r.status] || "·"),
-          h("span", null, `${r.what || "запуск"} · ${r.stage || ""}` + (r.segments ? ` · ${r.segments} отр.` : "") + (r.wh ? ` · ${r.wh[0]}×${r.wh[1]}` : "")),
+          h("span", null, `${r.what || T("запуск")} · ${r.stage || ""}` + (r.segments ? T(" · {0} отр.", r.segments) : "") + (r.wh ? ` · ${r.wh[0]}×${r.wh[1]}` : "")),
           h("b", { class: r.status }, fmtClock(sec)),
-          h("small", null, `${msk(r.start)} МСК · ${ST[r.status] || r.status}${res}` + (r.project ? ` · «${r.project}»` : "")));
-      }) : [h("div", { class: "h3z-note" }, "Запусков пока не было.")];
-      const pop = h("div", { class: "h3z-tpop h3z-glass" }, h("b", null, "Последние запуски"), ...rows);
+          h("small", null, T("{0} МСК · {1}{2}", msk(r.start), ST[r.status] || r.status, res) + (r.project ? ` · «${r.project}»` : "")));
+      }) : [h("div", { class: "h3z-note" }, T("Запусков пока не было."))];
+      const pop = h("div", { class: "h3z-tpop h3z-glass" }, h("b", null, T("Последние запуски")), ...rows);
       const b = this.$.timer.getBoundingClientRect(), rb = this.root.getBoundingClientRect();
       pop.style.top = (b.bottom - rb.top + 8) + "px";
       pop.style.left = Math.max(12, Math.min(b.left - rb.left, rb.width - 572)) + "px";

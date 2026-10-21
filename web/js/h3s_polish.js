@@ -1,5 +1,6 @@
 // H3ZeroStudio: CapCut-style frame thumbnails on clips, hover scrubbing, clip context menu, live sampling preview.
 import { splitGlyph } from "./h3s_menus.js";
+import { T } from "./h3s_i18n.js";
 export function installPolish(Editor, { C, h, ICON }) {
   const CLIP_H = 110;
   Object.assign(Editor.prototype, {
@@ -34,7 +35,7 @@ export function installPolish(Editor, { C, h, ICON }) {
         im.style.width = W + "px"; im.style.height = H + "px";
         im.style.backgroundImage = `url("${this.host.url(res.strip)}")`;
         im.style.backgroundSize = `${n * W}px ${H}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
-        hv.lastChild.textContent = `${C.fmtTime((it.start + f) / C.FPS)} · отрезок ${i + 1}`;
+        hv.lastChild.textContent = T("{0} · отрезок {1}", C.fmtTime((it.start + f) / C.FPS), i + 1);
         hv.style.left = Math.max(8, Math.min(window.innerWidth - W - 16, e.clientX - W / 2)) + "px";
         hv.style.top = r.top - H - 34 + "px";
         this.showHover(hv, clip);
@@ -91,7 +92,7 @@ export function installPolish(Editor, { C, h, ICON }) {
       d.audio = null;   // live preview is silent
       this.livePlayer.setVolume(this.vol?.v ?? 1, !!this.vol?.muted || !this.userGesture);
       this.livePlayer.set(d);
-      $.live.querySelector(".h3z-badge-live span").textContent = `Генерация · отрезок ${d.seg + 1}${this.run?.phase === "draft" ? " · черновик" : this.run?.phase === "refine" ? " · доработка ↑" : this.run?.phase === "upscale" ? " · апскейл ↑ (смешанный кадр)" : ""} · шаг ${d.step}/${d.steps} · ` + (d.mode === "taeh3" ? "tiny VAE taeh3" : "превью латента");
+      $.live.querySelector(".h3z-badge-live span").textContent = T("Генерация · отрезок {0}{1} · шаг {2}/{3} · ", d.seg + 1, this.run?.phase === "draft" ? T(" · черновик") : this.run?.phase === "refine" ? T(" · доработка ↑") : this.run?.phase === "upscale" ? T(" · апскейл ↑ (смешанный кадр)") : "", d.step, d.steps) + (d.mode === "taeh3" ? "tiny VAE taeh3" : T("превью латента"));
       $.live.querySelector(".h3z-live-pg i").style.width = (d.step / d.steps * 100).toFixed(1) + "%";
     },
 

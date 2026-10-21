@@ -1,3 +1,4 @@
+import { T } from "./h3s_i18n.js";
 // Context menus (clips, audio clips, assets) and «Сохранить видео» (server-side export to a chosen folder).
 // labels are text, never HTML: "<Video>" in a label used to become a real <video> element (a big blurred block)
 // a leading glyph/emoji of a label («✎ Черновик», «🔒 Зафиксировать») goes into the icon slot, so all labels line up
@@ -10,7 +11,7 @@ export function installMenus(Editor, { C, h, ICON }) {
     /** Generic menu: entries = {icon, label, fn, dis, danger, hint, why, sub:[entries]} | "sep" | {el} | null. */
     /** Folder input + «📁 Обзор…' (native dialog on the ComfyUI computer). */
     folderPicker(input) {
-      const btn = h("button", { class: "h3z-btn sm", type: "button", title: "Выбрать папку в окне проводника (на компьютере, где запущен ComfyUI)", html: "<span>📁 Обзор…</span>" });
+      const btn = h("button", { class: "h3z-btn sm", type: "button", title: T("Выбрать папку в окне проводника (на компьютере, где запущен ComfyUI)"), html: T("<span>📁 Обзор…</span>") });
       btn.onclick = async () => {
         btn.disabled = true; btn.style.opacity = ".6";
         try { const p = await this.host.pickFolder(input.value); if (p) { input.value = p; input.dispatchEvent(new Event("change")); } }
@@ -79,53 +80,53 @@ export function installMenus(Editor, { C, h, ICON }) {
       if (this.sel !== i) { this.sel = i; this.renderInspector(); this.renderTimeline(); this.renderPreview(); }
       const s = this.seg(i), stale = this.isStale(i), busy = !!this.run.active, st = this.segGenState(i);
       const f = Math.round(this.frameAt(e.clientX)), it = this.items()[i];
-      const takes = (s.takes || []).map((t, k) => ({ label: `Дубль ${k + 1} · сид ${t.seed ?? "?"}` + (t.created ? ` · ${new Date(t.created * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""),
+      const takes = (s.takes || []).map((t, k) => ({ label: T("Дубль {0} · сид {1}", k + 1, t.seed ?? "?") + (t.created ? ` · ${new Date(t.created * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""),
         on: t.id === s.active_take, fn: () => this.selectTake(i, t.id), dis: busy || !!s.freeze }));
-      this.openMenu(e, s.name || `Отрезок ${i + 1}`, [
-        { icon: ICON.spark, label: stale ? "Сгенерировать" : "Сгенерировать (уже готов)", fn: () => this.genSegment(i), dis: !st.ok || !stale },
-        { icon: ICON.dice, label: "Ещё дубль (новый сид)", fn: () => this.newTake(i), dis: !st.ok },
-        stale && s.result && this.restoreTake?.(i) ? { label: "↺ Восстановить входы дубля", title: "Вернуть всё, что изменилось с этого дубля (один шаг отмены) — без перегенерации", fn: () => this.restoreAll(i), dis: busy } : null,
-        stale && s.result && this.restoreTake?.(i) ? { label: "↺ Восстановить… (выбрать поля)", fn: () => this.openRestorePanel(i) } : null,
-        s.gap ? { label: "✕ Убрать промежуток перед отрезком", fn: () => this.removeGap(i) } : null,
+      this.openMenu(e, s.name || T("Отрезок {0}", i + 1), [
+        { icon: ICON.spark, label: stale ? T("Сгенерировать") : T("Сгенерировать (уже готов)"), fn: () => this.genSegment(i), dis: !st.ok || !stale },
+        { icon: ICON.dice, label: T("Ещё дубль (новый сид)"), fn: () => this.newTake(i), dis: !st.ok },
+        stale && s.result && this.restoreTake?.(i) ? { label: T("↺ Восстановить входы дубля"), title: T("Вернуть всё, что изменилось с этого дубля (один шаг отмены) — без перегенерации"), fn: () => this.restoreAll(i), dis: busy } : null,
+        stale && s.result && this.restoreTake?.(i) ? { label: T("↺ Восстановить… (выбрать поля)"), fn: () => this.openRestorePanel(i) } : null,
+        s.gap ? { label: T("✕ Убрать промежуток перед отрезком"), fn: () => this.removeGap(i) } : null,
         !st.ok && !busy && !s.freeze ? { why: st.why } : null,
-        takes.length > 1 ? { label: `Дубли (${this.takeIndex(s, s.active_take) + 1}/${takes.length})`, sub: takes } : null,
-        { icon: this.constructor.VIEWER_ICONS?.view || "", label: "Удобный просмотр", title: "Этот клип во весь экран: масштаб до ×4, покадрово, скорость, петля", fn: () => this.viewerForClip(i), dis: !this.viewerClipSpec(i) },
-        { label: "↻ Перегенерировать участок…", title: "Выделить часть ролика вокруг этого места и пересоздать только её (контекст до и после сохраняется). Основной способ — кнопка «✂ Участок» над таймлайном", fn: () => this.regionAt(f), dis: busy || !s.result?.video && !C.isFootage(s) },
-        s.freeze ? { label: "🔓 Разморозить", fn: () => this.unfreezeSeg(i) } : { label: "🔒 Зафиксировать", fn: () => this.freezeSeg(i), dis: busy || stale },
+        takes.length > 1 ? { label: T("Дубли ({0}/{1})", this.takeIndex(s, s.active_take) + 1, takes.length), sub: takes } : null,
+        { icon: this.constructor.VIEWER_ICONS?.view || "", label: T("Удобный просмотр"), title: T("Этот клип во весь экран: масштаб до ×4, покадрово, скорость, петля"), fn: () => this.viewerForClip(i), dis: !this.viewerClipSpec(i) },
+        { label: T("↻ Перегенерировать участок…"), title: T("Выделить часть ролика вокруг этого места и пересоздать только её (контекст до и после сохраняется). Основной способ — кнопка «✂ Участок» над таймлайном"), fn: () => this.regionAt(f), dis: busy || !s.result?.video && !C.isFootage(s) },
+        s.freeze ? { label: T("🔓 Разморозить"), fn: () => this.unfreezeSeg(i) } : { label: T("🔒 Зафиксировать"), fn: () => this.freezeSeg(i), dis: busy || stale },
         ...this.stageMenuEntries(i),
         ...this.finalMenuEntries(i),
         ...this.upMenuEntries(i),
         "sep",
-        { label: "💾 Сохранить фрагмент (этот отрезок)…", fn: () => this.saveDialog({ mode: "clip", i }), dis: !s.result?.video },
-        { label: "▶ Открыть в плеере", fn: () => { this.sel = i; this.pvMode = "segment"; this.playhead = it.start + (i ? it.overlap : 0); this.renderAll(); this.scrollToPlayhead?.(); } },
+        { label: T("💾 Сохранить фрагмент (этот отрезок)…"), fn: () => this.saveDialog({ mode: "clip", i }), dis: !s.result?.video },
+        { label: T("▶ Открыть в плеере"), fn: () => { this.sel = i; this.pvMode = "segment"; this.playhead = it.start + (i ? it.overlap : 0); this.renderAll(); this.scrollToPlayhead?.(); } },
         "sep",
-        { icon: ICON.copy, label: "Копировать промпт и референсы", fn: () => this.copySegSpec(i) },
-        { label: "📋 Вставить промпт и референсы", fn: () => this.pasteSegSpec(i), dis: !this._segClip, title: this._segClip ? `Из «${this._segClip.from}»` : "Сначала скопируйте у другого отрезка" },
+        { icon: ICON.copy, label: T("Копировать промпт и референсы"), fn: () => this.copySegSpec(i) },
+        { label: T("📋 Вставить промпт и референсы"), fn: () => this.pasteSegSpec(i), dis: !this._segClip, title: this._segClip ? T("Из «{0}»", this._segClip.from) : T("Сначала скопируйте у другого отрезка") },
         "sep",
-        { icon: ICON.plus, label: "Продлить отсюда", title: "Новый отрезок сразу после этого, продолжает его", fn: () => this.insertAfter(i, "extend") },
-        { label: "✂ Новая сцена после", title: "Новый отрезок после этого — монтажная склейка, без продолжения", fn: () => this.insertAfter(i, "cut") },
-        i > 0 && s.link === "extend" && !C.isFootage(s) ? { label: `⟷ Перекрытие (${it.overlap || 0} кадр.)`, dis: !!s.freeze, sub: [{ label: "По умолчанию (из настроек)", on: (s.overlap_blocks ?? -1) < 0, fn: () => this.setSegOverlap(i, -1) }]
+        { icon: ICON.plus, label: T("Продлить отсюда"), title: T("Новый отрезок сразу после этого, продолжает его"), fn: () => this.insertAfter(i, "extend") },
+        { label: T("✂ Новая сцена после"), title: T("Новый отрезок после этого — монтажная склейка, без продолжения"), fn: () => this.insertAfter(i, "cut") },
+        i > 0 && s.link === "extend" && !C.isFootage(s) ? { label: T("⟷ Перекрытие ({0} кадр.)", it.overlap || 0), dis: !!s.freeze, sub: [{ label: T("По умолчанию (из настроек)"), on: (s.overlap_blocks ?? -1) < 0, fn: () => this.setSegOverlap(i, -1) }]
           .concat(Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => ({ label: this.ovLabel(o), on: s.overlap_blocks === o, fn: () => this.setSegOverlap(i, o) }))) } : null,
-        i > 0 ? { label: s.link === "cut" ? "⟶ Сделать продолжением предыдущего" : "✂ Сделать новой сценой", fn: () => this.mutate((p) => { p.segments[i].link = s.link === "cut" ? "extend" : "cut"; }), dis: !!s.freeze } : null,
-        { icon: ICON.cut, label: "Разрезать здесь", fn: () => { this.playhead = f; this.split(); }, hint: "S", dis: !!s.freeze },
-        { icon: ICON.copy, label: "Дублировать", fn: () => this.duplicate(), hint: "D" },
-        { label: "◆ Маркер здесь", fn: () => this.addMarker(f), hint: "M" },
-        (s.takes || []).length > 1 ? { label: "🧹 Удалить другие дубли", fn: () => this.clearTakes(i), dis: busy } : null,
+        i > 0 ? { label: s.link === "cut" ? T("⟶ Сделать продолжением предыдущего") : T("✂ Сделать новой сценой"), fn: () => this.mutate((p) => { p.segments[i].link = s.link === "cut" ? "extend" : "cut"; }), dis: !!s.freeze } : null,
+        { icon: ICON.cut, label: T("Разрезать здесь"), fn: () => { this.playhead = f; this.split(); }, hint: "S", dis: !!s.freeze },
+        { icon: ICON.copy, label: T("Дублировать"), fn: () => this.duplicate(), hint: "D" },
+        { label: T("◆ Маркер здесь"), fn: () => this.addMarker(f), hint: "M" },
+        (s.takes || []).length > 1 ? { label: T("🧹 Удалить другие дубли"), fn: () => this.clearTakes(i), dis: busy } : null,
         "sep",
-        { icon: ICON.trash, label: "Удалить", fn: () => this.deleteSeg(i), danger: true, hint: "Del" },
+        { icon: ICON.trash, label: T("Удалить"), fn: () => this.deleteSeg(i), danger: true, hint: "Del" },
       ]);
     },
 
     copySegSpec(i) {
       const s = this.seg(i);
-      this._segClip = { prompt: s.prompt, refs: [...s.refs], overrides: JSON.parse(JSON.stringify(s.overrides || {})), from: s.name || `Отрезок ${i + 1}` };
-      this.toast("Промпт и референсы скопированы · правый клик по другому отрезку → «Вставить»");
+      this._segClip = { prompt: s.prompt, refs: [...s.refs], overrides: JSON.parse(JSON.stringify(s.overrides || {})), from: s.name || T("Отрезок {0}", i + 1) };
+      this.toast(T("Промпт и референсы скопированы · правый клик по другому отрезку → «Вставить»"));
     },
     pasteSegSpec(i) {
       const c = this._segClip; if (!c) return;
-      if (this.seg(i)?.freeze) return this.toast("Отрезок зафиксирован — разморозьте, чтобы менять", true);
+      if (this.seg(i)?.freeze) return this.toast(T("Отрезок зафиксирован — разморозьте, чтобы менять"), true);
       this.mutate((p) => { const s = p.segments[i]; s.prompt = c.prompt; s.refs = [...c.refs]; s.overrides = JSON.parse(JSON.stringify(c.overrides)); });
-      this.toast(`Вставлено из «${c.from}» в отрезок ${i + 1}`);
+      this.toast(T("Вставлено из «{0}» в отрезок {1}", c.from, i + 1));
     },
     insertAfter(i, link) {
       const base = this.seg(i), s = this.newSegment(base);
@@ -134,13 +135,13 @@ export function installMenus(Editor, { C, h, ICON }) {
       this.sel = i + 1; this.pvMode = "segment";
       const it = this.items()[this.sel]; this.playhead = it.start + it.overlap;
       this.renderAll(); this.scrollToPlayhead?.();
-      if (!this.pastMarkerHint()) this.toast(link === "cut" ? "Новая сцена вставлена" : "Отрезок вставлен — продолжит предыдущий");
+      if (!this.pastMarkerHint()) this.toast(link === "cut" ? T("Новая сцена вставлена") : T("Отрезок вставлен — продолжит предыдущий"));
     },
     clearTakes(i) {
       const s = this.seg(i); if (!s) return;
-      if (!confirm(`Удалить ${s.takes.length - 1} дубл(я/ей) отрезка ${i + 1}, кроме текущего?`)) return;
+      if (!confirm(T("Удалить {0} дубл(я/ей) отрезка {1}, кроме текущего?", s.takes.length - 1, i + 1))) return;
       this.mutate((p) => { const x = p.segments[i]; x.takes = x.takes.filter((t) => t.id === x.active_take).slice(-1); });
-      this.toast("Остался только текущий дубль");
+      this.toast(T("Остался только текущий дубль"));
     },
 
     // ---------------------------------------------------------------- audio clip menu
@@ -151,18 +152,18 @@ export function installMenus(Editor, { C, h, ICON }) {
       const relayout = () => { this.renderTimeline(); this.audioPanelRefresh(); };
       const t = this.frameAt(e.clientX) / C.FPS;
       this.openMenu(e, (music ? "♫ " : "🔒 ") + (a?.name || c.asset), [
-        this.menuSlider("Громкость", c.volume ?? 1, 0, 2, 0.05, (v) => Math.round(v * 100) + "%", (v) => { set((x) => { x.volume = v; }, "avol" + id); relayout(); }),
-        this.menuSlider("Фейд in", c.fade_in || 0, 0, Math.min(10, sp.len), 0.1, (v) => v.toFixed(1) + " с", (v) => { set((x) => { x.fade_in = v; }, "afi" + id); relayout(); }),
-        this.menuSlider("Фейд out", c.fade_out || 0, 0, Math.min(10, sp.len), 0.1, (v) => v.toFixed(1) + " с", (v) => { set((x) => { x.fade_out = v; }, "afo" + id); relayout(); }),
-        !music ? { why: "Громкость и фейды на дорожках 1–2 меняют фиксируемый звук (отрезки под клипом перегенерируются)" } : null,
+        this.menuSlider(T("Громкость"), c.volume ?? 1, 0, 2, 0.05, (v) => Math.round(v * 100) + "%", (v) => { set((x) => { x.volume = v; }, "avol" + id); relayout(); }),
+        this.menuSlider(T("Фейд in"), c.fade_in || 0, 0, Math.min(10, sp.len), 0.1, (v) => v.toFixed(1) + T(" с"), (v) => { set((x) => { x.fade_in = v; }, "afi" + id); relayout(); }),
+        this.menuSlider(T("Фейд out"), c.fade_out || 0, 0, Math.min(10, sp.len), 0.1, (v) => v.toFixed(1) + T(" с"), (v) => { set((x) => { x.fade_out = v; }, "afo" + id); relayout(); }),
+        !music ? { why: T("Громкость и фейды на дорожках 1–2 меняют фиксируемый звук (отрезки под клипом перегенерируются)") } : null,
         "sep",
-        { label: "Дорожка", sub: [[0, "🔒 Дорожка 1 (фиксация)"], [1, "🔒 Дорожка 2 (фиксация)"], [2, "♫ Музыка (поверх видео)"]].map(([l, lb]) => ({ label: lb, on: c.lane === l, fn: () => { this.mutate((p) => { p.audio.clips.find((k) => k.id === id).lane = l; }); } })) },
-        { icon: ICON.cut, label: "Разрезать здесь", hint: "S", fn: () => { this.playhead = Math.round(t * C.FPS); this.selAudio = id; this.splitAudio(); } },
-        { icon: ICON.copy, label: "Дублировать", fn: () => { const nid = C.newId("ac"); this.mutate((p) => { p.audio.clips.push({ ...JSON.parse(JSON.stringify(c)), id: nid, start: Math.round((sp.end) * 1000) / 1000 }); p.audio.clips.sort((x, y) => x.start - y.start || x.lane - y.lane); }); this.selAudio = nid; } },
-        { label: "✎ Посмотреть / изменить файл…", fn: () => this.openAssetEditor(c.asset), dis: c.asset === C.AUDIO_INPUT_ID },
-        { label: "⚙ Параметры клипа", fn: () => this.selectAudio(id) },
+        { label: T("Дорожка"), sub: [[0, T("🔒 Дорожка 1 (фиксация)")], [1, T("🔒 Дорожка 2 (фиксация)")], [2, T("♫ Музыка (поверх видео)")]].map(([l, lb]) => ({ label: lb, on: c.lane === l, fn: () => { this.mutate((p) => { p.audio.clips.find((k) => k.id === id).lane = l; }); } })) },
+        { icon: ICON.cut, label: T("Разрезать здесь"), hint: "S", fn: () => { this.playhead = Math.round(t * C.FPS); this.selAudio = id; this.splitAudio(); } },
+        { icon: ICON.copy, label: T("Дублировать"), fn: () => { const nid = C.newId("ac"); this.mutate((p) => { p.audio.clips.push({ ...JSON.parse(JSON.stringify(c)), id: nid, start: Math.round((sp.end) * 1000) / 1000 }); p.audio.clips.sort((x, y) => x.start - y.start || x.lane - y.lane); }); this.selAudio = nid; } },
+        { label: T("✎ Посмотреть / изменить файл…"), fn: () => this.openAssetEditor(c.asset), dis: c.asset === C.AUDIO_INPUT_ID },
+        { label: T("⚙ Параметры клипа"), fn: () => this.selectAudio(id) },
         "sep",
-        { icon: ICON.trash, label: "Удалить", hint: "Del", danger: true, fn: () => this.deleteAudio(id) },
+        { icon: ICON.trash, label: T("Удалить"), hint: "Del", danger: true, fn: () => this.deleteAudio(id) },
       ]);
     },
 
@@ -172,17 +173,17 @@ export function installMenus(Editor, { C, h, ICON }) {
       const seg = this.seg(), inSeg = !!seg?.refs.includes(a.id);
       const pics = ["character", "location", "other"];
       this.openMenu(e, a.name, [
-        { label: "✎ Посмотреть / изменить…", title: kind === "image" ? "Обрезка, поворот, зеркало, уменьшение" : kind === "audio" ? "Обрезка, громкость, нормализация, фейды" : "Обрезка по времени, уменьшение, кадрирование, кадр/звук в ассеты", fn: () => this.openAssetEditor(a.id), dis: !!a.virtual, hint: "2×клик" },
-        seg ? { icon: inSeg ? ICON.minus || "" : ICON.plus, label: inSeg ? `Убрать из референсов отрезка ${this.sel + 1}` : `В референсы отрезка ${this.sel + 1}` + (kind === "video" ? ` (<Video ${C.videoRefs(this.p, seg).length + 1}>)` : kind === "audio" ? ` (<Audio ${C.audioRefs(this.p, seg).length + 1}>)` : " (<Picture>)"),
-          title: (seg.name ? `«${seg.name}»: ` : "") + (inSeg ? "убрать этот ассет из референсов выбранного отрезка" : "добавить ассет в референсы выбранного отрезка"), fn: () => this.toggleRef(this.sel, a.id) } : null,
-        kind === "video" ? { icon: ICON.film || "", label: "На таймлайн (футаж)", fn: () => this.addFootage(a.id) } : null,
-        kind === "audio" ? { label: "🔒 На аудиодорожку (фиксация)", fn: () => this.addAudioClip(a.id, this.playhead / C.FPS, 0) } : null,
-        kind === "audio" ? { label: "♫ На дорожку музыки", fn: () => this.addAudioClip(a.id, this.playhead / C.FPS, C.MUSIC_LANE) } : null,
-        kind === "image" ? { label: "Категория", sub: pics.map((k) => ({ label: { character: "Персонаж", location: "Локация", other: "Другое" }[k], on: a.category === k, fn: () => this.mutate((p) => { p.assets.find((x) => x.id === a.id).category = k; }) })) } : null,
+        { label: T("✎ Посмотреть / изменить…"), title: kind === "image" ? T("Обрезка, поворот, зеркало, уменьшение") : kind === "audio" ? T("Обрезка, громкость, нормализация, фейды") : T("Обрезка по времени, уменьшение, кадрирование, кадр/звук в ассеты"), fn: () => this.openAssetEditor(a.id), dis: !!a.virtual, hint: T("2×клик") },
+        seg ? { icon: inSeg ? ICON.minus || "" : ICON.plus, label: inSeg ? T("Убрать из референсов отрезка {0}", this.sel + 1) : T("В референсы отрезка {0}", this.sel + 1) + (kind === "video" ? ` (<Video ${C.videoRefs(this.p, seg).length + 1}>)` : kind === "audio" ? ` (<Audio ${C.audioRefs(this.p, seg).length + 1}>)` : " (<Picture>)"),
+          title: (seg.name ? `«${seg.name}»: ` : "") + (inSeg ? T("убрать этот ассет из референсов выбранного отрезка") : T("добавить ассет в референсы выбранного отрезка")), fn: () => this.toggleRef(this.sel, a.id) } : null,
+        kind === "video" ? { icon: ICON.film || "", label: T("На таймлайн (футаж)"), fn: () => this.addFootage(a.id) } : null,
+        kind === "audio" ? { label: T("🔒 На аудиодорожку (фиксация)"), fn: () => this.addAudioClip(a.id, this.playhead / C.FPS, 0) } : null,
+        kind === "audio" ? { label: T("♫ На дорожку музыки"), fn: () => this.addAudioClip(a.id, this.playhead / C.FPS, C.MUSIC_LANE) } : null,
+        kind === "image" ? { label: T("Категория"), sub: pics.map((k) => ({ label: { character: T("Персонаж"), location: T("Локация"), other: T("Другое") }[k], on: a.category === k, fn: () => this.mutate((p) => { p.assets.find((x) => x.id === a.id).category = k; }) })) } : null,
         "sep",
-        a.orig ? { label: "↺ Вернуть оригинал", fn: () => this.mutate((p) => { const x = p.assets.find((y) => y.id === a.id); x.file = x.orig.filename; x.subfolder = x.orig.subfolder; x.type = x.orig.type; x.orig = null; x.edit = null; }) } : null,
-        { label: "Переименовать…", fn: () => { const n = prompt("Имя ассета", a.name); if (n && n.trim()) this.mutate((p) => { p.assets.find((x) => x.id === a.id).name = n.trim(); }); }, dis: !!a.virtual },
-        { icon: ICON.trash, label: "Убрать из проекта", danger: true, dis: !!a.virtual, fn: () => {
+        a.orig ? { label: T("↺ Вернуть оригинал"), fn: () => this.mutate((p) => { const x = p.assets.find((y) => y.id === a.id); x.file = x.orig.filename; x.subfolder = x.orig.subfolder; x.type = x.orig.type; x.orig = null; x.edit = null; }) } : null,
+        { label: T("Переименовать…"), fn: () => { const n = prompt(T("Имя ассета"), a.name); if (n && n.trim()) this.mutate((p) => { p.assets.find((x) => x.id === a.id).name = n.trim(); }); }, dis: !!a.virtual },
+        { icon: ICON.trash, label: T("Убрать из проекта"), danger: true, dis: !!a.virtual, fn: () => {
           if (kind === "video") return this.removeVideoAsset(a.id);
           this.mutate((p) => { p.assets = p.assets.filter((x) => x.id !== a.id); p.audio.clips = p.audio.clips.filter((c) => c.asset !== a.id); for (const s of p.segments) s.refs = s.refs.filter((r) => r !== a.id); });
         } },
@@ -198,45 +199,45 @@ export function installMenus(Editor, { C, h, ICON }) {
       const its = this.items();
       let ci = opt.i ?? Math.max(0, this.sel);
       const ld = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } };
-      const folder = h("input", { class: "h3z-in", value: ld("h3zs.exportDir", ""), placeholder: "по умолчанию: ComfyUI/output/h3zerostudio/export", title: "Папка на компьютере, где запущен ComfyUI (например D:\\\\Видео\\\\H3). Относительный путь — внутри ComfyUI/output" });
+      const folder = h("input", { class: "h3z-in", value: ld("h3zs.exportDir", ""), placeholder: T("по умолчанию: ComfyUI/output/h3zerostudio/export"), title: T("Папка на компьютере, где запущен ComfyUI (например D:\\\\Видео\\\\H3). Относительный путь — внутри ComfyUI/output") });
       const d = new Date(), z = (x) => String(x).padStart(2, "0");   // local time (toISOString would be UTC)
       const stamp = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}`;
       const name = h("input", { class: "h3z-in", value: `${(this.p.name || "h3").replace(/[\\\\/:*?"<>|]/g, "_")}_${stamp}` });
       const vEnd = this.totalFrames();
       const fIn = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0, value: ((this._rangeIn ?? 0) / C.FPS).toFixed(2) });
       const fOut = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0, value: ((this._rangeOut ?? vEnd) / C.FPS).toFixed(2) });
-      const phBtn = (inp, title) => h("button", { class: "h3z-btn sm", title, onclick: () => { inp.value = (this.playhead / C.FPS).toFixed(2); upd(); } }, "⌖ плейхед");
+      const phBtn = (inp, title) => h("button", { class: "h3z-btn sm", title, onclick: () => { inp.value = (this.playhead / C.FPS).toFixed(2); upd(); } }, T("⌖ плейхед"));
       const music = C.musicClips(this.p).length > 0 || (this.p.audio.video_volume ?? 1) !== 1;
-      const mixT = this.toggle("Микс: музыка + звук видео " + Math.round((this.p.audio.video_volume ?? 1) * 100) + "%", this._exportMix !== false, (v) => { this._exportMix = v; mixT.classList.toggle("on", v); }, "Дорожка «Музыка» и громкость звука видео применяются к файлу");
+      const mixT = this.toggle(T("Микс: музыка + звук видео ") + Math.round((this.p.audio.video_volume ?? 1) * 100) + "%", this._exportMix !== false, (v) => { this._exportMix = v; mixT.classList.toggle("on", v); }, T("Дорожка «Музыка» и громкость звука видео применяются к файлу"));
       mixT.onclick = () => { this._exportMix = this._exportMix === false; mixT.classList.toggle("on", this._exportMix !== false); };
       const info = h("div", { class: "h3z-note" });
       const pills = h("div", { class: "h3z-pills" });
-      const segSel = h("select", { class: "h3z-sel sm" }, its.map((it, k) => h("option", { value: k, selected: k === ci }, `${k + 1}. ${this.p.segments[k].name || "Отрезок " + (k + 1)}`)));
+      const segSel = h("select", { class: "h3z-sel sm" }, its.map((it, k) => h("option", { value: k, selected: k === ci }, `${k + 1}. ${this.p.segments[k].name || T("Отрезок ") + (k + 1)}`)));
       segSel.onchange = () => { ci = Number(segSel.value); upd(); };
-      const rowR = h("div", { class: "h3z-row" }, h("span", null, "с"), fIn, phBtn(fIn, "Начало = плейхед"), h("span", null, "по"), fOut, phBtn(fOut, "Конец = плейхед"));
+      const rowR = h("div", { class: "h3z-row" }, h("span", null, T("с")), fIn, phBtn(fIn, T("Начало = плейхед")), h("span", null, T("по")), fOut, phBtn(fOut, T("Конец = плейхед")));
       const rowC = h("div", { class: "h3z-row" }, segSel);
-      const go = h("button", { class: "h3z-btn primary", html: (ICON.save || "💾") + "<span>Сохранить</span>" });
+      const go = h("button", { class: "h3z-btn primary", html: (ICON.save || "💾") + T("<span>Сохранить</span>") });
       const src = () => {
         if (mode === "clip") {
           const s = this.p.segments[ci], it = its[ci];
           if (fullOk && it) { const ov = ci ? it.overlap : 0; return { source: full.video, range: [it.start + ov, Math.min(it.end, vEnd)], tl: 0, why: "" }; }
           if (s?.result?.video && !this.isStale(ci)) return { source: s.result.video, range: null, tl: it?.start || 0, why: "" };
-          return { why: "Отрезок не сгенерирован (или изменён) — сначала «Сгенерировать»" };
+          return { why: T("Отрезок не сгенерирован (или изменён) — сначала «Сгенерировать»") };
         }
-        if (!fullOk) return { why: full?.video ? "Итоговое видео устарело или неполное — запустите «Сгенерировать» для всего ролика" : "Ролик ещё не сгенерирован" };
+        if (!fullOk) return { why: full?.video ? T("Итоговое видео устарело или неполное — запустите «Сгенерировать» для всего ролика") : T("Ролик ещё не сгенерирован") };
         if (mode === "all") return { source: full.video, range: null, tl: 0, why: "" };
         const a = Math.round(Number(fIn.value) * C.FPS), b = Math.round(Number(fOut.value) * C.FPS);
-        if (!(b > a)) return { why: "Конец фрагмента должен быть позже начала" };
+        if (!(b > a)) return { why: T("Конец фрагмента должен быть позже начала") };
         return { source: full.video, range: [Math.max(0, a), Math.min(b, full.frames || b)], tl: 0, why: "" };
       };
       const upd = () => {
         pills.innerHTML = "";
-        for (const [k, l] of [["all", "Весь ролик"], ["range", "Фрагмент (с – по)"], ["clip", "Отрезок"]]) pills.append(h("div", { class: "h3z-pill" + (mode === k ? " on" : ""), onclick: () => { mode = k; upd(); } }, l));
+        for (const [k, l] of [["all", T("Весь ролик")], ["range", T("Фрагмент (с – по)")], ["clip", T("Отрезок")]]) pills.append(h("div", { class: "h3z-pill" + (mode === k ? " on" : ""), onclick: () => { mode = k; upd(); } }, l));
         rowR.style.display = mode === "range" ? "" : "none"; rowC.style.display = mode === "clip" ? "" : "none";
         const x = src();
         go.disabled = !!x.why;
         const len = x.range ? (x.range[1] - x.range[0]) / C.FPS : mode === "all" ? (full?.frames || 0) / C.FPS : (its[ci]?.frames || 0) / C.FPS;
-        info.textContent = x.why || `≈ ${len.toFixed(2)} с · mp4 H.264 + AAC · файл не перезаписывается (добавится _2, _3…)`;
+        info.textContent = x.why || T("≈ {0} с · mp4 H.264 + AAC · файл не перезаписывается (добавится _2, _3…)", len.toFixed(2));
         info.classList.toggle("err", !!x.why);
       };
       go.onclick = async () => {
@@ -244,23 +245,23 @@ export function installMenus(Editor, { C, h, ICON }) {
         go.disabled = true; go.classList.add("busy");
         try { localStorage.setItem("h3zs.exportDir", folder.value.trim()); } catch (e) {}
         try {
-          const r = await this.host.exportVideo({ project: this.p.id, source: x.source, range: x.range, folder: folder.value.trim(), name: name.value.trim() + (mode === "clip" ? `_отрезок${ci + 1}` : mode === "range" ? `_${fIn.value}-${fOut.value}s` : ""),
+          const r = await this.host.exportVideo({ project: this.p.id, source: x.source, range: x.range, folder: folder.value.trim(), name: name.value.trim() + (mode === "clip" ? T("_отрезок{0}", ci + 1) : mode === "range" ? `_${fIn.value}-${fOut.value}s` : ""),
             project: music && this._exportMix !== false ? this.p : null, timeline_start: x.tl });
           this.lastExport = r;
-          this.toast(`Сохранено: ${r.path} (${r.seconds.toFixed(2)} с)`);
+          this.toast(T("Сохранено: {0} ({1} с)", r.path, r.seconds.toFixed(2)));
           info.textContent = `✓ ${r.path}`; info.classList.remove("err");
-          const cp = h("button", { class: "h3z-btn sm", onclick: () => { navigator.clipboard?.writeText(r.path); this.toast("Путь скопирован"); } }, "Скопировать путь");
+          const cp = h("button", { class: "h3z-btn sm", onclick: () => { navigator.clipboard?.writeText(r.path); this.toast(T("Путь скопирован")); } }, T("Скопировать путь"));
           info.append(" ", cp);
-        } catch (e) { this.toast("Не удалось сохранить: " + (e.message || e), true); info.textContent = "Ошибка: " + (e.message || e); info.classList.add("err"); }
+        } catch (e) { this.toast(T("Не удалось сохранить: ") + (e.message || e), true); info.textContent = T("Ошибка: ") + (e.message || e); info.classList.add("err"); }
         finally { go.disabled = false; go.classList.remove("busy"); }
       };
       fIn.onchange = upd; fOut.onchange = upd;
       const box = h("div", { class: "h3z-save h3z-glass" },
-        h("div", { class: "hd" }, h("b", null, "💾 Сохранить видео"), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: () => this.closeSaveDialog() }, "✕")),
-        this.field("Что сохранить", pills), rowR, rowC,
-        this.field("Папка", this.folderPicker(folder)), this.field("Имя файла (.mp4)", name),
+        h("div", { class: "hd" }, h("b", null, T("💾 Сохранить видео")), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: () => this.closeSaveDialog() }, "✕")),
+        this.field(T("Что сохранить"), pills), rowR, rowC,
+        this.field(T("Папка"), this.folderPicker(folder)), this.field(T("Имя файла (.mp4)"), name),
         music ? mixT : null, info,
-        h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: () => this.closeSaveDialog() }, "Закрыть"), go));
+        h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: () => this.closeSaveDialog() }, T("Закрыть")), go));
       if (this._exportMix !== false) mixT.classList.add("on");
       const modal = this.$.saveModal = h("div", { class: "h3z-modal" }, box);
       modal.addEventListener("pointerdown", (e) => { if (e.target === modal) this.closeSaveDialog(); });

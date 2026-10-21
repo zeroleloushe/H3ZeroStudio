@@ -5,6 +5,7 @@ import * as C from "./h3s_core.js";
 import { injectStyle } from "./h3s_style.js";
 import { H3Editor, PALETTE, ICON, h } from "./h3s_editor.js";
 import { SpritePlayer } from "./h3s_polish.js";
+import { T, tServer, tDeep, noteComfyLocale } from "./h3s_i18n.js";
 
 const NODES = new Set(["ZL_H3ZeroStudio", "ZL_H3Studio"]); // + legacy id of the first MVP
 const COMPACT_H = 236;
@@ -51,7 +52,7 @@ function makeHost(node) {
         fd.append("file", file, file.name || "pasted.png");
         const r = await api.fetchApi("/h3zero/asset_upload", { method: "POST", body: fd });
         const j = await r.json().catch(() => ({ error: r.status + " " + r.statusText }));
-        if (r.status !== 200) throw new Error(j.error || r.status);
+        if (r.status !== 200) throw new Error(tServer(j.error) || r.status);
         return j;
       }
       const body = new FormData();
@@ -69,7 +70,7 @@ function makeHost(node) {
       const fd = new FormData(); fd.append("file", file, file.name || "pasted.png");
       const r = await api.fetchApi("/h3zero/chars/upload", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));
-      if (!j.ok) throw new Error(j.error || r.status);
+      if (!j.ok) throw new Error(tServer(j.error) || r.status);
       return j.data;
     },
     peaks: async (ref) => {
@@ -79,7 +80,7 @@ function makeHost(node) {
       return r.json();
     },
     options: async () => (await api.fetchApi("/h3zero/options")).json(),
-    status: async (id) => { const r = await api.fetchApi("/h3zero/status?node=" + encodeURIComponent(String(id ?? node.id))); if (r.status !== 200) throw new Error(r.status + ""); return (await r.json()).status; },
+    status: async (id) => { const r = await api.fetchApi("/h3zero/status?node=" + encodeURIComponent(String(id ?? node.id))); if (r.status !== 200) throw new Error(r.status + ""); return tDeep((await r.json()).status); },
     nodeId: () => String(node.id),
     // The loaders wired into one input of this node, as an API-format sub-graph of the current workflow
     // ({prompt, src:[id, slot]}); the server runs just those nodes (character cards need the VAE without a run).
@@ -102,22 +103,22 @@ function makeHost(node) {
       } catch (e) { console.warn("H3ZeroStudio: wired", name, e); return null; }
     },
     inputLinked: (name) => { const i = node.inputs?.find((x) => x.name === name); return i ? i.link != null : undefined; },
-    videoInfo: async (ref, strip = true) => { const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", strip: strip ? "1" : "0" }); const r = await api.fetchApi("/h3zero/video_info?" + q.toString()); const j = await r.json(); if (!j.ok) throw new Error(j.error || r.status); return j.info; },
-    pickFolder: async (initial) => { const r = await api.fetchApi("/h3zero/pick_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: initial || "" }) }); const j = await r.json().catch(() => ({ ok: false, error: r.status + "" })); if (!j.ok) throw new Error(j.error || r.status); return j.path; },
+    videoInfo: async (ref, strip = true) => { const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", strip: strip ? "1" : "0" }); const r = await api.fetchApi("/h3zero/video_info?" + q.toString()); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.info; },
+    pickFolder: async (initial) => { const r = await api.fetchApi("/h3zero/pick_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: initial || "" }) }); const j = await r.json().catch(() => ({ ok: false, error: r.status + "" })); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.path; },
     freeMemory: async () => { const r = await api.fetchApi("/free", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) }); if (r.status !== 200) throw new Error(r.status + " " + r.statusText); },
-    exportVideo: async (body) => { const r = await api.fetchApi("/h3zero/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(j.error || r.status); return j; },
-    assetEdit: async (body) => { const r = await api.fetchApi("/h3zero/asset_edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(j.error || r.status); return j; },
-    freeze: async (id, key) => { const r = await api.fetchApi("/h3zero/freeze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, key }) }); const j = await r.json(); if (!j.ok) throw new Error(j.error || r.status); return j.freeze; },
+    exportVideo: async (body) => { const r = await api.fetchApi("/h3zero/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
+    assetEdit: async (body) => { const r = await api.fetchApi("/h3zero/asset_edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
+    freeze: async (id, key) => { const r = await api.fetchApi("/h3zero/freeze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, key }) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.freeze; },
     get: async (path, params = {}) => {
       const r = await api.fetchApi(path + "?" + new URLSearchParams(params).toString());
       const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));
-      if (!j.ok) throw new Error(j.error || r.status);
+      if (!j.ok) throw new Error(tServer(j.error) || r.status);
       return j.data;
     },
     call: async (path, body) => {
       const r = await api.fetchApi(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
       const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));
-      if (!j.ok) throw new Error(j.error || r.status);
+      if (!j.ok) throw new Error(tServer(j.error) || r.status);
       return j.data;
     },
     importZip: async (file, newId) => {
@@ -126,7 +127,7 @@ function makeHost(node) {
       body.append("file", file, file.name || "project.zip");
       const r = await api.fetchApi("/h3zero/project/import_zip", { method: "POST", body });
       const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));
-      if (!j.ok) throw new Error(j.error || r.status);
+      if (!j.ok) throw new Error(tServer(j.error) || r.status);
       return j.data;
     },
     clearCache: async (id, takes = false) => {
@@ -140,7 +141,7 @@ function makeHost(node) {
 }
 
 function defaultProject() {
-  return { id: C.newId("p"), name: "H3 проект", settings: { settings_scope: "global" }, segments: [{ id: C.newId("s"), frames: 124, color: 0, link: "extend" }] };
+  return { id: C.newId("p"), name: T("H3 проект"), settings: { settings_scope: "global" }, segments: [{ id: C.newId("s"), frames: 124, color: 0, link: "extend" }] };
 }
 
 function ensureProject(node) {
@@ -184,12 +185,12 @@ function buildCompact(node) {
   st.mini = h("div", { class: "mini" });
   st.inf = h("div", { class: "inf" });
   st.prog = h("div", { class: "prog" }, h("i"));
-  st.btn = h("button", { class: "open", html: ICON.expand + "<span>Развернуть</span>", title: "Открыть редактор на весь экран" });
+  st.btn = h("button", { class: "open", html: ICON.expand + T("<span>Развернуть</span>"), title: T("Открыть редактор на весь экран") });
   st.btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openEditor(node); });
   for (const ev of ["pointerdown", "mousedown"]) st.btn.addEventListener(ev, (e) => e.stopPropagation());
   el.append(st.pv, st.mini, st.inf, st.prog, st.btn);
   if (node.type === LEGACY_ID) {   // node of the first MVP: one click swaps it for the current node (links, project, position kept)
-    const up = h("button", { class: "open legacy", html: "<span>⇪ Обновить ноду</span>", title: "Это нода прежней версии (H3 Studio, значок [DEPR]). Заменить её текущей нодой H3ZeroStudio: связи, проект и положение сохранятся" });
+    const up = h("button", { class: "open legacy", html: T("<span>⇪ Обновить ноду</span>"), title: T("Это нода прежней версии (H3 Studio, значок [DEPR]). Заменить её текущей нодой H3ZeroStudio: связи, проект и положение сохранятся") });
     up.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); upgradeLegacy(node); });
     for (const ev of ["pointerdown", "mousedown"]) up.addEventListener(ev, (e) => e.stopPropagation());
     el.append(up);
@@ -207,8 +208,8 @@ function renderCompact(node) {
   const live = ed?.run?.active && ed.lastLive ? ed.lastLive : null;
   if (live) { // animated latent preview of the segment being sampled, also when the editor is collapsed
     if (!st.liveCv) { st.liveCv = h("canvas", { class: "live" }); st.livePlayer = new SpritePlayer(st.liveCv); }
-    if (st.liveCv.parentElement !== st.pv) { st.pv.innerHTML = ""; st.pv.append(st.liveCv, h("div", { class: "ttl live" }, h("i", null, "●"), h("span", null, `Отрезок ${live.seg + 1} · шаг ${live.step}/${live.steps}`))); }
-    else st.pv.querySelector(".ttl span").textContent = `Отрезок ${live.seg + 1} · шаг ${live.step}/${live.steps}`;
+    if (st.liveCv.parentElement !== st.pv) { st.pv.innerHTML = ""; st.pv.append(st.liveCv, h("div", { class: "ttl live" }, h("i", null, "●"), h("span", null, T("Отрезок {0} · шаг {1}/{2}", live.seg + 1, live.step, live.steps)))); }
+    else st.pv.querySelector(".ttl span").textContent = T("Отрезок {0} · шаг {1}/{2}", live.seg + 1, live.step, live.steps);
     if (st.liveSent !== live) { st.liveSent = live; st.livePlayer.set(live); }
   } else {
   if (st.livePlayer) { st.livePlayer.stop(); st.liveCv = null; st.livePlayer = null; st.liveSent = null; }
@@ -221,12 +222,12 @@ function renderCompact(node) {
   its.forEach((it, i) => {
     const s = p.segments[i], pal = PALETTE[s.color % PALETTE.length];
     const done = s.result && (!s.result.sig || s.result.sig === sigs[i]);
-    st.mini.append(h("span", { class: done ? "done" : "", style: { flex: String((it.frames - (i ? it.overlap : 0)) / total), "--c1": pal[0], "--c2": pal[1] }, title: `${i + 1}: ${(it.frames / 24).toFixed(1)} с` }));
+    st.mini.append(h("span", { class: done ? "done" : "", style: { flex: String((it.frames - (i ? it.overlap : 0)) / total), "--c1": pal[0], "--c2": pal[1] }, title: T("{0}: {1} с", i + 1, (it.frames / 24).toFixed(1)) }));
   });
   const r = ed?.run || {};
   st.inf.innerHTML = "";
-  st.inf.append(h("span", null, h("b", null, est.segments), " отр. · ", h("b", null, C.fmtTime(est.seconds))),
-    h("span", null, r.active ? (r.seg >= 0 ? `отрезок ${r.seg + 1}/${r.segs} · шаг ${r.step}/${r.steps || "…"}` : "в очереди…") : `${est.width}×${est.height}` + (est.warnings.length ? ` · ⚠${est.warnings.length}` : "")));
+  st.inf.append(h("span", null, h("b", null, est.segments), T(" отр. · "), h("b", null, C.fmtTime(est.seconds))),
+    h("span", null, r.active ? (r.seg >= 0 ? T("отрезок {0}/{1} · шаг {2}/{3}", r.seg + 1, r.segs, r.step, r.steps || "…") : T("в очереди…")) : `${est.width}×${est.height}` + (est.warnings.length ? ` · ⚠${est.warnings.length}` : "")));
   st.prog.classList.toggle("on", !!r.active);
   st.prog.firstChild.style.width = r.total ? (r.done / r.total * 100).toFixed(1) + "%" : "0%";
 }
@@ -288,8 +289,9 @@ app.registerExtension({
   },
   async setup() {
     injectStyle();
+    try { noteComfyLocale(app.ui?.settings?.getSettingValue?.("Comfy.Locale")); } catch (e) {}   // «Авто» language: ComfyUI's own locale
     api.addEventListener("h3zero.progress", ({ detail: d }) => {
-      try { const n = findNode(d.node); if (n?.h3s) { n.h3s.onProgress(d); renderCompact(n); } } catch (e) { console.warn("[H3ZeroStudio] progress", e); }
+      try { tDeep(d); const n = findNode(d.node); if (n?.h3s) { n.h3s.onProgress(d); renderCompact(n); } } catch (e) { console.warn("[H3ZeroStudio] progress", e); }
     });
     // run ended: catch up on anything missed (final segments, result), then close the run
     const end = (reason) => () => { for (const n of allStudioNodes()) { const e = n.h3s; if (!e) continue;
@@ -300,8 +302,8 @@ app.registerExtension({
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
     window.addEventListener("focus", wake);
     api.addEventListener("executed", () => { for (const n of allStudioNodes()) if (n.h3s?.run?.active) n.h3s.catchUp?.().catch(() => {}); });
-    api.addEventListener("execution_error", end("Ошибка выполнения — подробности в консоли ComfyUI"));
-    api.addEventListener("execution_interrupted", end("Генерация прервана"));
+    api.addEventListener("execution_error", end(T("Ошибка выполнения — подробности в консоли ComfyUI")));
+    api.addEventListener("execution_interrupted", end(T("Генерация прервана")));
     api.addEventListener("execution_success", end(null));
 
   },

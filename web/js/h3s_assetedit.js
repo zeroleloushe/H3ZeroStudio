@@ -4,9 +4,10 @@
 // (input/h3zerostudio/derived) and points the asset at it; the original is kept (asset.orig) and reopened for
 // further edits, «Reset» returns to it. Downscaled references make H3 generation faster.
 import { drawPeaks } from "./h3s_audio.js";
+import { T } from "./h3s_i18n.js";
 
 const SIZES = [0, 2048, 1920, 1600, 1280, 1024, 832, 768, 640, 512];
-const ASPECTS = [["free", "свободно"], ["16:9", "16:9"], ["9:16", "9:16"], ["1:1", "1:1"], ["4:3", "4:3"], ["3:4", "3:4"], ["21:9", "21:9"], ["project", "как проект"]];
+const ASPECTS = [["free", T("свободно")], ["16:9", "16:9"], ["9:16", "9:16"], ["1:1", "1:1"], ["4:3", "4:3"], ["3:4", "3:4"], ["21:9", "21:9"], ["project", T("как проект")]];
 const STEP = 1 / 24;
 
 /** Same as h3s_assets.out_size. */
@@ -25,7 +26,7 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
 
     openAssetEditor(id) {
       const a = this.p.assets.find((x) => x.id === id);
-      if (!a) return id === C.AUDIO_INPUT_ID ? this.toast("Вход audio ноды редактируется в графе ComfyUI", true) : null;
+      if (!a) return id === C.AUDIO_INPUT_ID ? this.toast(T("Вход audio ноды редактируется в графе ComfyUI"), true) : null;
       this.closeAssetEditor();
       const kind = this.assetKind(a), orig = a.orig || { filename: a.file, subfolder: a.subfolder, type: a.type || "input" };
       const url = this.host.url(orig);
@@ -39,19 +40,19 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
       const media = $.media;
       // ---- header
       const btn = (html, title, fn, cls = "") => { const b = h("button", { class: "h3z-btn sm " + cls, html, title }); b.onclick = (e) => { e.stopPropagation(); fn(b); }; return b; };
-      $.size = h("select", { class: "h3z-sel sm", title: "Уменьшить: длинная сторона не больше … px (меньше референс — быстрее генерация H3)" }, SIZES.map((s) => h("option", { value: s }, s ? `max ${s}px` : "размер: полный")));
+      $.size = h("select", { class: "h3z-sel sm", title: T("Уменьшить: длинная сторона не больше … px (меньше референс — быстрее генерация H3)") }, SIZES.map((s) => h("option", { value: s }, s ? `max ${s}px` : T("размер: полный"))));
       $.size.value = String(st.ops.max_side || 0);
       $.size.onchange = () => { st.ops.max_side = Number($.size.value) || 0; if (!st.ops.max_side) delete st.ops.max_side; this.aeUpdate(); };
-      $.aspect = h("select", { class: "h3z-sel sm", title: "Пропорции рамки обрезки" }, ASPECTS.map(([k, l]) => h("option", { value: k }, l)));
+      $.aspect = h("select", { class: "h3z-sel sm", title: T("Пропорции рамки обрезки") }, ASPECTS.map(([k, l]) => h("option", { value: k }, l)));
       $.aspect.onchange = () => { st.aspect = $.aspect.value; if (st.ops.crop) { st.ops.crop = this.aeFitAspect(st.ops.crop); } this.aeUpdate(); };
       $.dims = h("span", { class: "dims" });
       const pic = kind !== "audio";
-      $.rot = btn("↻", "Повернуть на 90° (R)", () => { st.ops.rotate = ((st.ops.rotate || 0) + 90) % 360; if (!st.ops.rotate) delete st.ops.rotate; delete st.ops.crop; this.aeUpdate(); });
-      $.mir = btn("⇄ Зеркало", "Отразить по горизонтали", () => { st.ops.mirror = !st.ops.mirror; if (!st.ops.mirror) delete st.ops.mirror; this.aeUpdate(); });
-      $.cropB = btn("⌗ Обрезка", "Рамка обрезки: тяните углы и саму рамку (двойной клик — сбросить)", () => { st.crop = !st.crop; if (st.crop && !st.ops.crop) st.ops.crop = this.aeFitAspect([0.1, 0.1, 0.8, 0.8]); this.aeUpdate(); });
+      $.rot = btn("↻", T("Повернуть на 90° (R)"), () => { st.ops.rotate = ((st.ops.rotate || 0) + 90) % 360; if (!st.ops.rotate) delete st.ops.rotate; delete st.ops.crop; this.aeUpdate(); });
+      $.mir = btn(T("⇄ Зеркало"), T("Отразить по горизонтали"), () => { st.ops.mirror = !st.ops.mirror; if (!st.ops.mirror) delete st.ops.mirror; this.aeUpdate(); });
+      $.cropB = btn(T("⌗ Обрезка"), T("Рамка обрезки: тяните углы и саму рамку (двойной клик — сбросить)"), () => { st.crop = !st.crop; if (st.crop && !st.ops.crop) st.ops.crop = this.aeFitAspect([0.1, 0.1, 0.8, 0.8]); this.aeUpdate(); });
       const head = h("div", { class: "hd" }, h("b", { html: (ICON.cut || "✂") + `<span>${String(a.name ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</span>` }), h("i", { class: "grow" }),
         pic ? $.rot : null, pic ? $.mir : null, pic ? $.cropB : null, pic ? $.aspect : null, pic ? $.size : null, pic ? $.dims : null,
-        btn("✕", "Закрыть (Esc)", close, "icon"));
+        btn("✕", T("Закрыть (Esc)"), close, "icon"));
       // ---- stage
       $.cv = h("canvas", { class: "cv" });
       $.stage = h("div", { class: "stage" + (kind === "audio" ? " audio" : "") }, $.cv, kind !== "image" ? media : null);
@@ -63,38 +64,38 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
       $.phT = h("span", { class: "pht" });
       // ---- controls
       const num = (v, title, fn) => { const n = h("input", { class: "h3z-in sm", type: "number", step: "0.01", min: 0, value: v, title }); n.onchange = () => fn(Number(n.value)); return n; };
-      $.sIn = num(0, "Начало, с", (v) => { st.ops.start = Math.max(0, Math.min(v, this.aeEnd() - 0.1)); this.aeUpdate(); });
-      $.eIn = num(0, "Конец, с", (v) => { st.ops.end = Math.min(st.dur, Math.max(v, (st.ops.start || 0) + 0.1)); this.aeUpdate(); });
+      $.sIn = num(0, T("Начало, с"), (v) => { st.ops.start = Math.max(0, Math.min(v, this.aeEnd() - 0.1)); this.aeUpdate(); });
+      $.eIn = num(0, T("Конец, с"), (v) => { st.ops.end = Math.min(st.dur, Math.max(v, (st.ops.start || 0) + 0.1)); this.aeUpdate(); });
       $.kept = h("span", { class: "kept" });
-      $.play = btn("▶", "Играть / пауза (Пробел)", () => this.aeTogglePlay());
-      $.mute = btn("🔊", "Звук (M)", () => this.aeMute());
+      $.play = btn("▶", T("Играть / пауза (Пробел)"), () => this.aeTogglePlay());
+      $.mute = btn("🔊", T("Звук (M)"), () => this.aeMute());
       const rowT = timed ? h("div", { class: "row" },
-        btn("◀|", "Кадр назад (←, Shift — 10)", () => this.aeStep(-1)), $.play, $.mute, btn("|▶", "Кадр вперёд (→, Shift — 10)", () => this.aeStep(1)),
+        btn("◀|", T("Кадр назад (←, Shift — 10)"), () => this.aeStep(-1)), $.play, $.mute, btn("|▶", T("Кадр вперёд (→, Shift — 10)"), () => this.aeStep(1)),
         h("i", { class: "sp" }),
-        btn("⇤ начало", "Начало здесь ([)", () => this.aeMark("start")), $.sIn, h("span", null, "–"), $.eIn, btn("конец ⇥", "Конец здесь (])", () => this.aeMark("end")), $.kept,
-        h("i", { class: "grow" }), btn("⏮ Первый", "К началу диапазона (Home)", () => this.aeSeek(st.ops.start || 0)), btn("Последний ⏭", "К концу диапазона (End)", () => this.aeSeek(this.aeEnd() - STEP))) : null;
+        btn(T("⇤ начало"), T("Начало здесь ([)"), () => this.aeMark("start")), $.sIn, h("span", null, "–"), $.eIn, btn(T("конец ⇥"), T("Конец здесь (])"), () => this.aeMark("end")), $.kept,
+        h("i", { class: "grow" }), btn(T("⏮ Первый"), T("К началу диапазона (Home)"), () => this.aeSeek(st.ops.start || 0)), btn(T("Последний ⏭"), T("К концу диапазона (End)"), () => this.aeSeek(this.aeEnd() - STEP))) : null;
       // audio processing (audio and the sound of a video)
       const aud = kind !== "image";
-      const gain = num(st.ops.gain_db || 0, "Усиление, дБ (−24…+24)", (v) => { st.ops.gain_db = Math.max(-24, Math.min(24, v)) || 0; if (!st.ops.gain_db) delete st.ops.gain_db; this.aeUpdate(); });
+      const gain = num(st.ops.gain_db || 0, T("Усиление, дБ (−24…+24)"), (v) => { st.ops.gain_db = Math.max(-24, Math.min(24, v)) || 0; if (!st.ops.gain_db) delete st.ops.gain_db; this.aeUpdate(); });
       gain.step = "0.5"; gain.min = -24; gain.max = 24;
-      const fi = num(st.ops.fade_in || 0, "Фейд в начале, с", (v) => { st.ops.fade_in = Math.max(0, v) || 0; if (!st.ops.fade_in) delete st.ops.fade_in; this.aeUpdate(); });
-      const fo = num(st.ops.fade_out || 0, "Фейд в конце, с", (v) => { st.ops.fade_out = Math.max(0, v) || 0; if (!st.ops.fade_out) delete st.ops.fade_out; this.aeUpdate(); });
-      $.norm = btn("Нормализовать", "Пик громкости до −1 дБ", (b) => { st.ops.normalize = !st.ops.normalize; if (!st.ops.normalize) delete st.ops.normalize; this.aeUpdate(); });
+      const fi = num(st.ops.fade_in || 0, T("Фейд в начале, с"), (v) => { st.ops.fade_in = Math.max(0, v) || 0; if (!st.ops.fade_in) delete st.ops.fade_in; this.aeUpdate(); });
+      const fo = num(st.ops.fade_out || 0, T("Фейд в конце, с"), (v) => { st.ops.fade_out = Math.max(0, v) || 0; if (!st.ops.fade_out) delete st.ops.fade_out; this.aeUpdate(); });
+      $.norm = btn(T("Нормализовать"), T("Пик громкости до −1 дБ"), (b) => { st.ops.normalize = !st.ops.normalize; if (!st.ops.normalize) delete st.ops.normalize; this.aeUpdate(); });
       const rowB = h("div", { class: "row" },
-        timed ? btn("посл. 2 с", "Оставить последние 2 секунды", () => this.aeLast(2)) : null,
-        timed ? btn("посл. 3 с", "Оставить последние 3 секунды", () => this.aeLast(3)) : null,
-        kind === "video" ? btn("🖼 Взять кадр", "Кадр под плейхедом -> новый ассет-картинка (C)", () => this.aeUseFrame()) : null,
-        kind === "video" ? btn("♪ Взять звук", "Звук выбранного диапазона -> новый аудио-ассет (A)", () => this.aeUseAudio()) : null,
-        aud ? h("span", { class: "lb" }, "дБ") : null, aud ? gain : null, aud ? $.norm : null,
-        aud ? h("span", { class: "lb" }, "фейд") : null, aud ? fi : null, aud ? fo : null,
+        timed ? btn(T("посл. 2 с"), T("Оставить последние 2 секунды"), () => this.aeLast(2)) : null,
+        timed ? btn(T("посл. 3 с"), T("Оставить последние 3 секунды"), () => this.aeLast(3)) : null,
+        kind === "video" ? btn(T("🖼 Взять кадр"), T("Кадр под плейхедом -> новый ассет-картинка (C)"), () => this.aeUseFrame()) : null,
+        kind === "video" ? btn(T("♪ Взять звук"), T("Звук выбранного диапазона -> новый аудио-ассет (A)"), () => this.aeUseAudio()) : null,
+        aud ? h("span", { class: "lb" }, T("дБ")) : null, aud ? gain : null, aud ? $.norm : null,
+        aud ? h("span", { class: "lb" }, T("фейд")) : null, aud ? fi : null, aud ? fo : null,
         h("i", { class: "grow" }),
-        btn("↺ Сброс", "Вернуть оригинал (без правок)", () => { st.ops = {}; st.crop = false; $.size.value = "0"; gain.value = 0; fi.value = 0; fo.value = 0; this.aeUpdate(); }),
-        btn("Применить", "Создать обработанную копию и использовать её (Enter)", () => this.aeApply(), "primary"),
-        btn("Отмена", "Закрыть без изменений (Esc)", close));
+        btn(T("↺ Сброс"), T("Вернуть оригинал (без правок)"), () => { st.ops = {}; st.crop = false; $.size.value = "0"; gain.value = 0; fi.value = 0; fo.value = 0; this.aeUpdate(); }),
+        btn(T("Применить"), T("Создать обработанную копию и использовать её (Enter)"), () => this.aeApply(), "primary"),
+        btn(T("Отмена"), T("Закрыть без изменений (Esc)"), close));
       const hint = h("div", { class: "hint" }, timed
-        ? "← → кадр (Shift — 10) · Пробел — играть · [ ] — начало/конец здесь · Home/End — к краям · M — звук" + (kind === "video" ? " · A — взять звук · C — взять кадр · R — повернуть" : "")
-        : "Тяните рамку обрезки и её углы · R — повернуть · Enter — применить · Esc — отмена");
-      const box = h("div", { class: "h3z-ae h3z-glass" }, head, $.stage, timed ? $.ticks : null, timed ? $.bar : null, timed ? h("div", { class: "phl" }, "ПЛЕЙХЕД ", $.phT) : null, rowT, rowB, hint);
+        ? T("← → кадр (Shift — 10) · Пробел — играть · [ ] — начало/конец здесь · Home/End — к краям · M — звук") + (kind === "video" ? T(" · A — взять звук · C — взять кадр · R — повернуть") : "")
+        : T("Тяните рамку обрезки и её углы · R — повернуть · Enter — применить · Esc — отмена"));
+      const box = h("div", { class: "h3z-ae h3z-glass" }, head, $.stage, timed ? $.ticks : null, timed ? $.bar : null, timed ? h("div", { class: "phl" }, T("ПЛЕЙХЕД "), $.phT) : null, rowT, rowB, hint);
       const modal = h("div", { class: "h3z-modal" }, box);
       modal.addEventListener("pointerdown", (e) => { if (e.target === modal) close(); });
       st.$ = $; st.modal = modal; st.gainIn = gain;
@@ -158,7 +159,7 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
         if (st.ops.start !== undefined && st.ops.start <= 0) delete st.ops.start;
         if (st.ops.end !== undefined && st.dur && st.ops.end >= st.dur - 1e-3) delete st.ops.end;
         $.sIn.value = (st.ops.start || 0).toFixed(2); $.eIn.value = this.aeEnd().toFixed(2);
-        $.kept.textContent = `${Math.max(0, this.aeEnd() - (st.ops.start || 0)).toFixed(2)} с из ${st.dur.toFixed(2)}`;
+        $.kept.textContent = T("{0} с из {1}", Math.max(0, this.aeEnd() - (st.ops.start || 0)).toFixed(2), st.dur.toFixed(2));
         $.norm.classList.toggle("on", !!st.ops.normalize);
       }
       if (st.kind !== "audio") {
@@ -215,8 +216,8 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
         const px = (ev) => [(ev.clientX - r.left - v.ox) / v.w, (ev.clientY - r.top - v.oy) / v.hh];
         const [sx, sy] = px(e), near = (a, b) => Math.abs(a - b) * Math.min(v.w, v.hh) < 12;
         let mode = "move";
-        const L = near(sx, c0[0]), R = near(sx, c0[0] + c0[2]), T = near(sy, c0[1]), B = near(sy, c0[1] + c0[3]);
-        if ((L || R) && (T || B)) mode = (L ? "l" : "r") + (T ? "t" : "b");
+        const L = near(sx, c0[0]), R = near(sx, c0[0] + c0[2]), Tp = near(sy, c0[1]), B = near(sy, c0[1] + c0[3]);
+        if ((L || R) && (Tp || B)) mode = (L ? "l" : "r") + (Tp ? "t" : "b");
         else if (!(sx > c0[0] && sx < c0[0] + c0[2] && sy > c0[1] && sy < c0[1] + c0[3])) mode = "new";
         const move = (ev) => {
           const [mx, my] = px(ev), cl = (x) => Math.min(1, Math.max(0, x));
@@ -271,7 +272,7 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
       const m = st.$.media, t = m.currentTime || 0;
       st.t = t;
       if (st.dur) st.$.bar.querySelector(".ph").style.left = t / st.dur * 100 + "%";
-      st.$.phT.textContent = `${C.fmtTime(t)} · кадр ${Math.round(t * 24)}`;
+      st.$.phT.textContent = T("{0} · кадр {1}", C.fmtTime(t), Math.round(t * 24));
       if (st.playing && t >= this.aeEnd() - 0.01) { try { m.currentTime = st.ops.start || 0; } catch (e) {} }
       if (st.kind === "audio") this.aeDraw();
     },
@@ -336,9 +337,9 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
           for (const k of ["duration", "frames", "width", "height", "has_audio", "poster", "strip", "strip_n"]) if (k in inf) x[k] = inf[k];
         });
         this._peaks && delete this._peaks;
-        this.toast(r.file ? "Готово: используется обработанная копия (оригинал сохранён — «Сброс» вернёт его)" : "Оригинал восстановлен");
+        this.toast(r.file ? T("Готово: используется обработанная копия (оригинал сохранён — «Сброс» вернёт его)") : T("Оригинал восстановлен"));
         this.closeAssetEditor();
-      } catch (e) { this.toast("Не удалось обработать: " + (e.message || e), true); }
+      } catch (e) { this.toast(T("Не удалось обработать: ") + (e.message || e), true); }
       finally { if (this.ae === st) { st.busy = false; st.modal.classList.remove("busy"); } }
     },
 
@@ -347,20 +348,20 @@ export function installAssetEditor(Editor, { C, h, ICON }) {
       try {
         const r = await this.host.assetEdit({ action: "frame", kind: "video", source: st.orig, t, ops: st.ops });
         const id = C.newId("a");
-        this.mutate((p) => { p.assets.push({ id, name: `${a.name} · кадр ${t.toFixed(2)} с`, file: r.file.filename, subfolder: r.file.subfolder, type: r.file.type || "input", category: "other" }); });
-        this.toast(`Кадр ${t.toFixed(2)} с добавлен в ассеты (категория «Другое»)`);
-      } catch (e) { this.toast("Не удалось взять кадр: " + (e.message || e), true); }
+        this.mutate((p) => { p.assets.push({ id, name: T("{0} · кадр {1} с", a.name, t.toFixed(2)), file: r.file.filename, subfolder: r.file.subfolder, type: r.file.type || "input", category: "other" }); });
+        this.toast(T("Кадр {0} с добавлен в ассеты (категория «Другое»)", t.toFixed(2)));
+      } catch (e) { this.toast(T("Не удалось взять кадр: ") + (e.message || e), true); }
     },
 
     async aeUseAudio() {
       const st = this.ae, a = this.p.assets.find((x) => x.id === st.id);
-      if (a && !a.has_audio) return this.toast("В этом видео нет звуковой дорожки", true);
+      if (a && !a.has_audio) return this.toast(T("В этом видео нет звуковой дорожки"), true);
       try {
         const r = await this.host.assetEdit({ action: "audio", kind: "video", source: st.orig, ops: st.ops });
         const id = C.newId("au");
-        this.mutate((p) => { p.assets.push({ id, name: `${a.name} · звук`, file: r.file.filename, subfolder: r.file.subfolder, type: r.file.type || "input", category: "audio", duration: r.info?.duration || 0 }); });
-        this.toast(`Звук (${(r.info?.duration || 0).toFixed(1)} с) добавлен в аудио-ассеты`);
-      } catch (e) { this.toast("Не удалось взять звук: " + (e.message || e), true); }
+        this.mutate((p) => { p.assets.push({ id, name: T("{0} · звук", a.name), file: r.file.filename, subfolder: r.file.subfolder, type: r.file.type || "input", category: "audio", duration: r.info?.duration || 0 }); });
+        this.toast(T("Звук ({0} с) добавлен в аудио-ассеты", (r.info?.duration || 0).toFixed(1)));
+      } catch (e) { this.toast(T("Не удалось взять звук: ") + (e.message || e), true); }
     },
   });
 }

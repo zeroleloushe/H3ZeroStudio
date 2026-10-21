@@ -7,6 +7,7 @@
 // refs (C.cardLabels numbers <Picture N> / <Video N> / <Audio N>); weight > 1 = copies, < 1 = weaker; on / off.
 // Backend: /h3zero/chars (h3s_chars.py, routes.py).
 import { parseSections, promptTemplate } from "./h3s_prompted.js";
+import { T } from "./h3s_i18n.js";
 
 export function installChars(Editor, { C, h, ICON }) {
   const CN = C.CARD_CONCEPT_NAMES;
@@ -49,8 +50,8 @@ export function installChars(Editor, { C, h, ICON }) {
     },
     charKinds(card) {
       const v = card.visual, out = [];
-      if (v) out.push(v.kind === "image" ? "фото" : v.frames && card.sources?.some?.((s) => s.kind === "clip") ? "клип" : "стопка");
-      if (card.audio) out.push(`голос ${card.audio.seconds} с`);
+      if (v) out.push(v.kind === "image" ? T("фото") : v.frames && card.sources?.some?.((s) => s.kind === "clip") ? T("клип") : T("стопка"));
+      if (card.audio) out.push(T("голос {0} с", card.audio.seconds));
       return out.join(" · ");
     },
     charTokens(card) { return (card.visual?.tokens || 0) + (card.audio?.tokens || 0); },
@@ -63,19 +64,19 @@ export function installChars(Editor, { C, h, ICON }) {
     charHolder(t, p = this.p) { return t?.region ? (p.regions || []).find((r) => r.id === t.region) : t?.seg != null ? p.segments[t.seg] : null; },
     charAdd(t, id) {
       const card = this.charCard(id);
-      if (!t) return this.toast("Выберите клип или ✂ участок, к которому добавить карточку", true);
-      if (!card) return this.toast("Карточки нет в библиотеке", true);
+      if (!t) return this.toast(T("Выберите клип или ✂ участок, к которому добавить карточку"), true);
+      if (!card) return this.toast(T("Карточки нет в библиотеке"), true);
       const cur = this.charHolder(t);
       if (!cur) return;
-      if ((cur.cards || []).some((e) => e.id === id)) return this.toast(`«${card.name}» уже в ${t.region ? "участке" : "отрезке"}`);
-      if ((cur.cards || []).length >= C.MAX_CARDS) return this.toast(`Не больше ${C.MAX_CARDS} карточек`, true);
-      if (!card.visual && t.region) this.toast("У участка голоса не используются — карточка только с голосом ничего не добавит", true);
+      if ((cur.cards || []).some((e) => e.id === id)) return this.toast(T("«{0}» уже в {1}", card.name, t.region ? T("участке") : T("отрезке")));
+      if ((cur.cards || []).length >= C.MAX_CARDS) return this.toast(T("Не больше {0} карточек", C.MAX_CARDS), true);
+      if (!card.visual && t.region) this.toast(T("У участка голоса не используются — карточка только с голосом ничего не добавит"), true);
       this.mutate((p) => {
         const x = this.charHolder(t, p); if (!x) return;
         x.cards = [...(x.cards || []), { id, w: 1, on: true, look: true, voice: true }];
         p.cards = { ...(p.cards || {}), [id]: C.cardSnap(card) };
       });
-      this.toast(`${GLYPH[card.concept] || "◈"} «${card.name}» → ${t.region ? "участок" : `отрезок ${t.seg + 1}`}`);
+      this.toast(`${GLYPH[card.concept] || "◈"} «${card.name}» → ${t.region ? T("участок") : T("отрезок {0}", t.seg + 1)}`);
     },
     charEdit(t, id, fn) {
       this.mutate((p) => { const x = this.charHolder(t, p); const e = x && (x.cards || []).find((c) => c.id === id); if (e) fn(e, x); }, { coalesce: "card:" + id });
@@ -83,24 +84,24 @@ export function installChars(Editor, { C, h, ICON }) {
     charRemove(t, id) { this.mutate((p) => { const x = this.charHolder(t, p); if (x) x.cards = (x.cards || []).filter((e) => e.id !== id); }); },
     charUsedIn(id) {
       const out = [];
-      this.p.segments.forEach((s, i) => { if ((s.cards || []).some((e) => e.id === id)) out.push(`отрезок ${i + 1}`); });
-      (this.p.regions || []).forEach((r) => { if ((r.cards || []).some((e) => e.id === id)) out.push(`участок ${this.regionNo?.(r.id) || ""}`.trim()); });
+      this.p.segments.forEach((s, i) => { if ((s.cards || []).some((e) => e.id === id)) out.push(T("отрезок {0}", i + 1)); });
+      (this.p.regions || []).forEach((r) => { if ((r.cards || []).some((e) => e.id === id)) out.push(T("участок {0}", this.regionNo?.(r.id) || "").trim()); });
       return out;
     },
 
     renderChars(L) {
       if (this.cf) return this.charForm(L);
       const lib = this._chars;
-      if (!this.charsEnsure() && !lib?.cards?.length) { L.append(h("div", { class: "h3z-chars" }, h("div", { class: "h3z-note" }, "Загрузка библиотеки…"))); return; }
+      if (!this.charsEnsure() && !lib?.cards?.length) { L.append(h("div", { class: "h3z-chars" }, h("div", { class: "h3z-note" }, T("Загрузка библиотеки…")))); return; }
       const q = (this.charQ || "").trim().toLowerCase(), cf = this.charFilter || "all";
       const target = this.charTarget(), holder = this.charHolder(target);
       const usedHere = new Set((holder?.cards || []).map((e) => e.id));
       const cards = lib.cards.filter((c) => (cf === "all" || c.concept === cf)
         && (!q || [c.name, c.folder, c.subject_name, c.appearance].some((x) => String(x || "").toLowerCase().includes(q))));
-      const search = h("input", { class: "h3z-in sm", type: "search", placeholder: "Поиск: имя, папка, описание", value: this.charQ || "" });
+      const search = h("input", { class: "h3z-in sm", type: "search", placeholder: T("Поиск: имя, папка, описание"), value: this.charQ || "" });
       search.oninput = () => { this.charQ = search.value; clearTimeout(this._charQT); this._charQT = setTimeout(() => this.renderLeft(), 200); };
       const present = new Set(lib.cards.map((c) => c.concept));
-      const pills = h("div", { class: "h3z-pills" }, [["all", "Все"], ...C.CARD_CONCEPTS.filter((k) => present.has(k)).map((k) => [k, GLYPH[k] + " " + CN[k]])].map(([k, l]) =>
+      const pills = h("div", { class: "h3z-pills" }, [["all", T("Все")], ...C.CARD_CONCEPTS.filter((k) => present.has(k)).map((k) => [k, GLYPH[k] + " " + CN[k]])].map(([k, l]) =>
         h("div", { class: "h3z-pill" + (cf === k ? " on" : ""), onclick: () => { this.charFilter = k; this.renderLeft(); } }, l)));
       const groups = new Map();
       for (const c of cards) { const g = (c.root === "s" ? "" : (c.root_label || c.root) + " · ") + (c.folder || ""); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(c); }
@@ -109,25 +110,25 @@ export function installChars(Editor, { C, h, ICON }) {
         if (g) grid.append(h("div", { class: "h3z-cfold" }, "📁 " + g));
         grid.append(h("div", { class: "h3z-cgrid" }, list.map((c) => this.charTile(c, usedHere.has(c.id), target))));
       }
-      const st = lib.err ? h("div", { class: "h3z-note err" }, "Библиотека недоступна: " + lib.err) : null;
+      const st = lib.err ? h("div", { class: "h3z-note err" }, T("Библиотека недоступна: ") + lib.err) : null;
       const pr = this.mpGet?.(this.p.settings.model_preset);
-      const vaeNote = !lib.vae && !pr?.vae && !this.host.inputLinked?.("vae") ? h("div", { class: "h3z-note" }, "Для «Создать» нужен VAE: подключите его проводом к узлу студии или выберите в пресете моделей проекта.") : null;
+      const vaeNote = !lib.vae && !pr?.vae && !this.host.inputLinked?.("vae") ? h("div", { class: "h3z-note" }, T("Для «Создать» нужен VAE: подключите его проводом к узлу студии или выберите в пресете моделей проекта.")) : null;
       L.append(h("div", { class: "h3z-chars" },
-        h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, "Персонажи", h("em", null, `${lib.cards.length} карт.`)), h("i", { class: "grow" }),
-          h("button", { class: "h3z-btn sm", title: "Перечитать папку библиотеки", onclick: () => this.charsLoad(true).then(() => this.renderLeft()) }, "↻"),
-          h("button", { class: "h3z-btn sm primary", title: "Новая карточка из ассетов проекта", onclick: () => this.charOpenForm() }, "+ Создать")),
-        h("div", { class: "h3z-note tgt" }, target ? `Клик по карточке — добавить в ${target.region ? `✂ участок ${this.regionNo?.(target.region) || ""}` : `отрезок ${target.seg + 1}`}; или перетащите на клип.` : "Выберите клип или ✂ участок — клик по карточке добавит её туда; или перетащите на клип."),
+        h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, T("Персонажи"), h("em", null, T("{0} карт.", lib.cards.length))), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm", title: T("Перечитать папку библиотеки"), onclick: () => this.charsLoad(true).then(() => this.renderLeft()) }, "↻"),
+          h("button", { class: "h3z-btn sm primary", title: T("Новая карточка из ассетов проекта"), onclick: () => this.charOpenForm() }, T("+ Создать"))),
+        h("div", { class: "h3z-note tgt" }, target ? T("Клик по карточке — добавить в {0}; или перетащите на клип.", target.region ? T("✂ участок {0}", this.regionNo?.(target.region) || "") : T("отрезок {0}", target.seg + 1)) : T("Выберите клип или ✂ участок — клик по карточке добавит её туда; или перетащите на клип.")),
         search, pills, st, vaeNote,
-        cards.length ? grid : h("div", { class: "h3z-cempty" }, lib.cards.length ? "Ничего не найдено" : "Карточек пока нет. «+ Создать» — из фото, клипа и голоса ассетов проекта. Готовые RefMod-файлы (.safetensors) можно положить в models/refmods.")));
+        cards.length ? grid : h("div", { class: "h3z-cempty" }, lib.cards.length ? T("Ничего не найдено") : T("Карточек пока нет. «+ Создать» — из фото, клипа и голоса ассетов проекта. Готовые RefMod-файлы (.safetensors) можно положить в models/refmods."))));
     },
     charTile(c, used, target) {
       const th = this.charThumb(c);
       const el = h("div", { class: "h3z-ccard" + (used ? " used" : ""), draggable: "true",
-        title: `${c.name} · ${CN[c.concept]}${c.subject_name ? ` · субъект «${c.subject_name}»` : ""}\n${this.charKinds(c)} · ≈${this.charTokens(c)} ток. · ${c.mode === "compressed" ? "Compressed" : "Full"}${c.appearance ? "\n" + c.appearance : ""}\nКлик — добавить в выбранный клип / участок · перетащите на клип · правый клик — меню` },
+        title: T("{0} · {1}{2}\n{3} · ≈{4} ток. · {5}{6}\nКлик — добавить в выбранный клип / участок · перетащите на клип · правый клик — меню", c.name, CN[c.concept], c.subject_name ? T(" · субъект «{0}»", c.subject_name) : "", this.charKinds(c), this.charTokens(c), c.mode === "compressed" ? "Compressed" : "Full", c.appearance ? "\n" + c.appearance : "") },
         th ? h("img", { src: th, loading: "lazy", draggable: "false" }) : h("div", { class: "gl" }, GLYPH[c.concept] || "◈"),
         h("div", { class: "cc" }, GLYPH[c.concept] || "◈"),
-        c.audio ? h("div", { class: "vo", title: `Голос ${c.audio.seconds} с` }, "🎙") : null,
-        h("div", { class: "cap" }, h("b", null, c.name), h("span", null, `${this.charKinds(c)} · ${this.charTokens(c)} ток.`)));
+        c.audio ? h("div", { class: "vo", title: T("Голос {0} с", c.audio.seconds) }, "🎙") : null,
+        h("div", { class: "cap" }, h("b", null, c.name), h("span", null, T("{0} · {1} ток.", this.charKinds(c), this.charTokens(c)))));
       el.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-h3s-card", c.id); e.dataTransfer.effectAllowed = "copy"; });
       el.onclick = () => used && target ? this.charRemove(target, c.id) : this.charAdd(target, c.id);
       el.oncontextmenu = (e) => this.charMenu(e, c);
@@ -136,17 +137,17 @@ export function installChars(Editor, { C, h, ICON }) {
     charMenu(e, c) {
       const t = this.charTarget(), used = this.charUsedIn(c.id);
       this.openMenu(e, `${GLYPH[c.concept] || "◈"} ${c.name}`, [
-        { label: t ? `+ Добавить в ${t.region ? "участок" : `отрезок ${t.seg + 1}`}` : "+ Добавить (выберите клип)", fn: () => this.charAdd(t, c.id), dis: !t },
-        c.editable ? { label: "✎ Изменить имя / папку / описание", fn: () => this.charOpenForm(c) } : { why: c.bundle ? "Бандл — только чтение" : "Из models/refmods — только чтение" },
-        c.editable ? { label: "✕ Удалить карточку", danger: true, fn: () => this.charDelete(c) } : null,
-        used.length ? { why: "Используется: " + used.join(", ") } : null,
+        { label: t ? T("+ Добавить в {0}", t.region ? T("участок") : T("отрезок {0}", t.seg + 1)) : T("+ Добавить (выберите клип)"), fn: () => this.charAdd(t, c.id), dis: !t },
+        c.editable ? { label: T("✎ Изменить имя / папку / описание"), fn: () => this.charOpenForm(c) } : { why: c.bundle ? T("Бандл — только чтение") : T("Из models/refmods — только чтение") },
+        c.editable ? { label: T("✕ Удалить карточку"), danger: true, fn: () => this.charDelete(c) } : null,
+        used.length ? { why: T("Используется: ") + used.join(", ") } : null,
       ]);
     },
     async charDelete(c) {
       const used = this.charUsedIn(c.id);
-      if (!confirm(`Удалить карточку «${c.name}» (файлы .safetensors и превью)?` + (used.length ? `\nОна используется: ${used.join(", ")} — там она станет недоступной.` : ""))) return;
-      try { await this.host.call("/h3zero/chars/delete", { id: c.id }); this.toast(`Карточка «${c.name}» удалена`); }
-      catch (err) { this.toast("Не удалось удалить: " + (err.message || err), true); }
+      if (!confirm(T("Удалить карточку «{0}» (файлы .safetensors и превью)?", c.name) + (used.length ? T("\nОна используется: {0} — там она станет недоступной.", used.join(", ")) : ""))) return;
+      try { await this.host.call("/h3zero/chars/delete", { id: c.id }); this.toast(T("Карточка «{0}» удалена", c.name)); }
+      catch (err) { this.toast(T("Не удалось удалить: ") + (err.message || err), true); }
       await this.charsLoad(true); this.renderLeft(); this.renderInspector();
     },
 
@@ -166,27 +167,27 @@ export function installChars(Editor, { C, h, ICON }) {
         if (e.on !== false && r) tok += (sn.tokens || 0) * copies;
         const tags = r ? [...r.image.map((n) => `<Picture ${n}>`), ...r.video.map((n) => `<Video ${n}>`), ...r.audio.map((n) => `<Audio ${n}>`)] : [];
         const th = lib && this.charThumb(lib);
-        const wsel = h("select", { class: "w", title: "Вес: 2–4 = карточка подаётся 2–4 раза (сильнее), < 1 — ослабленная копия" },
+        const wsel = h("select", { class: "w", title: T("Вес: 2–4 = карточка подаётся 2–4 раза (сильнее), < 1 — ослабленная копия") },
           WEIGHTS.map((w) => h("option", { value: w, selected: Math.abs((e.w ?? 1) - w) < 1e-6 }, w >= 1 ? `×${w}` : `${w}`)));
         wsel.onchange = () => wsel.blur() || this.charEdit(t, e.id, (c) => { c.w = Number(wsel.value); });
         wsel.addEventListener("click", (ev) => ev.stopPropagation());
         const tog = (on, glyph, title, fn) => h("span", { class: "tg2" + (on ? " on" : ""), title, onclick: (ev) => { ev.stopPropagation(); fn(); } }, glyph);
         const chip = h("div", { class: "h3z-cref" + (e.on === false ? " off" : "") + (gone ? " gone" : ""),
-          title: `${sn.name || e.id} · ${CN[sn.concept] || ""}${gone ? "\n⚠ Нет в библиотеке — генерация остановится с ошибкой" : ""}${tags.length ? "\n" + tags.join(" ") + " · клик — вставить метку в промпт" : ""}` },
+          title: `${sn.name || e.id} · ${CN[sn.concept] || ""}${gone ? T("\n⚠ Нет в библиотеке — генерация остановится с ошибкой") : ""}${tags.length ? "\n" + tags.join(" ") + T(" · клик — вставить метку в промпт") : ""}` },
           th ? h("img", { src: th, draggable: "false" }) : h("span", { class: "gl" }, GLYPH[sn.concept] || "◈"),
           h("span", { class: "nm" }, sn.name || e.id),
-          tags.length ? h("span", { class: "tg" }, tags[0] + (tags.length > 1 ? ` +${tags.length - 1}` : "")) : h("span", { class: "tg dim" }, e.on === false ? "выкл." : t.region && !sn.vkind ? "голос не в участке" : "—"),
+          tags.length ? h("span", { class: "tg" }, tags[0] + (tags.length > 1 ? ` +${tags.length - 1}` : "")) : h("span", { class: "tg dim" }, e.on === false ? T("выкл.") : t.region && !sn.vkind ? T("голос не в участке") : "—"),
           wsel,
-          sn.vkind && sn.audio && !t.region ? [tog(e.look !== false, "👁", "Внешность (картинка / клип карточки)", () => this.charEdit(t, e.id, (c) => { c.look = c.look === false; })),
-            tog(e.voice !== false, "🎙", "Голос карточки", () => this.charEdit(t, e.id, (c) => { c.voice = c.voice === false; }))] : null,
-          tog(e.on !== false, e.on !== false ? "●" : "○", e.on !== false ? "Выключить (не подавать, но оставить)" : "Включить", () => this.charEdit(t, e.id, (c) => { c.on = c.on === false; })),
-          h("span", { class: "x", title: "Убрать", onclick: (ev) => { ev.stopPropagation(); this.charRemove(t, e.id); } }, "✕"));
+          sn.vkind && sn.audio && !t.region ? [tog(e.look !== false, "👁", T("Внешность (картинка / клип карточки)"), () => this.charEdit(t, e.id, (c) => { c.look = c.look === false; })),
+            tog(e.voice !== false, "🎙", T("Голос карточки"), () => this.charEdit(t, e.id, (c) => { c.voice = c.voice === false; }))] : null,
+          tog(e.on !== false, e.on !== false ? "●" : "○", e.on !== false ? T("Выключить (не подавать, но оставить)") : T("Включить"), () => this.charEdit(t, e.id, (c) => { c.on = c.on === false; })),
+          h("span", { class: "x", title: T("Убрать"), onclick: (ev) => { ev.stopPropagation(); this.charRemove(t, e.id); } }, "✕"));
         chip.onclick = () => { if (tags.length && !t.region) this.insertTag(tags[0]); };
         box.append(chip);
       }
       const lib = this._chars?.cards || [], have = new Set((x.cards || []).map((e) => e.id));
-      const pick = h("select", { class: "h3z-sel sm", title: "Добавить карточку из библиотеки «Персонажи» (или перетащите её сюда)" },
-        h("option", { value: "" }, lib.length ? "+ персонаж" : this._chars?.loading ? "загрузка…" : "+ персонаж (библиотека пуста)"),
+      const pick = h("select", { class: "h3z-sel sm", title: T("Добавить карточку из библиотеки «Персонажи» (или перетащите её сюда)") },
+        h("option", { value: "" }, lib.length ? T("+ персонаж") : this._chars?.loading ? T("загрузка…") : T("+ персонаж (библиотека пуста)")),
         lib.filter((c) => !have.has(c.id)).map((c) => h("option", { value: c.id }, `${GLYPH[c.concept] || "◈"} ${c.folder ? c.folder + "/" : ""}${c.name}`)));
       pick.onchange = () => { const v = pick.value; pick.blur(); if (v) this.charAdd(t, v); };
       box.append(pick);
@@ -194,7 +195,7 @@ export function installChars(Editor, { C, h, ICON }) {
       box.addEventListener("dragleave", () => box.classList.remove("over"));
       box.addEventListener("drop", (e) => { const id = e.dataTransfer.getData("application/x-h3s-card"); box.classList.remove("over"); if (id) { e.preventDefault(); e.stopPropagation(); this.charAdd(t, id); } });
       const n = (x.cards || []).length;
-      return h("div", { class: "h3z-cblock" }, h("div", { class: "h3z-lbl" }, "Персонажи", n ? h("em", null, `${n} / ${C.MAX_CARDS} · ≈${tok} ток.`) : h("em", null, "карточки из вкладки «Персонажи»")), box);
+      return h("div", { class: "h3z-cblock" }, h("div", { class: "h3z-lbl" }, T("Персонажи"), n ? h("em", null, T("{0} / {1} · ≈{2} ток.", n, C.MAX_CARDS, tok)) : h("em", null, T("карточки из вкладки «Персонажи»"))), box);
     },
 
     // ------------------------------------------------------------------ create / edit form
@@ -216,7 +217,7 @@ export function installChars(Editor, { C, h, ICON }) {
       const [W, H] = C.resolution(this.p.settings);
       this.p.segments.forEach((s, i) => {
         const v = s.result?.video; if (!v?.filename) return;
-        out.push({ v: "s:" + s.id, label: `▣ Отрезок ${i + 1}${s.name ? " · " + s.name : ""}`, ref: { file: v.filename, subfolder: v.subfolder || "", type: v.type || "output" },
+        out.push({ v: "s:" + s.id, label: T("▣ Отрезок {0}{1}", i + 1, s.name ? " · " + s.name : ""), ref: { file: v.filename, subfolder: v.subfolder || "", type: v.type || "output" },
           w: s.result.width || W, h: s.result.height || H, frames: s.result.frames || s.frames, dur: (s.result.frames || s.frames) / 24, url: this.host.url(v) });
       });
       return out;
@@ -264,9 +265,9 @@ export function installChars(Editor, { C, h, ICON }) {
     charFormEst() {
       const el = this.$.cfEst; if (!el) return;
       const e = this.charEstimate();
-      el.textContent = !e ? "Считаю размеры…" : (e.visual_tokens ? `Внешность: кадр ${e.canvas[0]}×${e.canvas[1]} → латент ${e.latent.join("×")} · ≈${e.visual_tokens} ток.` : "Внешность: нет фото и клипа")
-        + (e?.voice_sec ? ` · голос ${e.voice_sec.toFixed(1)} с ≈${e.voice_tokens} ток.` : "")
-        + (e ? ` · всего ≈${(e.visual_tokens || 0) + (e.voice_tokens || 0)} ток. на копию` : "");
+      el.textContent = !e ? T("Считаю размеры…") : (e.visual_tokens ? T("Внешность: кадр {0}×{1} → латент {2} · ≈{3} ток.", e.canvas[0], e.canvas[1], e.latent.join("×"), e.visual_tokens) : T("Внешность: нет фото и клипа"))
+        + (e?.voice_sec ? T(" · голос {0} с ≈{1} ток.", e.voice_sec.toFixed(1), e.voice_tokens) : "")
+        + (e ? T(" · всего ≈{0} ток. на копию", (e.visual_tokens || 0) + (e.voice_tokens || 0)) : "");
     },
     charForm(L) {
       const f = this.cf, edit = !!f.edit;
@@ -277,46 +278,46 @@ export function installChars(Editor, { C, h, ICON }) {
         return e;
       };
       const folders = [...new Set((this._chars?.cards || []).filter((c) => c.root === "s").map((c) => c.folder).filter(Boolean))];
-      const folder = txt("folder", "папка (необязательно)"); folder.setAttribute("list", "h3z-cfolders");
+      const folder = txt("folder", T("папка (необязательно)")); folder.setAttribute("list", "h3z-cfolders");
       const concept = h("select", { class: "h3z-sel sm" }, C.CARD_CONCEPTS.map((k) => h("option", { value: k, selected: f.concept === k }, `${GLYPH[k]} ${CN[k]}`)));
       concept.onchange = () => { f.concept = concept.value; };
-      const head = h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, edit ? "Изменить карточку" : "Новая карточка"), h("i", { class: "grow" }),
-          h("button", { class: "h3z-btn sm", onclick: () => this.charCloseForm() }, "← К библиотеке"));
+      const head = h("div", { class: "h3z-row hd" }, h("div", { class: "h3z-lbl" }, edit ? T("Изменить карточку") : T("Новая карточка")), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm", onclick: () => this.charCloseForm() }, T("← К библиотеке")));
       const parts = [
-        h("div", { class: "h3z-grid2" }, this.field("Имя", txt("name", "Анна")), this.field("Тип", concept)),
-        this.field("Папка", h("div", null, folder, h("datalist", { id: "h3z-cfolders" }, folders.map((x) => h("option", { value: x }))))),
+        h("div", { class: "h3z-grid2" }, this.field(T("Имя"), txt("name", T("Анна"))), this.field(T("Тип"), concept)),
+        this.field(T("Папка"), h("div", null, folder, h("datalist", { id: "h3z-cfolders" }, folders.map((x) => h("option", { value: x }))))),
       ];
       if (!edit) {
         const seg = (val, opts, set) => h("div", { class: "h3z-cseg" }, opts.map(([v, l, t]) => h("div", { class: "it" + (val === v ? " on" : ""), title: t, onclick: () => { set(v); re(); } }, l)));
         parts.push(h("div", { class: "h3z-grid2" },
-          this.field("Режим", seg(f.mode, [["full", "Full", "Все токены латента: точнее, дороже"], ["compressed", "Compressed", "Латент сжат до сетки: дешевле, общий образ"]], (v) => { f.mode = v; })),
-          this.field("Кадр", (() => { const s = h("select", { class: "h3z-sel sm", title: "Короткая сторона кадра карточки (не увеличивается)" }, RES.map((r) => h("option", { value: r, selected: f.res === r }, `${r} px`))); s.onchange = () => { f.res = Number(s.value); this.charFormEst(); }; return s; })())));
+          this.field(T("Режим"), seg(f.mode, [["full", "Full", T("Все токены латента: точнее, дороже")], ["compressed", "Compressed", T("Латент сжат до сетки: дешевле, общий образ")]], (v) => { f.mode = v; })),
+          this.field(T("Кадр"), (() => { const s = h("select", { class: "h3z-sel sm", title: T("Короткая сторона кадра карточки (не увеличивается)") }, RES.map((r) => h("option", { value: r, selected: f.res === r }, `${r} px`))); s.onchange = () => { f.res = Number(s.value); this.charFormEst(); }; return s; })())));
         if (f.mode === "compressed") {
-          const g = h("select", { class: "h3z-sel sm" }, [8, 12, 16, 24, 32].map((n) => h("option", { value: n, selected: f.grid === n }, `${n} по длинной стороне`)));
+          const g = h("select", { class: "h3z-sel sm" }, [8, 12, 16, 24, 32].map((n) => h("option", { value: n, selected: f.grid === n }, T("{0} по длинной стороне", n))));
           g.onchange = () => { f.grid = Number(g.value); this.charFormEst(); };
-          parts.push(this.field("Сетка", g));
+          parts.push(this.field(T("Сетка"), g));
         }
         parts.push(this.charPhotosBlock(), this.charClipBlock(), this.charVoiceBlock());
       } else {
         const c = f.card || {};
-        parts.push(h("div", { class: "h3z-note" }, `Источники не меняются (${this.charKinds(c) || "—"}, ${c.mode === "compressed" ? "Compressed" : "Full"}) — для других фото создайте новую карточку.`));
+        parts.push(h("div", { class: "h3z-note" }, T("Источники не меняются ({0}, {1}) — для других фото создайте новую карточку.", this.charKinds(c) || "—", c.mode === "compressed" ? "Compressed" : "Full")));
       }
-      parts.push(h("div", { class: "h3z-lbl" }, "Описание", h("em", null, "по-английски — идёт в промпт")),
-        this.field("Имя субъекта", txt("subject_name", "Anna — одно слово", false, "Как субъект зовётся в промпте; одно слово")),
-        this.field("Внешность", txt("appearance", "auburn hair, green coat…", true)),
-        this.field("Сохранять", txt("retained_attributes", "freckles, scar over the left brow…", true, "Что модель должна сохранить")),
-        this.field("Голос", txt("voice_description", "low husky voice…", true)));
+      parts.push(h("div", { class: "h3z-lbl" }, T("Описание"), h("em", null, T("по-английски — идёт в промпт"))),
+        this.field(T("Имя субъекта"), txt("subject_name", T("Anna — одно слово"), false, T("Как субъект зовётся в промпте; одно слово"))),
+        this.field(T("Внешность"), txt("appearance", "auburn hair, green coat…", true)),
+        this.field(T("Сохранять"), txt("retained_attributes", "freckles, scar over the left brow…", true, T("Что модель должна сохранить"))),
+        this.field(T("Голос"), txt("voice_description", "low husky voice…", true)));
       const est = this.$.cfEst = h("div", { class: "h3z-note est" });
       const st = this._chars || {}, pr = this.mpGet?.(this.p.settings.model_preset);
       const noVae = !edit && !st.vae && !pr?.vae && !this.host.inputLinked?.("vae") && (f.photos.length || f.clip);
       const noAvae = !edit && !st.audio_vae && !pr?.audio_vae && !this.host.inputLinked?.("audio_vae") && f.voice;
-      const go = h("button", { class: "h3z-btn primary" + (f.busy ? " dis" : ""), onclick: () => this.charSubmit() }, f.busy ? (edit ? "Сохраняю…" : "Кодирую…") : edit ? "Сохранить" : "◈ Создать карточку");
+      const go = h("button", { class: "h3z-btn primary" + (f.busy ? " dis" : ""), onclick: () => this.charSubmit() }, f.busy ? (edit ? T("Сохраняю…") : T("Кодирую…")) : edit ? T("Сохранить") : T("◈ Создать карточку"));
       // scrolling body + a footer that always stays in view (estimate, warnings, «Создать»)
       const foot = h("div", { class: "cf-ft" }, edit ? null : est,
-        noVae ? h("div", { class: "h3z-note err" }, "Нет VAE: подключите VAE проводом к узлу студии или выберите в пресете моделей проекта.") : null,
-        noAvae ? h("div", { class: "h3z-note err" }, "Нет аудио-VAE для голоса: подключите его ко входу audio_vae узла студии или выберите в пресете.") : null,
-        f.uploading ? h("div", { class: "h3z-note" }, `Загрузка файлов: ${f.uploading}…`) : null,
-        h("div", { class: "h3z-row ft" }, go, h("button", { class: "h3z-btn", onclick: () => this.charCloseForm() }, "Отмена")));
+        noVae ? h("div", { class: "h3z-note err" }, T("Нет VAE: подключите VAE проводом к узлу студии или выберите в пресете моделей проекта.")) : null,
+        noAvae ? h("div", { class: "h3z-note err" }, T("Нет аудио-VAE для голоса: подключите его ко входу audio_vae узла студии или выберите в пресете.")) : null,
+        f.uploading ? h("div", { class: "h3z-note" }, T("Загрузка файлов: {0}…", f.uploading)) : null,
+        h("div", { class: "h3z-row ft" }, go, h("button", { class: "h3z-btn", onclick: () => this.charCloseForm() }, T("Отмена"))));
       const form = h("div", { class: "h3z-chars form" + (f.busy ? " busy" : "") }, head, h("div", { class: "cf-body" }, parts), foot);
       if (!edit) {   // files from Explorer anywhere on the form: images → photos, video → clip, audio → voice
         form.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); form.classList.add("over"); } });
@@ -332,61 +333,61 @@ export function installChars(Editor, { C, h, ICON }) {
       f.photos.forEach((p, i) => {
         const a = p;
         const mv = (d) => { const j = i + d; if (j < 0 || j >= f.photos.length) return; const arr = f.photos; [arr[i], arr[j]] = [arr[j], arr[i]];
-          if (i === 0 || j === 0) { let n = 0; arr.forEach((q, k) => { if (k && q.crop) { q.crop = null; n++; } }); if (n) this.toast("Первое фото сменилось — кадрирование остальных сброшено (их пропорции задаёт первое)"); } re(); };
+          if (i === 0 || j === 0) { let n = 0; arr.forEach((q, k) => { if (k && q.crop) { q.crop = null; n++; } }); if (n) this.toast(T("Первое фото сменилось — кадрирование остальных сброшено (их пропорции задаёт первое)")); } re(); };
         list.append(h("div", { class: "ph" + (i ? "" : " first"), title: a.name },
           h("img", { src: a.url, draggable: "false" }),
-          h("span", { class: "n", title: i ? "" : "Первое фото задаёт пропорции карточки" }, i ? String(i + 1) : "1 ⤢"),
-          p.crop ? h("span", { class: "cr", title: "Кадрировано" }, "✂") : null,
+          h("span", { class: "n", title: i ? "" : T("Первое фото задаёт пропорции карточки") }, i ? String(i + 1) : "1 ⤢"),
+          p.crop ? h("span", { class: "cr", title: T("Кадрировано") }, "✂") : null,
           h("div", { class: "bt" },
-            h("span", { title: "Раньше", onclick: () => mv(-1) }, "←"), h("span", { title: "Позже", onclick: () => mv(1) }, "→"),
-            h("span", { title: i ? "Кадрировать (пропорции первого фото)" : "Кадрировать (свободно — задаёт пропорции карточки)", onclick: () => this.charCrop(i) }, "✂"),
-            h("span", { title: "Убрать", onclick: () => { f.photos.splice(i, 1); if (i === 0) f.photos.forEach((q) => { q.crop = null; }); re(); } }, "✕"))));
+            h("span", { title: T("Раньше"), onclick: () => mv(-1) }, "←"), h("span", { title: T("Позже"), onclick: () => mv(1) }, "→"),
+            h("span", { title: i ? T("Кадрировать (пропорции первого фото)") : T("Кадрировать (свободно — задаёт пропорции карточки)"), onclick: () => this.charCrop(i) }, "✂"),
+            h("span", { title: T("Убрать"), onclick: () => { f.photos.splice(i, 1); if (i === 0) f.photos.forEach((q) => { q.crop = null; }); re(); } }, "✕"))));
       });
       const imgs = this.p.assets.filter((a) => a.category !== "audio" && a.category !== "video" && !f.photos.some((p) => p.key === "a:" + a.id));
-      const pick = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, imgs.length ? "+ фото из ассетов" : "нет картинок в ассетах"), imgs.map((a) => h("option", { value: a.id }, a.name)));
+      const pick = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, imgs.length ? T("+ фото из ассетов") : T("нет картинок в ассетах")), imgs.map((a) => h("option", { value: a.id }, a.name)));
       pick.onchange = () => { const a = this.p.assets.find((x) => x.id === pick.value); if (a) { f.photos.push(this.charPhotoOf(a)); re(); } };
-      list.append(h("div", { class: "add" }, pick, this.charFileBtn("image/*", true, "Фото с диска (можно несколько) · или перетащите файлы сюда · Ctrl+V — вставить картинку")));
+      list.append(h("div", { class: "add" }, pick, this.charFileBtn("image/*", true, T("Фото с диска (можно несколько) · или перетащите файлы сюда · Ctrl+V — вставить картинку"))));
       list.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].some((t) => t === "application/x-h3s-asset" || t === "Files")) { e.preventDefault(); list.classList.add("over"); } });
       list.addEventListener("dragleave", () => list.classList.remove("over"));
       list.addEventListener("drop", (e) => { list.classList.remove("over"); if (e.dataTransfer.files?.length) { e.preventDefault(); e.stopPropagation(); this.charAddFiles([...e.dataTransfer.files], "photo"); return; } const id = e.dataTransfer.getData("application/x-h3s-asset"); const a = this.p.assets.find((x) => x.id === id);
         if (a && a.category !== "audio" && a.category !== "video") { e.preventDefault(); if (!f.photos.some((p) => p.key === "a:" + id)) { f.photos.push(this.charPhotoOf(a)); re(); } } });
-      return h("div", null, h("div", { class: "h3z-lbl" }, "Фото", h("em", null, f.photos.length ? `${f.photos.length} · первое задаёт пропорции` : "из ассетов, с диска, перетаскиванием или Ctrl+V")), list);
+      return h("div", null, h("div", { class: "h3z-lbl" }, T("Фото"), h("em", null, f.photos.length ? T("{0} · первое задаёт пропорции", f.photos.length) : T("из ассетов, с диска, перетаскиванием или Ctrl+V"))), list);
     },
     charClipBlock() {
       const f = this.cf, re = () => this.renderLeft(), srcs = this.charSources(false);
-      const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? "— без клипа —" : "нет видео / готовых клипов"), srcs.map((s) => h("option", { value: s.v, selected: f.clip?.src === s.v }, s.label)));
+      const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? T("— без клипа —") : T("нет видео / готовых клипов")), srcs.map((s) => h("option", { value: s.v, selected: f.clip?.src === s.v }, s.label)));
       sel.onchange = () => { f.clip = sel.value ? { src: sel.value, start: 0, frames: 22 } : null; re(); };
-      const out = [h("div", { class: "add" }, sel, this.charFileBtn("video/*,.mp4,.mov,.webm,.mkv", false, "Клип с диска · или перетащите видеофайл на форму"))];
+      const out = [h("div", { class: "add" }, sel, this.charFileBtn("video/*,.mp4,.mov,.webm,.mkv", false, T("Клип с диска · или перетащите видеофайл на форму")))];
       if (f.clip) {
         const s = srcs.find((x) => x.v === f.clip.src), maxF = Math.max(1, s?.frames || 9999);
-        const st = h("input", { class: "h3z-in sm", type: "number", min: 0, max: Math.max(0, maxF - 1), value: f.clip.start, title: "Первый кадр" });
-        const nf = h("input", { class: "h3z-in sm", type: "number", min: 1, max: 225, value: f.clip.frames, title: "Кадров: 1–4 как есть, иначе 5, 22, 39, 56… (правило 17 кадров)" });
+        const st = h("input", { class: "h3z-in sm", type: "number", min: 0, max: Math.max(0, maxF - 1), value: f.clip.start, title: T("Первый кадр") });
+        const nf = h("input", { class: "h3z-in sm", type: "number", min: 1, max: 225, value: f.clip.frames, title: T("Кадров: 1–4 как есть, иначе 5, 22, 39, 56… (правило 17 кадров)") });
         const note = h("span", { class: "h3z-note" });
         const upd = () => {
           f.clip.start = clamp(Math.trunc(Number(st.value) || 0), 0, Math.max(0, maxF - 1));
           f.clip.frames = clamp(Math.trunc(Number(nf.value) || 1), 1, Math.min(225, maxF - f.clip.start));
           const n = C.snapClipFrames(f.clip.frames);
-          note.textContent = `→ ${n} кадр.${n !== f.clip.frames ? ` (кратно 17 + 5: ${f.clip.frames} → ${n})` : ""} · ${(n / 24).toFixed(2)} с`;
+          note.textContent = T("→ {0} кадр.{1} · {2} с", n, n !== f.clip.frames ? T(" (кратно 17 + 5: {0} → {1})", f.clip.frames, n) : "", (n / 24).toFixed(2));
           this.charFormEst();
         };
         st.onchange = upd; nf.onchange = () => { upd(); nf.value = C.snapClipFrames(f.clip.frames); f.clip.frames = Number(nf.value); };
         upd();
-        out.push(h("div", { class: "h3z-grid2" }, this.field("С кадра", st), this.field("Кадров", nf)), note);
+        out.push(h("div", { class: "h3z-grid2" }, this.field(T("С кадра"), st), this.field(T("Кадров"), nf)), note);
       }
-      return h("div", null, h("div", { class: "h3z-lbl" }, "Клип", h("em", null, "необязательно · движение / мимика")), out);
+      return h("div", null, h("div", { class: "h3z-lbl" }, T("Клип"), h("em", null, T("необязательно · движение / мимика"))), out);
     },
     charVoiceBlock() {
       const f = this.cf, re = () => this.renderLeft(), srcs = this.charSources(true);
-      const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? "— без голоса —" : "нет аудио / видео со звуком"), srcs.map((s) => h("option", { value: s.v, selected: f.voice?.src === s.v }, s.label)));
+      const sel = h("select", { class: "h3z-sel sm" }, h("option", { value: "" }, srcs.length ? T("— без голоса —") : T("нет аудио / видео со звуком")), srcs.map((s) => h("option", { value: s.v, selected: f.voice?.src === s.v }, s.label)));
       sel.onchange = () => { const s = srcs.find((x) => x.v === sel.value); f.voice = s ? { src: s.v, start: 0, end: Math.round(Math.min(s.dur || 8, 8) * 10) / 10 || null } : null; re(); };
-      const out = [h("div", { class: "add" }, sel, this.charFileBtn("audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.mp4,.mov,.webm", false, "Голос с диска (аудио или видео со звуком) · или перетащите файл на форму"))];
+      const out = [h("div", { class: "add" }, sel, this.charFileBtn("audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.mp4,.mov,.webm", false, T("Голос с диска (аудио или видео со звуком) · или перетащите файл на форму")))];
       if (f.voice) {
         const s = srcs.find((x) => x.v === f.voice.src), dur = s?.dur || 0;
-        const a = h("input", { class: "h3z-in sm", type: "number", step: 0.1, min: 0, value: f.voice.start, title: "Начало, с" });
-        const b = h("input", { class: "h3z-in sm", type: "number", step: 0.1, min: 0, value: f.voice.end ?? "", placeholder: dur ? dur.toFixed(1) : "до конца", title: "Конец, с (пусто — до конца)" });
+        const a = h("input", { class: "h3z-in sm", type: "number", step: 0.1, min: 0, value: f.voice.start, title: T("Начало, с") });
+        const b = h("input", { class: "h3z-in sm", type: "number", step: 0.1, min: 0, value: f.voice.end ?? "", placeholder: dur ? dur.toFixed(1) : T("до конца"), title: T("Конец, с (пусто — до конца)") });
         const upd = () => { f.voice.start = Math.max(0, Number(a.value) || 0); f.voice.end = b.value === "" ? null : Math.max(f.voice.start + 0.5, Number(b.value) || 0); this.charFormEst(); };
         a.onchange = upd; b.onchange = upd;
-        const play = h("button", { class: "h3z-btn sm", title: "Прослушать обрезку" }, "▶");
+        const play = h("button", { class: "h3z-btn sm", title: T("Прослушать обрезку") }, "▶");
         play.onclick = () => {
           this._cfAudio?.pause?.();
           if (play.textContent === "■") { play.textContent = "▶"; return; }
@@ -395,15 +396,15 @@ export function installChars(Editor, { C, h, ICON }) {
           au.onended = () => { play.textContent = "▶"; };
           au.play().catch(() => { play.textContent = "▶"; });
         };
-        out.push(h("div", { class: "h3z-grid3" }, this.field("С, с", a), this.field("По, с", b), this.field("", play)));
+        out.push(h("div", { class: "h3z-grid3" }, this.field(T("С, с"), a), this.field(T("По, с"), b), this.field("", play)));
       }
-      return h("div", null, h("div", { class: "h3z-lbl" }, "Голос", h("em", null, "≈80 ток./с · 3–10 с чистой речи")), out);
+      return h("div", null, h("div", { class: "h3z-lbl" }, T("Голос"), h("em", null, T("≈80 ток./с · 3–10 с чистой речи"))), out);
     },
     async charSubmit() {
       const f = this.cf; if (!f || f.busy) return;
       const name = f.name.trim(), sub = f.subject_name.trim();
-      if (!name) return this.toast("Дайте карточке имя", true);
-      if (sub && !SUBJECT_RE.test(sub)) return this.toast("Имя субъекта — одно слово (буквы, цифры, - и ')", true);
+      if (!name) return this.toast(T("Дайте карточке имя"), true);
+      if (sub && !SUBJECT_RE.test(sub)) return this.toast(T("Имя субъекта — одно слово (буквы, цифры, - и ')"), true);
       f.busy = true; this.renderLeft();
       try {
         if (f.edit) {
@@ -412,22 +413,22 @@ export function installChars(Editor, { C, h, ICON }) {
           const d = await this.host.call("/h3zero/chars/update", { id: old, fields });
           await this.charsLoad(true);
           const card = d?.card || null;
-          if (!card) throw new Error("сервер не вернул карточку — обновите библиотеку (↻)");
+          if (!card) throw new Error(T("сервер не вернул карточку — обновите библиотеку (↻)"));
           this.charRelink(old, card);
-          this.toast(card.name === name ? `Карточка «${name}» сохранена` : `Сохранено, но имя на диске «${card.name}»`, card.name !== name);
+          this.toast(card.name === name ? T("Карточка «{0}» сохранена", name) : T("Сохранено, но имя на диске «{0}»", card.name), card.name !== name);
         } else {
           const spec = this.charSpec();
-          if (!spec.photos.length && !spec.clip && !spec.voice) { f.busy = false; this.renderLeft(); return this.toast("Добавьте фото, клип или голос", true); }
+          if (!spec.photos.length && !spec.clip && !spec.voice) { f.busy = false; this.renderLeft(); return this.toast(T("Добавьте фото, клип или голос"), true); }
           const pr = this.mpGet?.(this.p.settings.model_preset);
           const wired = {};
           for (const k of ["vae", "audio_vae"]) { const w = await this.host.wiredUpstream?.(k); if (w) wired[k] = w; }
           const d = await this.host.call("/h3zero/chars/create", { spec, wired, vae: pr?.vae || "", audio_vae: pr?.audio_vae || "" });
           await this.charsLoad(true);
-          this.toast(`◈ Карточка «${d?.card?.name || name}» создана`);
+          this.toast(T("◈ Карточка «{0}» создана", d?.card?.name || name));
         }
         this.cf = null;
       } catch (err) {
-        f.busy = false; this.toast((f.edit ? "Не сохранилось: " : "Не создалась: ") + (err.message || err), true);
+        f.busy = false; this.toast((f.edit ? T("Не сохранилось: ") : T("Не создалась: ")) + (err.message || err), true);
       }
       this.renderLeft(); this.renderInspector();
     },
@@ -457,7 +458,7 @@ export function installChars(Editor, { C, h, ICON }) {
     charFileBtn(accept, multiple, title) {
       const inp = h("input", { type: "file", accept, multiple: multiple || undefined, style: { display: "none" } });
       inp.onchange = () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) this.charAddFiles(fs, accept.startsWith("image") ? "photo" : accept.startsWith("video") ? "clip" : "voice"); };
-      return h("span", { class: "fb" }, h("button", { class: "h3z-btn sm", type: "button", title, onclick: () => inp.click() }, "📁 С диска"), inp);
+      return h("span", { class: "fb" }, h("button", { class: "h3z-btn sm", type: "button", title, onclick: () => inp.click() }, T("📁 С диска")), inp);
     },
     /** Files from the PC → the global card library's temp folder (output/h3zerostudio/_characters/.uploads, one copy
      *  per content; removed after «Создать» or after a day) — never a project folder and never the asset list.
@@ -466,7 +467,7 @@ export function installChars(Editor, { C, h, ICON }) {
       const f = this.cf; if (!f || f.edit) return;
       const kind = (x) => IMG_RE.test(x.type) || /\.(png|jpe?g|webp|bmp|gif)$/i.test(x.name) ? "image" : VID_RE.test(x.type) || /\.(mp4|mov|webm|mkv)$/i.test(x.name) ? "video" : AUD_RE.test(x.type) || /\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(x.name) ? "audio" : "";
       const list = files.filter((x) => kind(x));
-      if (list.length < files.length) this.toast(`Пропущено файлов: ${files.length - list.length} (нужны картинки, видео или аудио)`, true);
+      if (list.length < files.length) this.toast(T("Пропущено файлов: {0} (нужны картинки, видео или аудио)", files.length - list.length), true);
       if (!list.length) return;
       f.uploading = (f.uploading || 0) + list.length; this.renderLeft();
       let ok = 0;
@@ -484,19 +485,19 @@ export function installChars(Editor, { C, h, ICON }) {
             const u = { v: "u:" + rf.subfolder + "/" + rf.file, kind: k, label: (k === "video" ? "📁🎞 " : "📁♪ ") + name, ref: rf, url };
             if (k === "video") {
               try { const info = await this.host.videoInfo({ filename: rf.file, subfolder: rf.subfolder, type: rf.type }, false); Object.assign(u, { w: info.width, h: info.height, frames: info.frames, dur: info.duration, has_audio: !!info.has_audio }); }
-              catch (e) { this.toast(`${x.name}: не удалось прочитать видео (${e.message || e})`, true); continue; }
+              catch (e) { this.toast(T("{0}: не удалось прочитать видео ({1})", x.name, e.message || e), true); continue; }
             } else u.dur = await new Promise((res) => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(isFinite(a.duration) ? a.duration : 0); a.onerror = () => res(0); a.src = url; });
             if (!f.uploads.some((q) => q.v === u.v)) f.uploads.push(u);
             const asVoice = want === "voice" || (want !== "clip" && k === "audio");
             if (asVoice && (k === "audio" || u.has_audio)) f.voice = { src: u.v, start: 0, end: Math.round(Math.min(u.dur || 8, 8) * 10) / 10 || null };
             else if (k === "video") f.clip = { src: u.v, start: 0, frames: Math.min(22, Math.max(1, u.frames || 22)) };
-            else this.toast(`${x.name}: в видео нет звука — для голоса не подходит`, true);
-          } else this.toast(`${x.name}: сюда нужна ${want === "clip" ? "видео" : "аудио"}-запись`, true);
+            else this.toast(T("{0}: в видео нет звука — для голоса не подходит", x.name), true);
+          } else this.toast(T("{0}: сюда нужна {1}-запись", x.name, want === "clip" ? T("видео") : T("аудио")), true);
           ok++;
-        } catch (e) { this.toast("Не удалось загрузить " + x.name + ": " + (e.message || e), true); }
+        } catch (e) { this.toast(T("Не удалось загрузить ") + x.name + ": " + (e.message || e), true); }
       }
       f.uploading = Math.max(0, (f.uploading || 0) - list.length);
-      if (this.cf === f) { this.renderLeft(); if (ok) this.toast(`Загружено: ${ok} — временно, для этой карточки (в проект и «Ассеты» не попадают)`); }
+      if (this.cf === f) { this.renderLeft(); if (ok) this.toast(T("Загружено: {0} — временно, для этой карточки (в проект и «Ассеты» не попадают)", ok)); }
     },
     // ------------------------------------------------------------------ prompt editor (increment 2)
     /** The card labels of a clip / span as prompt-editor reference items (after the plain refs). */
@@ -507,7 +508,7 @@ export function installChars(Editor, { C, h, ICON }) {
         const lib = this.charCard(r.id), th = lib && this.charThumb(lib), sn = r.snap;
         const all = r.image.length + r.video.length + r.audio.length;
         const mk = (kind, tag, nums) => nums.forEach((n, k) => out.push({ token: `<${tag} ${n}>`, kind, card: r.id, name: sn.name || r.id,
-          sub: `◈ ${CN[sn.concept] || "карточка"}` + (nums.length > 1 ? ` · копия ${k + 1}/${nums.length}` : "") + (sn.subject_name ? ` · ${sn.subject_name}` : ""),
+          sub: `◈ ${CN[sn.concept] || T("карточка")}` + (nums.length > 1 ? T(" · копия {0}/{1}", k + 1, nums.length) : "") + (sn.subject_name ? ` · ${sn.subject_name}` : ""),
           thumb: kind === "audio" ? "" : th || "", icon: kind === "audio" ? "🎙" : GLYPH[sn.concept] || "◈", over: false }));
         mk("picture", "Picture", r.image); mk("video", "Video", r.video); mk("audio", "Audio", r.audio);
         if (!all) continue;
@@ -555,8 +556,8 @@ export function installChars(Editor, { C, h, ICON }) {
       if (!cards.length) return [];
       const voiced = (pe.refs.subjects || []).filter((x) => x.audio.length).slice(0, 4);
       return [h("span", { class: "sep" }),
-        B("◈ Набросать из персонажей", "Заполнить subject_definitions и retention_analysis по карточкам «Персонажей» этого промпта (их метки, имена, внешность, что сохранить, голос). Ctrl+Z — отменить", () => this.peDraftFromCards()),
-        ...voiced.map((x) => B(`🎙 ${x.name}`, `Реплика: <Subject ${x.n}> ${x.name} says: <d>[English] …</d> (голос — <Audio ${x.audio[0]}>)`, () => this.peSpeaker(x)))];
+        B(T("◈ Набросать из персонажей"), T("Заполнить subject_definitions и retention_analysis по карточкам «Персонажей» этого промпта (их метки, имена, внешность, что сохранить, голос). Ctrl+Z — отменить"), () => this.peDraftFromCards()),
+        ...voiced.map((x) => B(`🎙 ${x.name}`, T("Реплика: <Subject {0}> {1} says: <d>[English] …</d> (голос — <Audio {2}>)", x.n, x.name, x.audio[0]), () => this.peSpeaker(x)))];
     },
     peSpeaker(x) {
       const v = this.pe?.view; if (!v) return;
@@ -589,7 +590,7 @@ export function installChars(Editor, { C, h, ICON }) {
     peDraftFromCards() {
       const pe = this.pe, v = pe.view; if (!v) return;
       const { defs, ret } = this.peDraftLines();
-      if (!defs.length) return this.toast("У этого промпта нет карточек «Персонажей»", true);
+      if (!defs.length) return this.toast(T("У этого промпта нет карточек «Персонажей»"), true);
       const t = v.state.doc.toString(), secs = parseSections(t);
       if (!secs.length) {   // no structure yet: the H3 skeleton with the plain refs + the card lines, the old text into detailed_description
         const plain = pe.refs.items.filter((r) => !r.card && r.kind !== "var").map((r) => ({ token: r.token, name: r.kind === "auto" ? "last frame of the previous shot" : r.name, kind: r.kind }));
@@ -600,7 +601,7 @@ export function installChars(Editor, { C, h, ICON }) {
         tpl = tpl.replace("\n\ndetailed_description:", (plain.length ? "\n" : "") + ret.map((d) => d.line).join("\n") + "\n\ndetailed_description:");
         const at = tpl.indexOf("[Shot 1] ") + "[Shot 1] ".length, full = t.trim() ? tpl.slice(0, at) + t.trim() + tpl.slice(at) : tpl;
         v.dispatch({ changes: { from: 0, to: t.length, insert: full }, selection: { anchor: full.indexOf("[Shot 1] ") + 9 }, scrollIntoView: true });
-        this.toast(t.trim() ? "Набросок из персонажей вставлен, прежний текст — в detailed_description (Ctrl+Z — отменить)" : "Набросок из персонажей вставлен");
+        this.toast(t.trim() ? T("Набросок из персонажей вставлен, прежний текст — в detailed_description (Ctrl+Z — отменить)") : T("Набросок из персонажей вставлен"));
         v.focus(); return;
       }
       // structured: add what is missing to subject_definitions / retention_analysis (creating them in order if absent)
@@ -619,9 +620,9 @@ export function installChars(Editor, { C, h, ICON }) {
       };
       const n1 = put("subject_definitions", defs, ["summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music"]);
       const n2 = put("retention_analysis", ret.map((d) => ({ toks: [d.tok], line: d.line })), ["detailed_description", "overall_soundscape", "non_diegetic_music"]);
-      if (!changes.length) return this.toast("Все карточки уже описаны в subject_definitions и retention_analysis");
+      if (!changes.length) return this.toast(T("Все карточки уже описаны в subject_definitions и retention_analysis"));
       v.dispatch({ changes, scrollIntoView: true });
-      this.toast(`◈ Добавлено: ${n1} в subject_definitions, ${n2} в retention_analysis (Ctrl+Z — отменить)`);
+      this.toast(T("◈ Добавлено: {0} в subject_definitions, {1} в retention_analysis (Ctrl+Z — отменить)", n1, n2));
       v.focus();
     },
     /** Status bar: cards the prompt never cites (an auto line is added), unknown <Subject N> / !Name, cards switched off but named. */
@@ -635,20 +636,20 @@ export function installChars(Editor, { C, h, ICON }) {
       for (const [id, toks] of byCard) {
         if (!toks.some((tk) => t.includes(tk))) silent.push(this.p.cards?.[id]?.name || id);   // same rule as C.cardPhrases
       }
-      if (silent.length) out.push(`<span class="warn" title="Метки этих карточек в промпте не упомянуты — при генерации добавится строка по типу карточки (например «&lt;Picture N&gt; shows Anna…»). «◈ Набросать из персонажей» опишет их явно.">◈ не упомянуты: ${e2(silent.join(", "))}</span>`);
+      if (silent.length) out.push(T("<span class=\"warn\" title=\"Метки этих карточек в промпте не упомянуты — при генерации добавится строка по типу карточки (например «&lt;Picture N&gt; shows Anna…»). «◈ Набросать из персонажей» опишет их явно.\">◈ не упомянуты: {0}</span>", e2(silent.join(", "))));
       const badS = [...new Set([...t.matchAll(/<Subject\s*(\d+)>/g)].map((m) => +m[1]).filter((n) => n < 1 || n > subs.length))];
-      if (badS.length && subs.length) out.push(`<span class="bad" title="Персонажей с такими номерами у этого промпта нет (всего ${subs.length})">✕ ${badS.map((n) => `&lt;Subject ${n}&gt;`).join(", ")}</span>`);
+      if (badS.length && subs.length) out.push(T("<span class=\"bad\" title=\"Персонажей с такими номерами у этого промпта нет (всего {0})\">✕ {1}</span>", subs.length, badS.map((n) => `&lt;Subject ${n}&gt;`).join(", ")));
       const known = new Set(subs.flatMap((x) => [x.name.toLowerCase(), String(x.snap.name || "").replace(/\s+/g, "_").toLowerCase()]));
       const bangs = [...new Set([...t.matchAll(/(?:^|[\s(\[])!([\p{L}\p{N}_'-]+)/gu)].map((m) => m[1]))];
       const unk = bangs.filter((b) => !known.has(b.toLowerCase())), ok = bangs.filter((b) => known.has(b.toLowerCase()));
-      if (ok.length) out.push(`<span title="При «Применить» станут &lt;Subject N&gt; Имя">!→ ${e2(ok.join(", "))}</span>`);
-      if (unk.length) out.push(`<span class="bad" title="Нет такой карточки у этого промпта — останется как текст">✕ !${e2(unk.join(", !"))}</span>`);
+      if (ok.length) out.push(T("<span title=\"При «Применить» станут &lt;Subject N&gt; Имя\">!→ {0}</span>", e2(ok.join(", "))));
+      if (unk.length) out.push(T("<span class=\"bad\" title=\"Нет такой карточки у этого промпта — останется как текст\">✕ !{0}</span>", e2(unk.join(", !"))));
       const off = (ph.holder.cards || []).filter((e) => e.on === false || !C.cardCopies(e.w ?? 1)[0]).map((e) => this.p.cards?.[e.id]).filter(Boolean)
         .filter((sn) => [sn.subject_name, sn.name].some((nm) => nm && new RegExp(`(^|[^\\p{L}])!?${String(nm).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}])`, "iu").test(t)));
-      if (off.length) out.push(`<span class="warn" title="Карточка выключена — в генерацию не подаётся, хотя промпт её называет">◈ выключены: ${e2(off.map((x) => x.name).join(", "))}</span>`);
+      if (off.length) out.push(T("<span class=\"warn\" title=\"Карточка выключена — в генерацию не подаётся, хотя промпт её называет\">◈ выключены: {0}</span>", e2(off.map((x) => x.name).join(", "))));
       if (ph.region) {
         const vo = (ph.holder.cards || []).map((e) => this.p.cards?.[e.id]).filter((sn) => sn && sn.audio && !sn.vkind);
-        if (vo.length) out.push(`<span class="warn" title="Участок не подаёт голоса карточек">◈ голос в участке не идёт: ${e2(vo.map((x) => x.name).join(", "))}</span>`);
+        if (vo.length) out.push(T("<span class=\"warn\" title=\"Участок не подаёт голоса карточек\">◈ голос в участке не идёт: {0}</span>", e2(vo.map((x) => x.name).join(", "))));
       }
       return out.join("");
     },
@@ -657,13 +658,13 @@ export function installChars(Editor, { C, h, ICON }) {
     charCrop(i) {
       const f = this.cf, p = f?.photos[i], a = p; if (!a) return;
       const aspect = i ? this.charPhotoAspect(0) : null;
-      if (i && !aspect) return this.toast("Подождите — размер первого фото ещё не известен", true);
+      if (i && !aspect) return this.toast(T("Подождите — размер первого фото ещё не известен"), true);
       const img = h("img", { src: a.url, draggable: "false" });
       const box = h("div", { class: "rect" }, h("i", { class: "hd" }));
       const stage = h("div", { class: "stage" }, img, box);
       const st = { i, aspect, r: p.crop ? [...p.crop] : null, img, box };
       const apply = () => { f.photos[i].crop = st.r && !(st.r[0] <= 0.001 && st.r[1] <= 0.001 && st.r[2] >= 0.999 && st.r[3] >= 0.999) ? st.r.map((v) => Math.round(v * 10000) / 10000) : null;
-        if (i === 0) { let n = 0; f.photos.forEach((q, k) => { if (k && q.crop) { q.crop = null; n++; } }); if (n) this.toast("Пропорции первого фото сменились — кадрирование остальных сброшено"); }
+        if (i === 0) { let n = 0; f.photos.forEach((q, k) => { if (k && q.crop) { q.crop = null; n++; } }); if (n) this.toast(T("Пропорции первого фото сменились — кадрирование остальных сброшено")); }
         close(); this.renderLeft(); };
       const close = () => { modal.remove(); this.cropM = null; };
       const reset = () => { st.r = this.charCropFit(st, null); paint(); };
@@ -688,12 +689,12 @@ export function installChars(Editor, { C, h, ICON }) {
         st.r = r; paint();
       });
       stage.addEventListener("pointerup", () => { drag = null; });
-      const info = h("div", { class: "h3z-note" }, aspect ? `Пропорции заданы первым фото (${aspect.toFixed(3)}). Тяните рамку, угол — размер.` : "Первое фото: рамка свободная и задаёт пропорции карточки. Тяните рамку, угол — размер.");
+      const info = h("div", { class: "h3z-note" }, aspect ? T("Пропорции заданы первым фото ({0}). Тяните рамку, угол — размер.", aspect.toFixed(3)) : T("Первое фото: рамка свободная и задаёт пропорции карточки. Тяните рамку, угол — размер."));
       const modal = h("div", { class: "h3z-modal" }, h("div", { class: "h3z-ccrop h3z-glass" },
-        h("div", { class: "h3z-lbl" }, `Кадрирование · фото ${i + 1} · ${a.name}`), stage, info,
-        h("div", { class: "h3z-row" }, h("button", { class: "h3z-btn sm", onclick: reset }, "↺ Всё фото"), h("i", { class: "grow" }),
-          h("button", { class: "h3z-btn primary sm", title: "Enter", onclick: apply }, "Применить"), h("button", { class: "h3z-btn sm", title: "Esc", onclick: close }, "Отмена")),
-        h("div", { class: "hint" }, "Enter — применить · Esc — отмена")));
+        h("div", { class: "h3z-lbl" }, T("Кадрирование · фото {0} · {1}", i + 1, a.name)), stage, info,
+        h("div", { class: "h3z-row" }, h("button", { class: "h3z-btn sm", onclick: reset }, T("↺ Всё фото")), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn primary sm", title: "Enter", onclick: apply }, T("Применить")), h("button", { class: "h3z-btn sm", title: "Esc", onclick: close }, T("Отмена"))),
+        h("div", { class: "hint" }, T("Enter — применить · Esc — отмена"))));
       modal.addEventListener("pointerdown", (e) => { if (e.target === modal) close(); });
       this.cropM = { apply, close, st };
       this.root.append(modal);
