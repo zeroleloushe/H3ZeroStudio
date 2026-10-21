@@ -552,16 +552,17 @@ class TileClock:
 
 # ---------------------------------------------------------------- the pass
 def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, ref_images,
-                ref_audios=None, step_cb=None, preview_cb=None, progress=None):
+                ref_audios=None, step_cb=None, preview_cb=None, progress=None, up=None, prompt=None, label=None):
     """Upscale + refine segment `index` from its finished latents (v video, a audio).
     prev_up: dict(v) of the previous segment's upscaled latent when this one continues it on the same canvas.
+    up / prompt / label: a span's upscale («Апскейл участка»: its window latent, its own prompt, no chain).
     Returns (video latent [1,24,T,H/16,W/16], audio latent unchanged, info dict)."""
     from . import h3s_gen as gen
     s = project["settings"]
     seg = project["segments"][index]
-    up = seg["upscale"]
+    up = up or seg["upscale"]
     it = items[index]
-    p = core.upscale_pass_params(project, index, seg["upscale"]["method"])   # the method profile's own steps / sampler
+    p = core.upscale_pass_params(project, index, up["method"])   # the method profile's own steps / sampler
     bw, bh = v.shape[-1] * 16, v.shape[-2] * 16
     W, H = core.upscale_canvas(bw, bh, up)
     method = up["method"]
@@ -569,10 +570,11 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     T, A = v.shape[2], a.shape[-1]
     chunks = chunk_plan(s, T, A, method)
     nch = len(chunks)
-    log(f"segment {index + 1} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
+    name = label or f"segment {index + 1}"
+    log(f"{name} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
         + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T), method)[1]} frames each, processed one by one): "
            + ", ".join(f"{frames_for_latent_t(v0) if v0 else 0}-{frames_for_latent_t(v1)}" for v0, v1, _, _ in chunks) if nch > 1 else ""))
-    prompt = core.compose_prompt(project, index, video=False)
+    prompt = core.compose_prompt(project, index, video=False) if prompt is None else prompt
     pos = neg = None
     sigmas = None
     out_v = None
@@ -580,7 +582,7 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     for ci, (v0, v1, a0, a1) in enumerate(chunks):
         comfy.model_management.throw_exception_if_processing_interrupted()
         t_c = time.perf_counter()
-        tag = f"segment {index + 1}" + (f" chunk {ci + 1}/{nch}" if nch > 1 else "")
+        tag = name + (f" chunk {ci + 1}/{nch}" if nch > 1 else "")
         if progress is not None:
             progress(phase="input", input=effective_input(want) or want, chunk=ci + 1, chunks=nch)
         fc = None

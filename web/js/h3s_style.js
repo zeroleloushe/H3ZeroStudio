@@ -762,6 +762,9 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-region .core.filled::before { content:""; position:absolute; inset:0; z-index:1; pointer-events:none; background:linear-gradient(180deg, rgba(5,7,15,.6) 0%, rgba(5,7,15,0) 40%, rgba(5,7,15,.55) 100%); }
 .h3z-region .core.filled .flbl { position:absolute; left:8px; top:9px; z-index:2; display:flex; gap:6px; align-items:center; pointer-events:none; white-space:nowrap; }
 .h3z-region .core.filled .flbl b { font-size:11.5px; color:#fff; padding:2px 7px; border-radius:6px; background:linear-gradient(135deg,#8b5cf6,#22d3ee); }
+.h3z-region .core.filled .flbl i.up { font-style:normal; font-size:10.5px; font-weight:800; padding:1px 6px; border-radius:6px; color:#fde68a; background:rgba(5,7,15,.75); border:1px dashed rgba(253,230,138,.6); }
+.h3z-region .core.filled .flbl i.up.done { color:#bbf7d0; border-style:solid; border-color:rgba(74,222,128,.7); }
+.h3z-regpop .upr .h3z-lbl { margin-bottom:4px; } .h3z-regpop .upr .h3z-note { margin:0; }
 .h3z-region .core.filled .flbl span { font-size:10.5px; font-weight:700; color:rgba(255,255,255,.85); text-shadow:0 1px 3px #000; }
 .h3z-region .core.filled.stale .fillstrip { filter:saturate(.3) brightness(.55); }
 .h3z-region .core.filled.stale .flbl b { background:linear-gradient(135deg,#b45309,#f59e0b); }

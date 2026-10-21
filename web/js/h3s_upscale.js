@@ -42,7 +42,6 @@ export function installUpscale(Editor, { C, h, ICON }) {
     /** Why segment i cannot be upscaled ("" = it can). */
     upWhy(i) {
       const s = this.seg(i); if (!s) return "Нет отрезка";
-      if (C.isFootage(s)) return "Футаж «как есть» не апскейлится (переключите его на перегенерацию)";
       if (s.freeze?.up) return "Зафиксирован уже после апскейла";
       if (i >= this.genCount()) return "Отрезок за маркером конца";
       if (this.run.active) return "Идёт генерация";
@@ -77,7 +76,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
     /** Segments «↑ Апскейл» (header) covers: generated part of the timeline, not footage as is, not frozen after an upscale. */
     upList() {
       const out = [];
-      for (let i = 0; i < this.genCount(); i++) { const s = this.seg(i); if (!C.isFootage(s) && !s.freeze?.up) out.push(i); }
+      for (let i = 0; i < this.genCount(); i++) { const s = this.seg(i); if (!s.freeze?.up) out.push(i); }
       return out;
     },
     upMp(u) { const [w, hh] = this.upCanvas(u); return `${w}×${hh}`; },   // the Мп are in upText
@@ -90,11 +89,12 @@ export function installUpscale(Editor, { C, h, ICON }) {
       if (!this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
       if (this.run.active) { this.toast("Идёт генерация", true); return; }
       const list = this.upList();
-      if (!list.length) { this.toast("Нечего увеличивать: на таймлайне только футаж «как есть» или зафиксированные после апскейла клипы", true); return; }
+      const spans = (this.p.regions || []).filter((rg) => this.regionTake(rg)?.fresh).map((rg) => rg.id);   // applied ✂ spans too
+      if (!list.length && !spans.length) { this.toast("Нечего увеличивать: все клипы зафиксированы после апскейла", true); return; }
       up = C.normalizeUpscale(up);
-      this.mutate((p) => { list.forEach((i) => { p.segments[i].upscale = up; }); }, { render: "all" });
+      this.mutate((p) => { list.forEach((i) => { p.segments[i].upscale = up; }); for (const r of p.regions || []) if (spans.includes(r.id)) r.upscale = up; }, { render: "all" });
       this.generate({});
-      this.toast(`↑ Апскейл всего ролика: ${list.length} отр. · ${this.upText(up)} → ${this.upMp(up)} · ${this.upInputLabel(up.method)} · готовые берутся из кэша`);
+      this.toast(`↑ Апскейл всего ролика: ${list.length} отр.` + (spans.length ? ` + ${spans.length} участк.` : "") + ` · ${this.upText(up)} → ${this.upMp(up)} · ${this.upInputLabel(up.method)} · готовые берутся из кэша`);
     },
     upOverrideSub(fn) {
       const d = this.upDefault(), sub = [{ label: `По настройкам: ${this.upText(d)} → ${this.upMp(d)}`, fn: () => fn(d) }, "sep"];
@@ -171,7 +171,53 @@ export function installUpscale(Editor, { C, h, ICON }) {
         h("div", { class: "h3z-row wrap" },
           h("button", { class: "h3z-btn sm primary", disabled: !!why || undefined, title: why || "Только этот клип (результат — новый дубль, звук 1:1)", html: "<b>↑</b><span>Апскейл отрезка</span>", onclick: () => this.upscaleSeg(i, u) }),
           s.upscale ? h("button", { class: "h3z-btn sm", onclick: () => this.removeUpscale(i) }, "Убрать апскейл") : null),
+        C.isFootage(s) ? h("div", { class: "h3z-note" }, (s.upscale?.method || u.method) === "rtx"
+          ? "Футаж «как есть» + RTX VSR: кадры файла увеличиваются напрямую (без VAE и без доработки) — содержимое не меняется."
+          : `Футаж «как есть»: его кадры кодируются VAE и проходят тот же апскейл + доработку (σ ${(s.upscale || u).sigma}) — мелкие детали могут слегка измениться. Без изменений — метод RTX VSR. Звук не трогается.`) : null,
         h("div", { class: "h3z-note" }, "Метод и размер — Настройки → «Апскейл». Весь ролик — кнопка «↑ Апскейл» в шапке."));
+    },
+
+    // ------------------------------------------------------------ «Апскейл участка» (✂ spans: bridge / prologue / extension / region)
+    /** null = no upscale set; done = the applied take carries exactly this upscale. */
+    regionUpState(rg) {
+      if (!rg?.upscale) return null;
+      const tk = this.regionTake(rg), sig = C.regionUpSig(this.p, rg);
+      return { done: !!(tk?.fresh && tk.take.result?.up && tk.take.result.upSig === sig), sig };
+    },
+    upRegionWhy(rg) {
+      if (this.run.active) return "Идёт генерация";
+      if (!this.regionTake(rg)?.fresh) return "Сначала сгенерируйте участок (↻ Пересоздать): апскейл делается из его дубля";
+      return "";
+    },
+    upscaleRegion(id, up) {
+      const rg = this.region(id); if (!rg) return;
+      const why = this.upRegionWhy(rg); if (why) { this.toast(why, true); return; }
+      if (!this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
+      up = C.normalizeUpscale(up); if (!up) return;
+      this.updateRegion(id, (r) => { r.upscale = up; }, { render: "none" });
+      const st = this.regionUpState(this.region(id));
+      this.renderAll();
+      if (st?.done) { this.toast(`Участок ${this.regionNo(id)}: апскейл ${this.upText(up)} уже есть`); return; }
+      this.generate({ region: id });
+      this.toast(`Участок ${this.regionNo(id)}: апскейл ${this.upText(up)} → ${this.upCanvas(up).join("×")} · ${this.upInputLabel(up.method)} (дубль из кэша, звук 1:1)`);
+    },
+    removeRegionUpscale(id) {
+      const rg = this.region(id); if (!rg?.upscale) return;
+      this.updateRegion(id, (r) => { r.upscale = null; }, { render: "none" });
+      this.renderAll(); this.toast(`Участок ${this.regionNo(id)}: апскейл убран · Ctrl+Z — вернуть`);
+    },
+    upRegionMenuEntries(id) {
+      const rg = this.region(id), why = this.upRegionWhy(rg), cur = rg.upscale;
+      return [{ label: cur ? `↑ Апскейл участка (${this.upText(cur)})` : "↑ Апскейл участка", dis: !!why, title: why || `Дубль участка: ${this.upText(this.upDefault())} → ${this.upMp(this.upDefault())} (метод и размер — Настройки → «Апскейл»)`,
+        sub: [...this.upOverrideSub((u) => this.upscaleRegion(id, u)), "sep", { label: "Убрать апскейл", fn: () => this.removeRegionUpscale(id), dis: !cur }] }];
+    },
+    upRegionBlock(rg) {
+      const why = this.upRegionWhy(rg), st = this.regionUpState(rg), u = this.upDefault(), res = this.regionTake(rg)?.take.result;
+      const status = st?.done ? h("span", { class: "h3z-note ok" }, `↑ Готов: ${(res.up?.wh || []).join("×")} · ${this.upText(rg.upscale)}`)
+        : st ? h("span", { class: "h3z-note warn" }, `↑ ${this.upText(rg.upscale)} задан — будет сделан при генерации`) : h("span", { class: "h3z-note" }, `${this.upText(u)} → ${this.upMp(u)}`);
+      return h("div", { class: "upr" }, h("div", { class: "h3z-lbl" }, "Апскейл участка"), h("div", { class: "h3z-row wrap", style: { gap: "8px", alignItems: "center" } },
+        h("button", { class: "h3z-btn sm", disabled: !!why || !!st?.done || undefined, title: why || "Апскейл дубля участка (его окно + доработка, звук 1:1); правый клик по участку — другой метод / размер", html: "<b>↑</b><span>Апскейл</span>", onclick: () => this.upscaleRegion(rg.id, u) }),
+        rg.upscale ? h("button", { class: "h3z-btn sm", onclick: () => this.removeRegionUpscale(rg.id) }, "Убрать") : null, status));
     },
 
     /** Header «↑ Апскейл» (whole video); right click — another method / size for this run. */

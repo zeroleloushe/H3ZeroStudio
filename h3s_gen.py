@@ -682,6 +682,25 @@ def footage_latents(vae, audio_vae, asset, src, frames, w, h, audio_t):
     return v, a[..., :audio_t], px
 
 
+def footage_upscale_direct(vae, asset, seg, frames, v):
+    """«Апскейл отрезка» of footage as is with RTX VSR: the file's own frames (centre-cropped to the clip's
+    aspect) straight to the upscale canvas — downscaled when the file is already that large, else RTX VSR from
+    its native size. No VAE round trip, no refine. None when RTX VSR is unavailable (-> the latent path)."""
+    from . import h3s_upscale as upscale
+    W, H = core.upscale_canvas(int(v.shape[-1]) * 16, int(v.shape[-2]) * 16, seg["upscale"])
+    path = asset_path(asset)
+    info = media.video_info(path)
+    fw, fh = int(info["width"]), int(info["height"])
+    k = min(fw / W, fh / H)
+    if k >= 1.0:   # the file is at least that large: no super-resolution needed
+        return torch.from_numpy(media.load_video_frames(path, seg["source"]["in"], frames, W, H, mode="crop"))
+    if not upscale.rtx_available():
+        return None
+    sw, sh = max(2, int(W * k) // 2 * 2), max(2, int(H * k) // 2 * 2)   # native pixels, the clip's aspect
+    px = torch.from_numpy(media.load_video_frames(path, seg["source"]["in"], frames, sw, sh, mode="crop"))
+    return upscale.rtx_frames(px, W, H, (seg.get("upscale") or {}).get("quality", "ULTRA"))
+
+
 def decode_video(vae, v):
     img = vae.decode(v)
     return img.reshape((-1,) + tuple(img.shape[-3:]))[..., :3].float().cpu()
@@ -1566,7 +1585,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     keys = keys[:len(items)]
     # «Апскейл отрезка»: key of each segment's upscale (None = none); the base latents stay the generation chain
     up_env = {m: upscale.env_tag("rtx" if m == "rtx" else "learned") for m in core.SEG_UPSCALE_METHODS
-              if any((sg.get("upscale") or {}).get("method") == m for sg in proj["segments"])}
+              if any((sg.get("upscale") or {}).get("method") == m for sg in proj["segments"] + (proj.get("regions") or []))}
     ukeys = core.upscale_keys(proj, keys, kind, up_env)[:len(items)]
     if any(ukeys):
         caps = upscale.capabilities()
@@ -1615,8 +1634,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             log(f"cache miss: segment {i_ + 1} {k_} — reason: {store.miss_reason(d, proj['segments'][i_]['id'], kind, pr_)}")
     # an upscale that will really run (final from the draft / «Апскейл отрезка») needs the learned upscaler or
     # RTX VSR: fail before any sampling with a clear message instead of a silent low-quality fallback
-    need_up = [i for i in range(len(keys)) if not frozen[i] and not core.is_footage(proj["segments"][i])
-               and ((kind == "refine" and not cached[i]) or (ukeys[i] and not os.path.isfile(seg_pt_path(d, ukeys[i]))))]
+    need_up = [i for i in range(len(keys)) if not frozen[i]
+               and ((kind == "refine" and not cached[i] and not core.is_footage(proj["segments"][i]))
+                    or (ukeys[i] and not os.path.isfile(seg_pt_path(d, ukeys[i]))))]
     if need_up:
         caps = upscale.capabilities()
         if not (caps["learned"] or caps["rtx"]):
@@ -1657,6 +1677,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                                     core.work_resolution(s, "draft"), upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "",
                                     d, use_cache) if proj.get("regions") else []
     todo_steps += sum(rp["steps"] for rp in reg_plans)
+    for rp in reg_plans:   # «Апскейл участка»: the take's window latent upscaled + refined (cached like a clip upscale)
+        rp["ukey"] = core.region_upscale_key(proj, rp["key"], rp["rg"], run_w, run_h, up_env, max(0, rp["win"]["seg"]))
+        if rp["ukey"]:
+            rp["upt"] = os.path.join(d, "cache", f"region_{rp['ukey']}.pt")
+            store.restore(d, "r" + rp["ukey"], rp["upt"])
+            rp["up_cached"] = use_cache and os.path.isfile(rp["upt"])
+            if not rp["up_cached"]:
+                um_ = rp["rg"]["upscale"]["method"]
+                todo_steps += core.upscale_pass_params(proj, max(0, rp["win"]["seg"]), um_)["steps"] * core.upscale_chunking(s, rp["win"]["we"] - rp["win"]["ws"], um_)[0]
 
     def keep_takes():
         """Every finished latent of this run becomes a take (sidecar + recipe); cheap hard links."""
@@ -1667,6 +1696,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 store.keep(d, uk_, seg_pt_path(d, uk_), {"seg_id": proj["segments"][i_]["id"], "seg": i_, "kind": "upscale", "base": keys[i_]})
         for rp_ in reg_plans:
             store.keep(d, "r" + rp_["key"], rp_["pt"], {"region": rp_["rg"]["id"], "kind": "region:" + kind})
+            if rp_.get("ukey"):
+                store.keep(d, "r" + rp_["ukey"], rp_["upt"], {"region": rp_["rg"]["id"], "kind": "region:upscale", "base": rp_["key"]})
             if rp_.get("dkey"):
                 store.keep(d, "r" + rp_["dkey"], os.path.join(d, "cache", f"region_{rp_['dkey']}.pt"), {"region": rp_["rg"]["id"], "kind": "region:draft"})
 
@@ -1887,9 +1918,25 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         seg_v.append(v)
         seg_a.append(a)
         uk, rk, rwh, uinfo = ukeys[i], k, [run_w, run_h], None
-        if uk:   # «Апскейл отрезка»: upscale + refine of the finished clip (cached = resume)
+        direct = None   # footage + RTX VSR: the upscaled frames themselves (no VAE decode)
+        if uk:   # «Апскейл отрезка»: upscale + refine of the finished clip (cached = resume); footage: its encoded frames
             upt = seg_pt_path(d, uk)
-            if up_cached[i]:
+            if not up_cached[i] and core.footage_direct(seg_i):
+                t_up = time.perf_counter()
+                notify("phase", seg=i, phase="up_input", input="rtx")
+                direct = footage_upscale_direct(vae, by_id[seg_i["source"]["asset"]], seg_i, it["frames"], v)
+                if direct is not None:
+                    uv = vae.encode(direct).float().cpu()   # only for the LATENT output / the cache entry
+                    uinfo = {"input": "rtx-direct", "wh": [int(direct.shape[2]), int(direct.shape[1])], "crops": 0, "chunks": 1}
+                    torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
+                    media.replace_file(upt + ".part", upt)
+                    store.save_master(d, uk + k[len(keys[i]):], uv, direct, fps)
+                    hit_up = False
+                    log(f"segment {i + 1}: footage upscaled directly with RTX VSR in {time.perf_counter() - t_up:.1f}s -> "
+                        f"{uinfo['wh'][0]}x{uinfo['wh'][1]} (no refine: the footage stays as it is)")
+            if direct is not None:
+                pass
+            elif up_cached[i]:
                 uv = torch.load(upt, map_location="cpu", weights_only=True)["v"]
                 log(f"segment {i + 1}: upscale from cache {uk}")
                 hit_up = True
@@ -1922,7 +1969,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 log(f"segment {i + 1}: upscale done in {time.perf_counter() - t_up:.1f}s -> {uinfo['wh'][0]}x{uinfo['wh'][1]} ({uinfo['input']})")
             notify("phase", seg=i, phase="decode")
             t_dec = time.perf_counter()
-            frames = take_frames(uk + k[len(keys[i]):], uv, fresh or not hit_up, i,   # chunk by chunk when chunked
+            frames = direct if direct is not None else take_frames(uk + k[len(keys[i]):], uv, (fresh or not hit_up) and not core.footage_direct(seg_i), i,   # chunk by chunk when chunked
                                  lambda: upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"])))
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}
@@ -1977,12 +2024,13 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         run_items[0] = dict(run_items[0], overlap=0, link="start")
     # mixed canvases (some clips upscaled): frames are stitched at the largest canvas, the latent output uses the
     # upscaled latents only when every clip has them on one canvas (else the base latents)
-    cw_ = max(int(f.shape[2]) for f in seg_frames)
-    ch_ = max(int(f.shape[1]) for f in seg_frames)
+    span_wh = [core.upscale_canvas(run_w, run_h, rp["rg"]["upscale"]) for rp in reg_plans if rp.get("ukey")]   # upscaled spans
+    cw_ = max([int(f.shape[2]) for f in seg_frames] + [w_ for w_, _h in span_wh])
+    ch_ = max([int(f.shape[1]) for f in seg_frames] + [h_ for _w, h_ in span_wh])
     base_v = list(seg_v)   # the generation chain (regions are cut from it)
     if all(u is not None for u in seg_up) and len({tuple(u.shape[-2:]) for u in seg_up}) == 1:
         seg_v = list(seg_up)
-    elif any(u is not None for u in seg_up):
+    elif any(u is not None for u in seg_up) or span_wh:
         log(f"stitch: mixed canvases -> frames resized to {cw_}x{ch_}; the latent output keeps the base latents ({run_w}x{run_h})")
     out_frames, out_v, out_a = [], [], []
     gap_parts = []   # (index into out_frames) of the black gap fillers: not clips (level lock / seam rating skip them)
@@ -2104,7 +2152,31 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             torch.save({"v": rv, "a": ra, "win": {k: win[k] for k in ("ws", "a", "b", "we", "to_end")}}, rp["pt"] + ".part")
             media.replace_file(rp["pt"] + ".part", rp["pt"])
             log(f"region «{name}»: done in {time.perf_counter() - t_r:.1f}s")
-        fr_w = decode_video(vae, rv.to(dev0))
+        rup, rinfo = rp.get("ukey"), None
+        if rup:   # «Апскейл участка»
+            if rp["up_cached"]:
+                rdu = torch.load(rp["upt"], map_location="cpu", weights_only=True)
+                uvr, rinfo = rdu["v"], rdu.get("info")
+                log(f"region «{name}»: upscale from cache {rup}")
+            else:
+                t_u = time.perf_counter()
+                notify("phase", seg=si, phase="upscale", region=rg["id"])
+
+                def ru_step(step, total, _si=si):
+                    done_steps[0] += 1
+                    pbar.update_absolute(done_steps[0], max(1, todo_steps))
+                    el = time.perf_counter() - t0
+                    notify("step", seg=_si, step=step + 1, steps=total, done=done_steps[0], total=todo_steps, elapsed=round(el, 1),
+                           eta=round(el / max(1, done_steps[0]) * (todo_steps - done_steps[0]), 1), region=rg["id"])
+                refs_u = [load_asset_image(x) for x in core.region_refs(proj, rg)]
+                uvr, _ra, rinfo = upscale.run_upscale(*MC(si), vae, proj, si, all_items, rv, ra, None, None, refs_u, None, ru_step, None, None,
+                                                      up=rg["upscale"], prompt=core.region_prompt(proj, rg), label=f"region «{name}»")
+                torch.save({"v": uvr, "a": ra, "info": rinfo}, rp["upt"] + ".part")
+                media.replace_file(rp["upt"] + ".part", rp["upt"])
+                log(f"region «{name}»: upscale done in {time.perf_counter() - t_u:.1f}s -> {rinfo['wh'][0]}x{rinfo['wh'][1]} ({rinfo['input']})")
+            fr_w = upscale.decode_chunks(vae, uvr, upscale.chunk_plan(s, uvr.shape[2], ra.shape[-1], rg["upscale"]["method"]))
+        else:
+            fr_w = decode_video(vae, rv.to(dev0))
         images, n_rep = region.splice_frames(images, fr_w, win)
         sinfo = {}
         if out_audio is not None and audio_vae is not None:
@@ -2128,11 +2200,13 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         except Exception as e:
             seams_r = {}
             vlog(f"region «{name}»: seam rating failed: {e}")
-        rres = segment_media(d, sub, "r" + rp["key"], fr_w, ra, audio_vae, audio, proj, {"frames": int(fr_w.shape[0])}, fps)
+        rres = segment_media(d, sub, "r" + (rup or rp["key"]), fr_w, ra, audio_vae, audio, proj, {"frames": int(fr_w.shape[0])}, fps)
         rres.update({"region": rg["id"], "key": rp["key"], "cached": hit_r, "frames": int(fr_w.shape[0]), "kind": kind,
                      "ws": win["ws"], "a": win["a"], "b": win["b"], "we": win["we"], "seed": int(rg.get("seed") or 0),
                      "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "created": int(time.time()), "generated": rp["gen"],
-                     "mode": core.span_kind(win), "seams": seams_r})
+                     "mode": core.span_kind(win), "seams": seams_r,
+                     "up": {"key": rup, "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "input": (rinfo or {}).get("input"),
+                            "method": rg["upscale"]["method"]} if rup else None})
         if MR.any:
             rres["models"] = MR.info(max(0, win["seg"]))
         reg_results.append(rres)
@@ -2153,7 +2227,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             out_audio = {"waveform": out_audio["waveform"][..., :int(round(end / fps * out_audio["sample_rate"]))],
                          "sample_rate": out_audio["sample_rate"]}
     full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}" + (f"|L{level_n}" if level_n else "")
-                               + "".join(f"|R{r['key']}" for r in reg_results)).encode()).hexdigest()[:16]
+                               + "".join(f"|R{r['key']}" + (f"^{r['up']['key']}" if r.get("up") else "") for r in reg_results)).encode()).hexdigest()[:16]
     full_name = f"full_{full_key}.mp4"
     full_path = os.path.join(d, full_name)
     if not os.path.isfile(full_path):

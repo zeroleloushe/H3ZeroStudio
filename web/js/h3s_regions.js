@@ -7,7 +7,7 @@
 // as context), before the first clip (prologue: following context only) and past the end of a shot (extension:
 // preceding context only); both seams of a span are level-locked and rated (h3s_seams.span_seams).
 // Entry points: the «✂ Участок» toggle on the timeline toolbar (drag on the timeline) and the clip menu.
-const SNAP = ["start", "end", "head", "tail", "prompt", "refs", "seed"];
+const SNAP = ["start", "end", "head", "tail", "prompt", "refs", "seed", "upscale"];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const rnd = () => Math.floor(Math.random() * 2 ** 31);
 const SEAM_TXT = { ok: "шов незаметен", soft: "лёгкий скачок", hard: "резкий шов" };
@@ -31,7 +31,8 @@ export function installRegions(Editor, { C, h, ICON }) {
     },
     /** Keys of the region takes the backend applies (the final video is current only with exactly these). */
     appliedRegionKeys() {
-      return (this.p.regions || []).map((rg) => this.regionTake(rg)).filter((x) => x?.fresh).map((x) => x.take.key).sort().join(",");
+      // an upscaled span is another final video: its upscale signature is part of the entry
+      return (this.p.regions || []).map((rg) => [rg, this.regionTake(rg)]).filter(([, x]) => x?.fresh).map(([rg, x]) => x.take.key + (rg.upscale ? "^" + C.regionUpSig(this.p, rg) : "")).sort().join(",");
     },
 
     // ------------------------------------------------------------ mode
@@ -159,7 +160,7 @@ export function installRegions(Editor, { C, h, ICON }) {
       const n = this.regionNo(rg.id), k = tk ? (rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1 : 0;
       const kn = ok ? C.spanKind(w) : "region";
       if (kn !== "region") el.classList.add("span-" + kn);
-      const lbl = `✂ ${n}` + (kn !== "region" ? " · " + C.SPAN_NAMES[kn].toLowerCase() : "") + ((b - a) * ppf > 70 ? ` · ${((b - a) / C.FPS).toFixed(1)} с` : "") + (k ? ` · дубль ${k}` : rg.takes?.length ? " · оригинал" : "") + (tk && !tk.fresh ? " · устарел" : "");
+      const lbl = `✂ ${n}` + (kn !== "region" ? " · " + C.SPAN_NAMES[kn].toLowerCase() : "") + ((b - a) * ppf > 70 ? ` · ${((b - a) / C.FPS).toFixed(1)} с` : "") + (k ? ` · дубль ${k}` : rg.takes?.length ? " · оригинал" : "") + (tk && !tk.fresh ? " · устарел" : "") + (rg.upscale ? ` · ↑${this.upMpVal(rg.upscale)}Мп` + (this.regionUpState(rg)?.done ? "" : "…") : "");
       const tab = h("div", { class: "tab", style: { left: px(a) }, title: (ok ? `Участок ${n}: пересоздаётся ${C.fmtTime(a / C.FPS)}–${C.fmtTime(b / C.FPS)} (${b - a} кадр.)\nКонтекст: ${a - ws} кадр. до · ${we - b} кадр. после · окно H3 ${we - ws} кадр.` : `Участок ${n}: ${w.error}`) +
         (tk && !tk.fresh ? "\nДубль устарел: отрезки под ним или настройки изменились — пересоздайте" : "") + "\nКлик — карточка участка · тяните — сдвинуть" }, lbl);
       tab.addEventListener("pointerdown", (e) => this.regionDrag(e, rg.id, "move"));
@@ -223,7 +224,9 @@ export function installRegions(Editor, { C, h, ICON }) {
       }
       core.append(box);
       const name = kn === "region" ? "Участок" : C.SPAN_NAMES[kn];
-      if (wd > 46) core.append(h("div", { class: "flbl" }, h("b", null, wd > 120 ? `✂ ${name}` : "✂"), wd > 200 ? h("span", null, `${((w.b - w.a) / C.FPS).toFixed(1)} с · дубль ${(rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1}`) : null));
+      const us = this.regionUpState(rg);
+      const upTag = us ? h("i", { class: "up" + (us.done ? " done" : ""), title: us.done ? `Апскейл готов: ${(res.up?.wh || []).join("×")} · ${this.upText(rg.upscale)}` : `Апскейл ${this.upText(rg.upscale)} задан — будет сделан при генерации` }, `↑${this.upMpVal(rg.upscale)}Мп`) : null;
+      if (wd > 46) core.append(h("div", { class: "flbl" }, h("b", null, wd > 120 ? `✂ ${name}` : "✂"), wd > 200 ? h("span", null, `${((w.b - w.a) / C.FPS).toFixed(1)} с · дубль ${(rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1}`) : null, wd > 90 ? upTag : null));
       if (!tk.fresh) {
         const can = this.regionRestorable(rg);
         const rb = h("button", { class: "h3z-btn sm rbadge", title: can ? "Дубль устарел: вы изменили участок (границы, промпт, рефы, сид). ↺ — вернуть входы дубля, и он снова применится"
@@ -257,6 +260,7 @@ export function installRegions(Editor, { C, h, ICON }) {
       const gi = this.p.segments.findIndex((s, k) => s.gap && (() => { const it = this.items()[k]; return it && it.start - it.gap < w.b && it.start > w.a; })());
       this.openMenu(e, `✂ ${name} ${this.regionNo(id)}`, [
         { label: "↻ Пересоздать", fn: () => this.regenRegion(id), title: "Новый дубль (новый сид, если такой уже есть)" },
+        ...this.upRegionMenuEntries(id),
         this.regionRestorable(rg) ? { label: "↺ Восстановить входы дубля", fn: () => this.restoreRegionTake(id) } : null,
         { label: kn === "bridge" || kn === "prologue" ? "✕ Убрать заполнение" : "✕ Удалить участок", fn: () => this.deleteRegion(id), danger: true,
           title: "Участок и его дубли убираются (Ctrl+Z — вернуть); промежуток снова пустой" },
@@ -351,6 +355,7 @@ export function installRegions(Editor, { C, h, ICON }) {
             h("div", { class: "h3z-pill" + (!rg.active_take ? " on" : ""), title: "Без перегенерации: отрезки как есть", onclick: () => this.selectRegionTake(rg.id, null) }, "Оригинал"),
             rg.takes.map((t, k) => h("div", { class: "h3z-pill" + (t.id === rg.active_take ? " on" : ""), title: `Дубль ${k + 1} · сид ${t.seed ?? "?"}` + (t.created ? ` · ${new Date(t.created * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : ""), onclick: () => this.selectRegionTake(rg.id, t.id) }, `${k + 1}`)))));
       }
+      { const ub = this.upRegionBlock(rg); if (ub) pop.append(ub); }
       const stageTxt = (kn !== "region" && C.runKind(this.p.settings) === "refine") ? "сразу финал (мост/пролог/продолжение — один проход по склеенному видео)"
         : { draft: "черновик", refine: "финал из черновика: окно черновика → апскейл → доработка", full: "сразу финал" }[C.runKind(this.p.settings)] || "";
       $.regGo = h("button", { class: "h3z-btn primary", html: "<span>↻ Пересоздать</span>", disabled: busy || !!w.error, title: w.error || "Сгенерировать новый вариант участка (новый дубль). Несгенерированные отрезки сцены будут сгенерированы в том же запуске", onclick: () => this.regenRegion(rg.id) });
@@ -421,12 +426,17 @@ export function installRegions(Editor, { C, h, ICON }) {
         t = { id: C.newId("t"), key: res.key, sig: sig || C.regionSig(this.p, rg), seed: res.seed, created: res.created || Math.floor(Date.now() / 1000), snap, result: { ...res } };
         rg.takes.push(t);
         if (rg.takes.length > C.MAX_TAKES) rg.takes.splice(0, rg.takes.length - C.MAX_TAKES);
-      } else { t.result = { ...res }; if (sig) t.sig = sig; }
+      } else { t.result = { ...res }; if (sig) t.sig = sig; if (t.snap) t.snap.upscale = clone(rg.upscale ?? null); }
+      t.result.upSig = res.up ? C.regionUpSig(this.p, rg) : null;   // which «Апскейл участка» the result carries
       rg.active_take = t.id;
     },
 
     applyRegionResults(list) {
-      for (const r of list || []) if (r?.region && (r.generated || !this.region(r.region)?.takes?.some((t) => t.key === r.key))) this.recordRegionTake(r.region, r, this.pendingRegionSig?.[r.region]);
+      for (const r of list || []) {
+        const rg = r?.region && this.region(r.region); if (!rg) continue;
+        const t = rg.takes?.find((x) => x.key === r.key);
+        if (r.generated || !t || (r.up?.key || "") !== (t.result?.up?.key || "")) this.recordRegionTake(r.region, r, this.pendingRegionSig?.[r.region]);   // + an upscale made / dropped in a whole run
+      }
     },
 
     // ------------------------------------------------------------ playback: the composition plays applied takes

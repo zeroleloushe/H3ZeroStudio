@@ -191,6 +191,7 @@ DEFAULT_REGION = {
     "seed": 0,
     "takes": [],         # [{id, key, sig, seed, created, snap{...}, result{...}}]
     "active_take": None, # take applied to the video; None = the original
+    "upscale": None,     # «Апскейл участка»: the take's window upscaled + refined (same dict as a clip upscale)
 }
 MAX_REGIONS = 16
 
@@ -671,8 +672,15 @@ def upscale_pass_params(project, index, method):
 
 
 def upscalable(seg):
-    """The segment's upscale applies: set, not footage as is, not a take frozen after its upscale (freeze.up)."""
-    return bool(seg.get("upscale")) and not is_footage(seg) and not (seg.get("freeze") or {}).get("up")
+    """The segment's upscale applies: set and not a take frozen after its upscale (freeze.up). Footage as is is
+    upscaled too: its VAE-encoded frames (the clip's cached latent) go through the same mode; RTX VSR upscales
+    its frames directly (no refine)."""
+    return bool(seg.get("upscale")) and not (seg.get("freeze") or {}).get("up")
+
+
+def footage_direct(seg):
+    """Footage as is + RTX VSR: the file's frames are upscaled directly (no VAE round trip, no refine)."""
+    return is_footage(seg) and (seg.get("upscale") or {}).get("method") == "rtx"
 
 
 def _round(x, d):
@@ -1251,6 +1259,21 @@ def upscale_keys(project, base_keys, kind=None, up_env=None):
     return out
 
 
+def region_upscale_key(project, region_key, region, w, h, up_env=None, index=0):
+    """Key of a span's upscale (None without one): the take's key + the same upscale parameters as a clip."""
+    up = region.get("upscale")
+    if not up:
+        return None
+    s = project["settings"]
+    wh = list(upscale_canvas(w, h, up))
+    nch, cf, co = upscale_chunking(s, 17, up["method"])
+    pr = upscale_profile(s, up["method"])
+    steps = upscale_pass_params(project, index, up["method"])["steps"]
+    smp = [pr.get("sampler") or "", pr.get("scheduler") or ""]
+    return _h({"v": KEY_VERSION, "rup": region_key, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
+               "steps": steps, **({"rx": refine_extra(s)} if refine_extra(s) else {}), "ch": [cf, co], **({"smp": smp} if any(smp) else {})})[:16]
+
+
 def refine_extra(s):
     """Refine-stage sampler / scheduler / cfg in the keys — only when set (older keys stay valid)."""
     x = [s.get("refine_sampler") or "", s.get("refine_scheduler") or "", float(s.get("refine_cfg") or 0)]
@@ -1300,6 +1323,7 @@ def normalize_region(r, i=0):
     rg["seed"] = max(0, int(_num(rg["seed"], 0)))
     rg["takes"] = [t for t in (rg["takes"] if isinstance(rg["takes"], list) else []) if isinstance(t, dict) and t.get("key")][-MAX_TAKES:]
     rg["active_take"] = None if rg["active_take"] is None else str(rg["active_take"])
+    rg["upscale"] = normalize_upscale(rg.get("upscale"))
     return rg
 
 

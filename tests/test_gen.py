@@ -1383,3 +1383,82 @@ def test_run_history_records_done_and_error(patcher, dirs):
     last = gen.runs_state()["history"][0]
     assert last["status"] == "error" and last.get("error")
     assert len(gen.run_history(5)) <= 5
+
+
+def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
+    """User scenario: two clips used as is (footage, no generation) with a generated bridge between them.
+    Each of the three is upscalable on its own and all together; the bridge is spliced at the upscaled canvas
+    and both of its seams are rated after the level lock; re-runs are cache hits."""
+    import sys
+    import types
+    out, inp = dirs
+    va = _clip_file(inp)                                   # 128x72 file
+    calls = []
+
+    def fake_learned(v, w, h):
+        calls.append(("learned", w, h))
+        return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact")
+    monkeypatch.setattr(upscale, "learned_upscale", fake_learned)
+
+    class SR:
+        def __init__(self, q): self.q = q
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def load(self): pass
+        def run(self, x):
+            calls.append(("rtx", tuple(x.shape[1:]), self.output_width, self.output_height))
+            o = torch.nn.functional.interpolate(x[None], size=(self.output_height, self.output_width), mode="bilinear")[0]
+            return types.SimpleNamespace(image=o)
+    monkeypatch.setitem(sys.modules, "nvvfx", types.SimpleNamespace(VideoSuperRes=SR, effects=types.SimpleNamespace(QualityLevel=types.SimpleNamespace(ULTRA="U"))))
+    monkeypatch.setattr(upscale, "RTX_DEVICE", "cpu")
+    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
+    monkeypatch.setattr(upscale, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])
+    monkeypatch.setattr(upscale, "learned_node", lambda: object)
+    sampled = []
+    real = gen.comfy.sample.sample
+    monkeypatch.setattr(gen.comfy.sample, "sample", lambda *a, **k: (sampled.append(1), real(*a, **k))[1])
+    LAT, RTX = {"method": "latent", "scale": 2}, {"method": "rtx", "scale": 2}
+
+    def proj(u1=None, u2=None, ub=None, takes=None, run=None):
+        rg = {"id": "b1", "start": 50, "end": 80, "prompt": "bridge", "seed": 2, "upscale": ub}
+        if takes:
+            rg.update(takes=[{"id": "t1", "key": takes}], active_take="t1")
+        p = project(id="fu", assets=project()["assets"] + [va],
+                    segments=[{"id": "f1", "frames": 56, "source": {"asset": "v1", "in": 0}, "upscale": u1},
+                              {"id": "f2", "frames": 56, "source": {"asset": "v1", "in": 20}, "gap": 17, "upscale": u2}],
+                    regions=[rg])
+        if run:
+            p["run"] = run
+        return p
+    vae, avae = FakeVAE(), FakeAudioVAE()
+    # the reason it was skipped before: footage was excluded from the upscale keys
+    n = core.normalize_project(proj(u1=LAT))
+    assert core.upscale_keys(n, core.segment_keys(n))[0] is not None and core.upscalable(n["segments"][0])
+    # 1) the bridge between the two footage clips
+    img0, _, _, info0 = gen.run_project(patcher, FakeClip(), vae, proj(run={"region": "b1"}), avae)
+    key = info0["regions"][0]["key"]
+    assert img0.shape[1:3] == (64, 96) and info0["regions"][0]["mode"] == "bridge"
+    # 2) footage 1 alone (latent mode: its VAE-encoded frames -> learned upscaler -> refine)
+    calls.clear(); sampled.clear()
+    img1, _, _, info1 = gen.run_project(patcher, FakeClip(), vae, proj(u1=LAT, takes=key), avae)
+    assert ("learned", 192, 128) in calls and sampled and info1["segments"][0]["wh"] == [192, 128]
+    assert info1["segments"][1]["wh"] == [96, 64] and img1.shape[1:3] == (128, 192)
+    # 3) footage 2 alone with RTX VSR: the file's own frames, no refine (no sampling)
+    calls.clear(); sampled.clear()
+    img2, _, _, info2 = gen.run_project(patcher, FakeClip(), vae, proj(u2=RTX, takes=key), avae)
+    assert any(c[0] == "rtx" and c[1] == (72, 108) for c in calls), "RTX from the file's native pixels (cropped to 3:2)"
+    assert not sampled and info2["segments"][1]["up_input"] == "rtx-direct" and info2["segments"][1]["wh"] == [192, 128]
+    # 4) the bridge alone: its take's window latent upscaled + refined
+    calls.clear(); sampled.clear()
+    img3, _, _, info3 = gen.run_project(patcher, FakeClip(), vae, proj(ub=LAT, takes=key, run={"region": "b1"}), avae)
+    r3 = info3["regions"][0]
+    assert r3["key"] == key and r3["up"] and r3["up"]["wh"] == [192, 128] and ("learned", 192, 128) in calls and sampled
+    # 5) the whole timeline: all three, one canvas, both bridge seams rated after the level lock
+    calls.clear(); sampled.clear(); capsys.readouterr()
+    img4, _, lat4, info4 = gen.run_project(patcher, FakeClip(), vae, proj(LAT, RTX, LAT, takes=key), avae)
+    log = capsys.readouterr().out
+    assert img4.shape[1:3] == (128, 192) and not calls and not sampled, "everything from the cache"
+    r4 = info4["regions"][0]
+    assert set(r4["seams"]) == {"head", "tail"} and r4["up"]["key"] == r3["up"]["key"]
+    assert float(img4[56:73].abs().max()) > 0, "the gap holds the upscaled bridge"
+    assert "mixed canvases" not in log

@@ -167,8 +167,10 @@ export function upscalePassParams(project, index, method) {
   if (pr.scheduler) p.scheduler = pr.scheduler;
   return p;
 }
-/** The segment's upscale applies: set, not footage as is, not a take frozen after its upscale (freeze.up). */
-export const upscalable = (seg) => !!seg.upscale && !isFootage(seg) && !(seg.freeze && seg.freeze.up);
+/** The segment's upscale applies: set and not a take frozen after its upscale (freeze.up). Footage as is too:
+ *  its VAE-encoded frames go through the same mode; RTX VSR upscales the file's frames directly (no refine). */
+export const upscalable = (seg) => !!seg.upscale && !(seg.freeze && seg.freeze.up);
+export const footageDirect = (seg) => isFootage(seg) && seg.upscale?.method === "rtx";
 export const STAGE_KEYS = ["draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg"];
 export const RUN_KINDS = ["draft", "refine", "full"];
 /** «Настройки»: set-once settings shared by all projects (mirror of h3s_core.GLOBAL_KEYS). */
@@ -201,7 +203,7 @@ export const DEFAULT_SEGMENT = {
 };
 export const MAX_TAKES = 12;
 // «✂ Участок»: regenerate a time range in the middle of the video (mirror of h3s_core.DEFAULT_REGION)
-export const DEFAULT_REGION = { id: "", name: "", start: 0, end: 0, head: -1, tail: -1, prompt: "", refs: [], seed: 0, takes: [], active_take: null };
+export const DEFAULT_REGION = { id: "", name: "", start: 0, end: 0, head: -1, tail: -1, prompt: "", refs: [], seed: 0, takes: [], active_take: null, upscale: null };
 export const MAX_REGIONS = 16;
 export const MARKER_EFFECTS = ["note", "prompt", "boost"];
 export const DEFAULT_MARKER = { id: "", frame: 0, label: "", color: 0, effect: "note", text: "", asset: "" };
@@ -730,6 +732,14 @@ export function upscaleSigList(project, base, kind) {
   });
   return out;
 }
+/** «Апскейл участка»: signature of a span's upscale ("" = none; mirror of h3s_core.region_upscale_key's inputs). */
+export function regionUpSig(project, region, items = null) {
+  const up = region?.upscale; if (!up) return "";
+  const [w, h] = workResolution(project.settings), win = regionWindow(project, region, items || plan(project));
+  const [, cf, co] = upscaleChunking(project.settings, 17, up.method), pr = upscaleProfile(project.settings, up.method);
+  const smp = [pr.sampler || "", pr.scheduler || ""];
+  return fnv(JSON.stringify(["rup", upscaleKeyForm(up, w, h), upscaleCanvas(w, h, up), upscalePassParams(project, Math.max(0, win.seg ?? 0), up.method).steps, cf, co].concat(refineExtra(project.settings), smp.some(Boolean) ? [["smp", ...smp]] : [])));
+}
 function upscaleSigs(project, base, kind) {
   const up = upscaleSigList(project, base, kind);
   return base.map((b, j) => up[j] || b);
@@ -804,6 +814,7 @@ export function normalizeRegion(r, i = 0) {
   rg.seed = Math.max(0, Math.trunc(num(rg.seed, 0)));
   rg.takes = (Array.isArray(rg.takes) ? rg.takes : []).filter((t) => t && typeof t === "object" && !Array.isArray(t) && t.key).slice(-MAX_TAKES);
   rg.active_take = rg.active_take === null || rg.active_take === undefined ? null : String(rg.active_take);
+  rg.upscale = normalizeUpscale(rg.upscale);
   return rg;
 }
 
