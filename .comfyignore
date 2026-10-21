@@ -1,0 +1,5 @@
+# Kept in git, left out of the Comfy Registry archive (not needed at runtime)
+docs/
+tests/
+pytest.ini
+.github/
