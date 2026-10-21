@@ -705,7 +705,7 @@ def test_export_video_full_fragment_and_no_overwrite(dirs, tmp_path):
     v = media.load_video_frames(r3["path"], 0, 1, 96, 64)
     assert abs(float(v.mean()) - 12 / 48) < 0.05          # starts at frame 12 of the source
     r4 = gen.export_video({"source": src, "folder": "", "name": "default"})
-    assert os.path.dirname(r4["path"]) == gen.export_dir()
+    assert os.path.dirname(r4["path"]) == os.path.join(str(out), "h3zerostudio", "t1", "export")   # the project's own export folder
     with pytest.raises(ValueError):
         gen.export_video({"source": src, "folder": str(dest), "range": [10, 10]})
 
@@ -1369,3 +1369,17 @@ def test_cache_miss_reason_names_the_changed_field(patcher, dirs, monkeypatch):
     miss = [m for m in logs if m.startswith("cache miss")]
     assert len(miss) == 2
     assert "steps 2→3" in miss[0] and "промпт" in miss[1] and "предыдущий отрезок" in miss[1]
+
+
+def test_run_history_records_done_and_error(patcher, dirs):
+    gen.run_project(patcher, FakeClip(), FakeVAE(), project())
+    st = gen.runs_state()
+    assert st["current"]["status"] == "done" and st["current"]["end"] >= st["current"]["start"]
+    last = st["history"][0]   # newest first
+    assert last["status"] == "done" and last["what"] == "весь ролик" and last["generated"] + last["cached"] >= 1
+    with pytest.raises(Exception) as ei:
+        gen.run_project(patcher, FakeClip(), None, project())
+    assert "VAE" in str(ei.value)
+    last = gen.runs_state()["history"][0]
+    assert last["status"] == "error" and last.get("error")
+    assert len(gen.run_history(5)) <= 5

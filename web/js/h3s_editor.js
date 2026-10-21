@@ -20,6 +20,7 @@ import { installRegions } from "./h3s_regions.js";
 import { installViewer } from "./h3s_viewer.js";
 import { installPromptEditor } from "./h3s_prompted.js";
 import { installPresets } from "./h3s_presets.js";
+import { installTimer } from "./h3s_timer.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -133,6 +134,8 @@ export class H3Editor {
     this.host.options?.().then((o) => { if (o?.samplers?.length) { this.opts = o; if (this.root) { this.renderInspector(); if (this.tool === "settings") this.renderLeft(); } } }).catch(() => {});
     this.globSync?.();
     this.mpSync?.();
+    this.filesSync?.();
+    this.timerSync?.();
     requestAnimationFrame(() => { if (this.root) { this.renderTimeline(); this.layoutStage(); } });
   }
 
@@ -187,7 +190,7 @@ export class H3Editor {
     this.scheduleSave();
     if (!this.root) return;
     if (render === "all") this.renderAll();
-    else if (render === "light") { this.renderTimeline(); this.renderHeader(); this.renderFinalPrompt(); }
+    else if (render === "light") { this.renderTimeline(); this.renderHeader(); this.renderFinalPrompt(); this.refreshStatus(); }
   }
 
   /** Fixed end marker: segments past it are not generated. True if segment i (default: any) lies past it. */
@@ -367,7 +370,7 @@ export class H3Editor {
     }
     $.head.append(
       h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
-      name, chips, undo, redo,
+      name, chips, this.timerEl(), undo, redo,
       h("button", { class: "h3z-btn", html: ICON.broom + "<span>Очистить память</span>", title: "Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)", onclick: (e) => this.freeMemory(e.currentTarget) }),
       ...action.filter(Boolean),
       h("button", { class: "h3z-btn icon", title: "Свернуть (Esc)", html: ICON.close, onclick: () => this.close() }));
@@ -528,7 +531,7 @@ export class H3Editor {
     let n = 0;
     for (const f of files) {
       try {
-        const r = await this.host.upload(f);
+        const r = await this.host.upload(f, this.p.id);
         const id = C.newId("a");
         const name = (f.name && f.name !== "image.png" ? f.name : r.name).replace(/\.[^.]+$/, "");
         this.mutate((p) => { p.assets.push({ id, name, file: r.name, subfolder: r.subfolder || "", type: r.type || "input", category: cat }); }, { render: "none" });
@@ -742,15 +745,26 @@ export class H3Editor {
 
   statusLine(i) {
     const s = this.seg(i), r = s.result;
-    if (!r) return h("div", { class: "h3z-status none" }, "Ещё не сгенерирован");
-    const stale = r.sig && r.sig !== this.sigs()[i];
+    if (!r) return h("div", { class: "h3z-st-host", "data-i": i, "data-stale": "-" }, h("div", { class: "h3z-status none" }, "Ещё не сгенерирован"));
+    const stale = !!(r.sig && r.sig !== this.sigs()[i]);
     const st = h("div", { class: "h3z-status" + (stale ? " stale" : "") }, stale ? "⟳ Изменён после генерации — пересчитается" : `✓ Готов · ${r.frames || s.frames} кадр.${r.cached ? " · из кэша" : ""}`);
     if (r.video) st.append(h("button", { class: "h3z-btn sm", style: { marginLeft: "auto" }, onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, "Смотреть"));
-    if (!stale || !this.restoreTake(i)) return st;
+    const host = (...kids) => h("div", { class: "h3z-st-host", "data-i": i, "data-stale": String(stale) }, ...kids);
+    if (!stale || !this.restoreTake(i)) return host(st);
     const panel = h("div", { class: "h3z-rs-host" });   // «↺ Восстановить»: put the take's inputs back, the key matches again
+    if (this._rsOpen === i) { this._rsOpen = null; requestAnimationFrame(() => { this.restorePanel(i, panel); panel.scrollIntoView?.({ block: "nearest" }); }); }
     st.append(h("button", { class: "h3z-btn sm", title: "Показать, что изменилось с этого дубля, и вернуть прежние значения — без перегенерации",
       onclick: () => (panel.childNodes.length ? panel.replaceChildren() : this.restorePanel(i, panel)) }, "↺ Восстановить"));
-    return h("div", null, st, panel);
+    return host(st, panel);
+  }
+
+  /** Light renders (typing in a prompt, etc.) skip the inspector; flip its «изменён» line when the state changed. */
+  refreshStatus() {
+    for (const el of this.root?.querySelectorAll(".h3z-st-host") || []) {
+      const i = Number(el.dataset.i), r = this.seg(i)?.result;
+      const now = r ? String(!!(r.sig && r.sig !== this.sigs()[i])) : "-";
+      if (now !== el.dataset.stale) el.replaceWith(this.statusLine(i));
+    }
   }
 
   globalCard() {
@@ -1250,6 +1264,7 @@ export class H3Editor {
         clip.append(h("div", { class: "bd " + (needFinal ? "draft" : stale ? "stale" : res.cached ? "cache" : "ok"), title: needFinal ? "Черновик — клик: «↑ Финал из черновика» для этого отрезка" : "",
           onpointerdown: needFinal ? (e) => e.stopPropagation() : null, onclick: needFinal ? (e) => { e.stopPropagation(); this.finalFromDraft([i]); } : null },
           needFinal ? "черновик → финал" : (stale ? "изменён" : res.cached ? "кэш ✓" : "готов ✓") + (q && !stale ? " · " + q : "")));
+        if (stale && !needFinal && !out && !s.freeze && this.restoreTake(i)) clip.append(this.clipRestoreButton(i, wd));
       }
       if ((s.takes || []).length > 1 && wd > 60) {
         const k = this.takeIndex(s, s.active_take);
@@ -1541,7 +1556,7 @@ export class H3Editor {
     this._queuedAt = Date.now(); this.startPolling();
     if (this.root) { this.renderHeader(); this.renderInspector(); }
     try {
-      await this.host.queue();
+      await this.host.queue(); setTimeout(() => this.timerSync?.(), 1500);
       if (this.run.queued) this.toast(region ? `В очереди: участок ${this.regionNo(region)}` : this.p.run.upto >= 0 ? `В очереди: отрезки 1–${this.p.run.upto + 1} (следующие — позже)` : "Поставлено в очередь ComfyUI");
     } catch (e) { this.run = { active: false }; if (this.root) { this.renderHeader(); this.renderInspector(); } this.toast("Не удалось поставить в очередь: " + (e.message || e), true); }
     finally { this.p.run = { upto: -1, only: -1, kind: "", region: "" }; this.flushSave(); } // the queued prompt already holds the scoped copy
@@ -1625,6 +1640,7 @@ export class H3Editor {
     const wasActive = !!this.run?.active && !this.run?.queued;
     const r = this.run;
     if (d.event === "start") this.followRun = true;
+    if (["start", "done", "error", "interrupted"].includes(d.event)) this.timerSync?.();
     if (d.event === "start" && d.fsigs) {   // content signatures of the reference files: stable keys on another PC / after a copy
       for (const a of this.p.assets || []) { const f = d.fsigs[a.id]; if (f && (a.fsig?.sha !== f.sha || a.fsig?.sig !== f.sig)) { a.fsig = { sha: f.sha, sig: f.sig }; this._fsigDirty = true; } }
       if (this._fsigDirty) { this._fsigDirty = false; this.scheduleSave(); }
@@ -1787,3 +1803,4 @@ installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurr
 installViewer(H3Editor, { C, h, ICON });
 installPromptEditor(H3Editor, { C, h, ICON });
 installPresets(H3Editor, { C, h, ICON });
+installTimer(H3Editor, { C, h });

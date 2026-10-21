@@ -302,7 +302,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       go.onclick = async () => {
         go.disabled = true;
         try { localStorage.setItem("h3zs.exportDir", folder.value.trim()); } catch (x) {}
-        try { const r = await this.host.exportVideo({ source: e.video, folder: folder.value.trim(), name: name.value.trim() }); info.textContent = "✓ " + r.path; this.toast("Сохранено: " + r.path); }
+        try { const r = await this.host.exportVideo({ project: e.pid || this.p.id, source: e.video, folder: folder.value.trim(), name: name.value.trim() }); info.textContent = "✓ " + r.path; this.toast("Сохранено: " + r.path); }
         catch (err) { info.textContent = "Ошибка: " + (err.message || err); info.classList.add("err"); }
         finally { go.disabled = false; }
       };

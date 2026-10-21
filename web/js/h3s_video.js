@@ -43,7 +43,7 @@ export function installVideo(Editor, { C, h, ICON }) {
       let n = 0;
       for (const f of files) {
         try {
-          const r = await this.host.upload(f);
+          const r = await this.host.upload(f, this.p.id);
           const ref = { filename: r.name, subfolder: r.subfolder || "", type: r.type || "input" };
           let info = {};
           try { info = await this.host.videoInfo(ref, false); } catch (e) { this.toast(`${f.name}: не удалось прочитать видео (${e.message || e})`, true); continue; }

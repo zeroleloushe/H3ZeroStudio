@@ -30,9 +30,15 @@ def _out(path, ops, ext, tag=""):
     st = os.stat(path)
     h = hashlib.sha256(json.dumps([os.path.abspath(path), st.st_size, int(st.st_mtime), ops, tag], sort_keys=True).encode()).hexdigest()[:12]
     base = os.path.splitext(os.path.basename(path))[0][:60]
+    name = f"{base}_{h}{ext}"
+    from . import h3s_projfiles as pf
+    pid = pf.project_of(path)
+    if pid:   # the source lives in a project: its derivatives too (deleted with the project)
+        d = os.path.join(pf.proj_dir(pid), "assets", "derived")
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, name), {"filename": name, "subfolder": pf.sub_of(pid, "assets", "derived"), "type": "output"}
     d = os.path.join(_input_dir(), *DERIVED.split("/"))
     os.makedirs(d, exist_ok=True)
-    name = f"{base}_{h}{ext}"
     return os.path.join(d, name), {"filename": name, "subfolder": DERIVED, "type": "input"}
 
 

@@ -290,10 +290,20 @@ def project_delete(pid, files=False):
 
 
 def _relink(project, old, new):
-    """Project JSON with every reference into the old generation folder pointing at the new one."""
+    """Project JSON with every reference into the old project folder pointing at the new one. An asset that moves
+    keeps its old place in "kf" (cache keys know it by that), so the copy's clips stay ready."""
+    project = json.loads(json.dumps(project, ensure_ascii=False))
+    kfs = {}
+    for a in project.get("assets") or []:
+        if isinstance(a, dict) and a.get("id") is not None:
+            kfs[str(a["id"])] = a.pop("kf", None) or ([a.get("file") or "", a.get("subfolder") or ""]
+                                                       if str(a.get("subfolder") or "").startswith(f"{ROOT}/{old}/") else None)
     s = json.dumps(project, ensure_ascii=False)
     s = s.replace(f'"{ROOT}/{old}/', f'"{ROOT}/{new}/').replace(f'"{ROOT}/{old}"', f'"{ROOT}/{new}"')
     p = json.loads(s)
+    for a in p.get("assets") or []:
+        if isinstance(a, dict) and kfs.get(str(a.get("id"))):
+            a["kf"] = kfs[str(a["id"])]
     p["id"] = new
     return p
 
@@ -354,8 +364,8 @@ def export_zip(project, include_cache=True, folder=""):
     if not pid:
         raise ValueError("нет id проекта")
     folder = str(folder or "").strip().strip('"')
-    if not folder:
-        folder = os.path.join(_out(), ROOT, "_exports")
+    if not folder:   # the project's own export folder (a zip is never put into the next zip, see below)
+        folder = os.path.join(project_root(pid), "export")
     elif not os.path.isabs(os.path.expanduser(folder)):
         folder = os.path.join(_out(), folder)
     folder = os.path.abspath(os.path.expanduser(folder))
@@ -376,7 +386,9 @@ def export_zip(project, include_cache=True, folder=""):
                 for f in files:
                     full = os.path.join(root, f)
                     rel = os.path.relpath(full, _out()).replace("\\", "/")
-                    if not include_cache and rel.startswith(f"{ROOT}/{pid}/cache/"):
+                    if not include_cache and rel.startswith((f"{ROOT}/{pid}/cache/", f"{ROOT}/{pid}/takes/")):
+                        continue
+                    if rel.startswith(f"{ROOT}/{pid}/export/"):
                         continue
                     if f.endswith(".part"):
                         continue

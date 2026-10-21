@@ -44,7 +44,16 @@ function makeHost(node) {
     },
     queue: async () => { await app.queuePrompt(0, 1); },
     interrupt: async () => { await api.fetchApi("/interrupt", { method: "POST" }); },
-    upload: async (file) => {
+    upload: async (file, pid) => {
+      if (pid) {   // self-contained projects: into output/h3zerostudio/<pid>/assets (one copy per content)
+        const fd = new FormData();
+        fd.append("project", pid);
+        fd.append("file", file, file.name || "pasted.png");
+        const r = await api.fetchApi("/h3zero/asset_upload", { method: "POST", body: fd });
+        const j = await r.json().catch(() => ({ error: r.status + " " + r.statusText }));
+        if (r.status !== 200) throw new Error(j.error || r.status);
+        return j;
+      }
       const body = new FormData();
       body.append("image", file, file.name || "pasted.png");
       body.append("subfolder", "h3zerostudio");

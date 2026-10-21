@@ -285,6 +285,9 @@ export function presetFingerprint(p) {
   return JSON.stringify([p.base, p.model, p.dtype, p.clip, p.loras.filter((l) => l.on && (l.sm || l.sc)).map((l) => [l.file, l.sm, l.sc])]);
 }
 
+/** (file, subfolder) of an asset as the cache keys know it (mirror of h3s_core.asset_kf): a moved asset keeps the old pair. */
+export const assetKf = (a) => (Array.isArray(a?.kf) && a.kf.length === 2 && a.kf.every((x) => typeof x === "string") ? a.kf : [a?.file, a?.subfolder]);
+
 export function normalizeProject(p) {
   if (typeof p === "string") { try { p = p.trim() ? JSON.parse(p) : {}; } catch (e) { p = {}; } }
   if (!p || typeof p !== "object" || Array.isArray(p)) p = {};
@@ -354,6 +357,7 @@ export function normalizeProject(p) {
     const asset = { id: String(a.id), name: String(a.name || a.file), file: String(a.file), subfolder: String(a.subfolder || ""), type: String(a.type || "input"), category: cat };
     if (cat === "audio") asset.duration = Math.max(0, num(a.duration, 0));
     // content signature (sha256 + the size:mtime first seen for it): the cache key of a copied/re-saved file stays
+    if (Array.isArray(a.kf) && a.kf.length === 2 && a.kf.every((x) => typeof x === "string")) asset.kf = [a.kf[0].slice(0, 300), a.kf[1].slice(0, 300)];
     if (a.fsig && typeof a.fsig === "object" && typeof a.fsig.sha === "string" && typeof a.fsig.sig === "string") {
       asset.fsig = { sha: a.fsig.sha.slice(0, 64), sig: a.fsig.sig.slice(0, 64) };
     }
@@ -739,11 +743,11 @@ export function baseSigs(project, kind = null) {
   for (const it of items) {
     const i = it.index, seg = project.segments[i];
     const src = seg.source, srcA = src ? project.assets.find((a) => a.id === src.asset) || {} : null;
-    const sd = src ? [srcA.id, srcA.file, srcA.subfolder, src.in, src.denoise] : null;
-    const vr = isFootage(seg) ? [] : videoRefs(project, seg).slice(0, MAX_REF_VIDEOS).map((a) => [a.id, a.file, a.subfolder]);
+    const sd = src ? [srcA.id, ...assetKf(srcA), src.in, src.denoise] : null;
+    const vr = isFootage(seg) ? [] : videoRefs(project, seg).slice(0, MAX_REF_VIDEOS).map((a) => [a.id, ...assetKf(a)]);
     const sig = isFootage(seg) ? fnv(JSON.stringify(["footage", w, h, it.frames, sd])) : fnv(JSON.stringify([w, h, it.frames, it.overlap, composePrompt(project, i), s.negative || "",
-      orderedRefs(project, seg).map((a) => [a.id, a.file, a.subfolder]), passParams(project, i, kind), !!s.lock_overlap,
-      continuityPicture(project, i), s.ref_size, segmentTrack(project, it), audioRefs(project, seg).map((a) => [a.id, a.file || ""]).slice(0, MAX_REF_AUDIOS),
+      orderedRefs(project, seg).map((a) => [a.id, ...assetKf(a)]), passParams(project, i, kind), !!s.lock_overlap,
+      continuityPicture(project, i), s.ref_size, segmentTrack(project, it), audioRefs(project, seg).map((a) => [a.id, assetKf(a)[0] || ""]).slice(0, MAX_REF_AUDIOS),
       it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [])));
     const fsig = seg.freeze ? (seg.freeze.sig || "F" + seg.freeze.key) : sig;   // frozen: fixed, so what follows stays valid
     out.push(fsig); prev = fsig;
@@ -865,6 +869,6 @@ export function regionSig(project, region, kind = null) {
   const sigs = baseSigs(project, kind), cs = win.chain[0];
   const p = passParams(project, Math.max(0, win.seg), kind); p.seed = region.seed | 0;
   return fnv(JSON.stringify(["region", kind, win.ws - cs, win.a - cs, win.b - cs, win.we - cs, win.to_end, win.segs.map((i) => sigs[i] || ""),
-    regionPrompt(project, region), project.settings.negative || "", orderedRefs(project, { refs: region.refs || [] }).map((a) => [a.id, a.file, a.subfolder]), p,
+    regionPrompt(project, region), project.settings.negative || "", orderedRefs(project, { refs: region.refs || [] }).map((a) => [a.id, ...assetKf(a)]), p,
     Math.round(Math.min(Number(project.settings.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100, lockClips(project)]));
 }

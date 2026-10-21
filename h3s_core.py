@@ -396,6 +396,16 @@ def preset_fingerprint(p):
                       separators=(",", ":"), ensure_ascii=False)
 
 
+def asset_kf(a):
+    """(file, subfolder) of an asset as its cache keys know it: where it was when its clips were made. A moved
+    asset (into the project folder, a duplicated / imported project) keeps the old pair in "kf", so no clip
+    goes stale because its file changed place (the content is checked separately, by signature)."""
+    kf = a.get("kf")
+    if isinstance(kf, (list, tuple)) and len(kf) == 2 and all(isinstance(x, str) for x in kf):
+        return kf[0], kf[1]
+    return a.get("file"), a.get("subfolder")
+
+
 def _merge(defaults, value):
     out = copy.deepcopy(defaults)
     if isinstance(value, dict):
@@ -498,6 +508,9 @@ def normalize_project(p):
         if cat == "audio":
             asset["duration"] = max(0.0, _num(a.get("duration"), 0.0))
         # content signature (sha256 + the size:mtime first seen for it): the cache key of a copied/re-saved file stays
+        kf = a.get("kf")
+        if isinstance(kf, (list, tuple)) and len(kf) == 2 and all(isinstance(x, str) for x in kf):
+            asset["kf"] = [kf[0][:300], kf[1][:300]]
         fs = a.get("fsig")
         if isinstance(fs, dict) and isinstance(fs.get("sha"), str) and isinstance(fs.get("sig"), str):
             asset["fsig"] = {"sha": fs["sha"][:64], "sig": fs["sig"][:64]}
@@ -1159,7 +1172,7 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
         data = {
             "v": KEY_VERSION, "env": env_i, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
             "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
-            "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
+            "refs": [[a["id"], *asset_kf(a), ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
             "params": pass_params(project, i, kind), "lock": bool(s.get("lock_overlap", True)),
             "cref": continuity_picture(project, i), "ref_size": s.get("ref_size"),
             "audio": [[c + [ref_sigs.get(c[0], "")] for c in segment_track(project, it)],
@@ -1175,14 +1188,14 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
         src = seg.get("source")
         if src:
             a = next((x for x in project["assets"] if x["id"] == src["asset"]), {})
-            sd = [a.get("id"), a.get("file"), a.get("subfolder"), ref_sigs.get(src["asset"], ""), src["in"], src["denoise"]]
+            sd = [a.get("id"), *(asset_kf(a) if a else (None, None)), ref_sigs.get(src["asset"], ""), src["in"], src["denoise"]]
             if is_footage(seg):   # used as is: only the file range, size and VAE matter
                 data = {"v": KEY_VERSION, "env": env_i, "wh": [w, h], "frames": it["frames"], "src": sd}
             else:
                 data["src"] = sd
         vr = video_refs(project, seg)
         if vr and not is_footage(seg):
-            data["vrefs"] = [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in vr][:MAX_REF_VIDEOS]
+            data["vrefs"] = [[a["id"], *asset_kf(a), ref_sigs.get(a["id"], "")] for a in vr][:MAX_REF_VIDEOS]
         k = seg["freeze"]["key"] if seg.get("freeze") else _h(data)[:16]
         keys.append(k)
         if parts is not None:   # what went into the key (cache miss reasons, take recipes)
@@ -1374,7 +1387,7 @@ def region_key(project, region, win, seg_keys, ref_sigs=None, env_sig="", kind=N
                "src": [seg_keys[i] for i in win["segs"] if i < len(seg_keys)],
                "win": [win["ws"] - cs, win["a"] - cs, win["b"] - cs, win["we"] - cs, win["to_end"]],
                "prompt": region_prompt(project, region), "neg": s.get("negative") or "",
-               "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in region_refs(project, region)],
+               "refs": [[a["id"], *asset_kf(a), ref_sigs.get(a["id"], "")] for a in region_refs(project, region)],
                "params": region_params(project, region, win, kind), "ref_size": s.get("ref_size"),
                "actx": round(min(float(s.get("audio_context_sec", 0) or 0), AUDIO_CONTEXT_MAX), 2),
                "track": [c for c in lock_clips(project)] if lock_clips(project) else None})[:16]

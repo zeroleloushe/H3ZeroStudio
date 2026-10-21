@@ -57,7 +57,7 @@ export function installAudio(Editor, { C, h, ICON }) {
       let n = 0, last = null;
       for (const f of files) {
         try {
-          const r = await this.host.upload(f);
+          const r = await this.host.upload(f, this.p.id);
           const id = C.newId("au");
           this.mutate((p) => { p.assets.push({ id, name: (f.name || r.name).replace(/\.[^.]+$/, ""), file: r.name, subfolder: r.subfolder || "", type: r.type || "input", category: "audio", duration: 0 }); }, { render: "none" });
           n++; last = id;

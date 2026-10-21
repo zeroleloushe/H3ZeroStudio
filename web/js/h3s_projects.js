@@ -1,6 +1,8 @@
 // «Проекты»: the open project is autosaved to the project list (output/h3zerostudio/_projects) a few seconds
 // after every change; open / new / duplicate / rename / delete; zip export (project + assets + generations)
 // and import. The live copy of the open project stays in the workflow node as before.
+const fmtMB = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(2) + " ГБ" : (b / 1048576).toFixed(1) + " МБ");
+
 export function installProjects(Editor, { C, h, ICON }) {
   const fmtDate = (t) => (t ? new Date(t * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
   Object.assign(Editor.prototype, {
@@ -104,6 +106,7 @@ export function installProjects(Editor, { C, h, ICON }) {
       if (msg) this.toast(msg);
       this.globSync?.();
       this.mpSync?.();
+      this.filesSync?.();
     },
     async projOpen(id) {
       if (this.run.active) { this.toast("Идёт генерация — откройте проект после неё", true); return; }
@@ -139,18 +142,60 @@ export function installProjects(Editor, { C, h, ICON }) {
         this.projFill(true); if (m.id === this.p.id) this.renderLeft();
       } catch (e) { this.toast("Не удалось переименовать: " + (e.message || e), true); }
     },
+    /** Delete dialog: the project from the list, and (default) its whole folder — assets, generations, cache,
+     *  takes, exports. Shared files of older versions are never touched here («Очистить неиспользуемое»). */
     async projDelete(m) {
       if (m.id === this.p.id) return;
-      if (!confirm(`Удалить проект «${m.name || m.id}» из списка?`)) return;
-      const files = confirm("Удалить и его файлы генераций (видео, кэш, зафиксированные отрезки) с диска?\nОК — удалить файлы, Отмена — оставить файлы.");
-      try { await this.host.call("/h3zero/project/delete", { id: m.id, files }); this.toast(`Проект «${m.name || m.id}» удалён` + (files ? " вместе с файлами" : "")); this.projFill(true); }
-      catch (e) { this.toast("Не удалось удалить: " + (e.message || e), true); }
+      this.closeSaveDialog?.();
+      let files = true;
+      const sz = h("em", { class: "h3z-note" }, "считаю…");
+      const ft = this.toggle("Удалить все файлы проекта", files, (v) => { files = v; });
+      ft.onclick = () => { files = !files; ft.classList.toggle("on", files); };
+      ft.classList.add("on"); ft.classList.add("h3z-del-files");
+      const go = h("button", { class: "h3z-btn danger" }, "Удалить");
+      const close = () => this.closeSaveDialog();
+      this.host.get("/h3zero/project/size", { id: m.id })
+        .then((r) => { sz.textContent = r.files ? `освободится ${fmtMB(r.bytes)} · файлов: ${r.files} (ассеты, генерации, кэш, дубли, экспорт)` : "файлов на диске нет"; })
+        .catch(() => { sz.textContent = ""; });
+      go.onclick = async () => {
+        go.disabled = true;
+        try {
+          await this.host.call("/h3zero/project/delete", { id: m.id, files });
+          this.toast(`Проект «${m.name || m.id}» удалён` + (files ? " вместе с файлами" : " (файлы оставлены)")); close(); this.projFill(true);
+        } catch (e) { this.toast("Не удалось удалить: " + (e.message || e), true); go.disabled = false; }
+      };
+      const box = h("div", { class: "h3z-save h3z-glass h3z-del" }, h("div", { class: "hd" }, h("b", null, `🗑 Удалить проект «${m.name || m.id}»?`), h("i", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: close }, "✕")),
+        h("div", { class: "h3z-note" }, "Проект исчезнет из списка. Отменить это нельзя."), ft, sz,
+        h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", onclick: close }, "Отмена"), go));
+      const modal = this.$.saveModal = h("div", { class: "h3z-modal" }, box);
+      modal.addEventListener("pointerdown", (x) => { if (x.target === modal) close(); });
+      box.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") close(); });
+      this.root.append(modal);
+      go.focus();
+    },
+
+    /** Older projects point into the shared input/h3zerostudio folder: copy what this one uses into its own folder
+     *  (originals untouched) and relink. Quiet, no undo step; cache keys stay (assets keep their old place in kf). */
+    async filesSync() {
+      const pid = this.p.id;
+      const ext = (this.p.assets || []).some((a) => !String(a.subfolder || "").startsWith(`h3zerostudio/${pid}/`) || (a.type || "input") !== "output");
+      if (!ext || this._filesSyncing === pid) return;
+      this._filesSyncing = pid;
+      try {
+        const r = await this.host.call("/h3zero/project/localize", { project: this.p });
+        if (!this.root || this.p.id !== pid || !r?.moved) return;
+        const byId = Object.fromEntries(r.assets.map((a) => [a.id, a]));
+        this.p.assets = this.p.assets.map((a) => byId[a.id] ? { ...a, ...byId[a.id] } : a);
+        this.p = C.normalizeProject(this.p); this.flushSave?.(); this.renderAll();
+        this.toast(`Файлы проекта собраны в его папку: ${r.moved}` + (r.missing?.length ? ` · не найдено: ${r.missing.length}` : ""));
+      } catch (e) { console.warn("[H3ZS] localize", e); }
+      finally { this._filesSyncing = null; }
     },
 
     projExportDialog(p) {
       this.closeSaveDialog?.();
       const ld = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (x) { return d; } };
-      const folder = h("input", { class: "h3z-in", value: ld("h3zs.zipDir", ""), placeholder: "по умолчанию: ComfyUI/output/h3zerostudio/_exports" });
+      const folder = h("input", { class: "h3z-in", value: ld("h3zs.zipDir", ""), placeholder: "по умолчанию: папка проекта / export" });
       let cache = ld("h3zs.zipCache", "1") === "1";
       const ct = this.toggle("С кэшем латентов (большой архив: продолжение и апскейл без перегенерации)", cache, (v) => { cache = v; });
       ct.onclick = () => { cache = !cache; ct.classList.toggle("on", cache); };

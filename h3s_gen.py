@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import threading
 import time
 
 import numpy as np
@@ -1199,7 +1200,10 @@ def video_asset_info(ref, strip=True):
                        "name": ref.get("filename")})
     info = media.video_info(path)
     tag = hashlib.sha256(f"{path}|{file_sig(path)}".encode()).hexdigest()[:16]
-    tdir = os.path.join(folder_paths.get_output_directory(), "h3zerostudio", "_thumbs")
+    from . import h3s_projfiles as pf
+    pid = pf.project_of(path)   # a project's video: its posters live (and die) with the project
+    tsub = pf.sub_of(pid, "thumbs") if pid else "h3zerostudio/_thumbs"
+    tdir = os.path.join(folder_paths.get_output_directory(), *tsub.split("/"))
     os.makedirs(tdir, exist_ok=True)
     name = f"v_{tag}.jpg"
     fps = 24
@@ -1208,7 +1212,7 @@ def video_asset_info(ref, strip=True):
         th = max(16, int(round(tw * info["height"] / max(1, info["width"]))))
         fr = media.sample_video_frames(path, [min(info["frames"] // 10, 48) / fps], tw, th)
         media.write_poster(os.path.join(tdir, name), torch.from_numpy(fr[0].astype(np.float32) / 255.0), max_width=tw)
-    info["poster"] = view_ref("h3zerostudio/_thumbs", name)
+    info["poster"] = view_ref(tsub, name)
     if not strip:
         info["strip"], info["strip_n"] = None, 0
         return info
@@ -1223,7 +1227,7 @@ def video_asset_info(ref, strip=True):
         times = [min(n_all - 1, int((j + 0.5) * n_all / count)) / fps for j in range(count)]
         frs = media.sample_video_frames(path, times, tw, th)
         media.write_strip(os.path.join(tdir, sname), torch.from_numpy(frs.astype(np.float32) / 255.0), count=count, height=th)
-    info["strip"] = view_ref("h3zerostudio/_thumbs", sname)
+    info["strip"] = view_ref(tsub, sname)
     info["strip_n"] = count
     return info
 
@@ -1251,7 +1255,9 @@ def export_video(body):
                       "type": src_ref.get("type", "output"), "name": src_ref.get("filename")})
     folder = str(body.get("folder") or "").strip().strip('"')
     if not folder:
-        folder = export_dir()
+        from . import h3s_projfiles as pf
+        pid = pf.project_of(src) or pf.clean_id(body.get("project"))
+        folder = os.path.join(pf.proj_dir(pid), "export") if pid and os.path.isdir(pf.proj_dir(pid)) else export_dir()
     elif not os.path.isabs(os.path.expanduser(folder)):
         folder = os.path.join(folder_paths.get_output_directory(), folder)
     folder = os.path.abspath(os.path.expanduser(folder))
@@ -1357,15 +1363,101 @@ class vram_headroom:
         return False
 
 
+# ---------------------------------------------------------------- generation timer + run history (header of the editor)
+RUNS = {"current": None}
+HISTORY_KEEP = 20
+_HLOCK = threading.Lock()
+
+
+def _history_path():
+    import folder_paths
+    return os.path.join(folder_paths.get_output_directory(), "h3zerostudio", "_history.json")
+
+
+def run_history(n=5):
+    try:
+        with open(_history_path(), "r", encoding="utf-8") as f:
+            runs = json.load(f).get("runs") or []
+    except (OSError, ValueError):
+        runs = []
+    return runs[-n:][::-1]
+
+
+def _describe_run(project):
+    """What a run is about, for the timer popover: type, scope, segments, size, stage."""
+    try:
+        p = core.normalize_project(project)
+        s, req = p["settings"], p.get("run") or {}
+        kind = req.get("kind") if req.get("kind") in core.RUN_KINDS else core.run_kind(s)
+        lp = core.limited_project(p)
+        n = len(lp["segments"])
+        segs = p["segments"]
+        if req.get("region"):
+            rg = next((r for r in p.get("regions") or [] if r.get("id") == req["region"]), {})
+            what = "✂ участок" + (f" «{rg.get('name')}»" if rg.get("name") else "")
+        elif int(req.get("only", -1)) >= 0:
+            i = int(req["only"])
+            what = f"отрезок {i + 1}" + (" · апскейл" if i < len(segs) and segs[i].get("upscale") else "")
+        elif int(req.get("upto", -1)) >= 0:
+            what = f"до отрезка {int(req['upto']) + 1}"
+        else:
+            what = "весь ролик"
+        w, h = core.work_resolution(s, kind)
+        return {"what": what, "kind": kind, "stage": {"draft": "черновик", "full": "финал", "refine": "финал из черновика"}.get(kind, kind),
+                "segments": n, "wh": [w, h], "project": p.get("name") or "", "pid": p.get("id") or ""}
+    except Exception as e:
+        return {"what": "запуск", "err": str(e)[:100]}
+
+
+def _run_begin(project):
+    rec = dict(_describe_run(project), id=f"r{int(time.time() * 1000)}", start=time.time(), end=None, status="running")
+    RUNS["current"] = rec
+    return rec
+
+
+def _run_end(rec, status, info=None, err=None):
+    rec.update(end=time.time(), status=status)
+    rec["dur"] = round(rec["end"] - rec["start"], 1)
+    if info:
+        segs = info.get("segments") or []
+        rec["generated"] = sum(1 for r in segs if not r.get("cached"))
+        rec["cached"] = sum(1 for r in segs if r.get("cached"))
+    if err:
+        rec["error"] = str(err)[:200]
+    with _HLOCK:
+        try:
+            path = _history_path()
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    runs = json.load(f).get("runs") or []
+            except (OSError, ValueError):
+                runs = []
+            runs = (runs + [rec])[-HISTORY_KEEP:]
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".part", "w", encoding="utf-8") as f:
+                json.dump({"runs": runs}, f, ensure_ascii=False)
+            os.replace(path + ".part", path)
+        except OSError as e:
+            log(f"run history not saved: {e}")
+
+
+def runs_state():
+    return {"now": time.time(), "current": RUNS["current"], "history": run_history(5)}
+
+
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
+    rec = _run_begin(project)
     try:
         try:
             gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 1.0)
         except Exception:
             gb = 1.0
         with vram_headroom(gb):
-            return _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
+            out = _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
+        _run_end(rec, "done", out[3] if isinstance(out, tuple) and len(out) > 3 and isinstance(out[3], dict) else None)
+        return out
     except BaseException as e:   # interrupted / failed: the polling editor must see the run as ended
+        _run_end(rec, "interrupted" if "Interrupt" in type(e).__name__ or isinstance(e, KeyboardInterrupt) else "error", err=str(e) or type(e).__name__)
         st = STATUS.get(str(node_id)) if node_id is not None else None
         if st and st.get("active"):
             st["active"], st["error"], st["t"] = False, (str(e) or type(e).__name__)[:300], time.time()

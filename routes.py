@@ -96,6 +96,11 @@ def register():
             return hm.status()
         return await _json_call(go)
 
+    @routes.get("/h3zero/runs")
+    async def runs(request):
+        from . import h3s_gen
+        return await _json_call(h3s_gen.runs_state)
+
     @routes.get("/h3zero/status")
     async def status(request):
         try:
@@ -249,6 +254,63 @@ def register():
         from . import h3s_library as lib
         b = await request.json()
         return await _json_call(lib.project_delete, b.get("id"), bool(b.get("files")))
+
+    # ---- self-contained projects: uploads, migration, size, shared leftovers
+    @routes.post("/h3zero/asset_upload")
+    async def asset_upload(request):
+        """multipart: project (id), file -> output/h3zerostudio/<id>/assets (one copy per content)."""
+        from . import h3s_projfiles as pf
+        reader = await request.multipart()
+        pid, res = "", None
+        try:
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name == "project":
+                    pid = pf.clean_id(await part.text())
+                elif part.name in ("file", "image"):
+                    if not pid:
+                        raise ValueError("project id must come before the file")
+                    import asyncio
+                    tmp = pf.upload_tmp(pid)
+                    try:
+                        with open(tmp, "wb") as f:   # streamed to disk (videos can be large)
+                            while True:
+                                c = await part.read_chunk(1 << 20)
+                                if not c:
+                                    break
+                                f.write(c)
+                        res = await asyncio.get_running_loop().run_in_executor(None, pf.finish_upload, pid, tmp, part.filename)
+                    finally:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+            if not res:
+                raise ValueError("no file")
+            return web.json_response(res)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    @routes.post("/h3zero/project/localize")
+    async def project_localize(request):
+        from . import h3s_projfiles as pf
+        b = await request.json()
+        return await _json_call(pf.localize, b.get("project") or {})
+
+    @routes.get("/h3zero/project/size")
+    async def project_size(request):
+        from . import h3s_projfiles as pf
+        return await _json_call(pf.project_size, request.rel_url.query.get("id", ""))
+
+    @routes.get("/h3zero/unused")
+    async def unused_get(request):
+        from . import h3s_projfiles as pf
+        return await _json_call(pf.unused_shared)
+
+    @routes.post("/h3zero/unused/clean")
+    async def unused_clean(request):
+        from . import h3s_projfiles as pf
+        return await _json_call(pf.clean_unused)
 
     @routes.post("/h3zero/project/duplicate")
     async def project_duplicate(request):

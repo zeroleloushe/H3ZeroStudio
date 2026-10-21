@@ -278,6 +278,38 @@ export function installRestore(Editor, { C, h }) {
         : "Восстановлено частично" + (left?.items.length ? ": ещё отличается — " + left.items.map((x) => x.label).join(", ") : ""));
     },
 
+    /** Restore everything that can be restored (the timeline button / menu): one undo step. */
+    restoreAll(i) {
+      const d = this.takeDiff(i);
+      if (!d) return this.toast("У этого дубля нет сохранённых входов (сделан старой версией)", true);
+      const items = d.items.filter((x) => x.apply);
+      if (!items.length) return this.toast(d.match ? "Входы уже совпадают" : "Изменились файлы референсов или ассеты — их не вернуть отсюда", true);
+      this.applyRestore(i, items);
+    },
+
+    /** Per-field choice: the clip card in the right panel, with its restore panel open. */
+    openRestorePanel(i) {
+      this._rsOpen = i; this.sel = i;
+      this.renderTimeline(); this.renderInspector();
+    },
+
+    /** «↺ Восстановить» on a stale clip in the timeline: click = all, Shift-click / right click / ▾ = choose fields. */
+    clipRestoreButton(i, wd) {
+      const tip = (el) => {
+        const d = this.takeDiff(i), list = d?.items.map((x) => "• " + x.label + (x.from !== undefined ? `: ${x.to} → ${x.from}` : "")) || [];
+        el.title = (list.length ? "Вернуть входы этого дубля (один шаг отмены), перегенерации не будет:\n" + list.join("\n") : "Поля совпадают — изменились файлы референсов")
+          + "\n\nShift-клик, правый клик или ▾ — выбрать поля";
+      };
+      const stop = (e) => e.stopPropagation();
+      const main = h("button", { class: "h3z-rsb-main", onpointerdown: stop,
+        onclick: (e) => { e.stopPropagation(); if (e.shiftKey) this.openRestorePanel(i); else this.restoreAll(i); },
+        oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); this.openRestorePanel(i); } }, wd > 170 ? "↺ Восстановить" : "↺");
+      const more = h("button", { class: "h3z-rsb-more", title: "Выбрать поля", onpointerdown: stop, onclick: (e) => { e.stopPropagation(); this.openRestorePanel(i); } }, "▾");
+      const box = h("div", { class: "h3z-rsb", onpointerdown: stop }, main, wd > 110 ? more : null);
+      box.addEventListener("pointerenter", () => tip(main), { once: true });
+      return box;
+    },
+
     /** The panel under the card status of a stale clip. */
     restorePanel(i, host) {
       const d = this.takeDiff(i);

@@ -75,7 +75,7 @@ def test_projects_crud_and_zip_roundtrip(patcher, dirs):
     assert os.listdir(os.path.join(str(out), "h3zerostudio", "pz2", "cache"))
     # zip export (with assets) -> import while the id exists: new id, files restored, input clash renamed
     r = lib.export_zip(lib.project_get("pz"), include_cache=False)
-    assert os.path.isfile(r["path"]) and r["ref"]["subfolder"] == "h3zerostudio/_exports"
+    assert os.path.isfile(r["path"]) and r["ref"]["subfolder"] == "h3zerostudio/pz/export"
     import zipfile
     names = zipfile.ZipFile(r["path"]).namelist()
     assert "project.json" in names and "files/input/h3zerostudio/hero.png" in names

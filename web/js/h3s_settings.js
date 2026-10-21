@@ -6,6 +6,19 @@
 export function installSettings(Editor, { C, h, ICON }) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   Object.assign(Editor.prototype, {
+    /** Shared leftovers of older versions: preview (count, size, examples), then confirm. */
+    async cleanUnused() {
+      try {
+        this.toast("Ищу неиспользуемые файлы…");
+        const r = await this.host.get("/h3zero/unused");
+        if (!r.files) { this.toast("Неиспользуемых общих файлов нет"); return; }
+        const mb = (r.bytes / 1048576).toFixed(1);
+        if (!confirm(`Удалить ${r.files} общих файлов (${mb} МБ) из input/h3zerostudio и _thumbs?\nНи один сохранённый проект на них не ссылается.`
+          + `\nПроекты, которые есть только внутри workflow (не в списке «Проекты»), не учитываются — откройте их сначала.\n\n` + r.sample.join("\n") + (r.files > r.sample.length ? "\n…" : ""))) return;
+        const d = await this.host.call("/h3zero/unused/clean", {});
+        this.toast(`Удалено файлов: ${d.files} (${(d.bytes / 1048576).toFixed(1)} МБ)`);
+      } catch (e) { this.toast("Не удалось: " + (e.message || e), true); }
+    },
     // ---------------------------------------------------------------- global settings
     async globLoad(force = false) {
       if (this._glob && !force) return this._glob;
@@ -220,7 +233,8 @@ export function installSettings(Editor, { C, h, ICON }) {
       const cache = det("Кэш",
         this.toggle("Кэш готовых отрезков", g.cache, (v) => set("cache", v), "Пропускать неизменённые отрезки"),
         h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", title: "Готовые дубли остаются (восстановятся без генерации)", onclick: () => this.clearCache() }),
-        h("button", { class: "h3z-btn sm danger", title: "Кэш и все готовые дубли (кроме зафиксированных)", onclick: () => this.clearCache(true) }, "…и дубли"));
+        h("button", { class: "h3z-btn sm danger", title: "Кэш и все готовые дубли (кроме зафиксированных)", onclick: () => this.clearCache(true) }, "…и дубли"),
+        h("button", { class: "h3z-btn sm", title: "Общие файлы старых версий (input/h3zerostudio, _thumbs), на которые не ссылается ни один сохранённый проект", onclick: () => this.cleanUnused() }, "Очистить неиспользуемое"));
       const taes = ["auto", "none", ...((this.opts.tiny_vaes || []).filter((x) => x !== "auto" && x !== "none"))];
       const taeSel = h("select", { class: "h3z-sel" }, (taes.includes(g.preview_tiny_vae) ? taes : [g.preview_tiny_vae, ...taes]).map((x) => h("option", { value: x, selected: x === g.preview_tiny_vae }, x === "auto" ? "авто (taeh3, если есть)" : x === "none" ? "нет — latent2rgb" : x)));
       taeSel.onchange = () => set("preview_tiny_vae", taeSel.value);
