@@ -69,6 +69,7 @@
   - A/B-сравнение с синхронным воспроизведением и увеличением ×1/×2/×4: A и B увеличиваются и сдвигаются вместе.
   - Проекты сохраняются автоматически; есть экспорт и импорт zip с ассетами.
 - 〰 **Качество швов.** После генерации каждый стык оценивается (шов незаметен / лёгкий скачок / резкий шов, плюс скачок громкости) — точка над стыком, карточка клипа и галерея подсказывают, где сделать «Ещё дубль». Жёсткие склейки звука без щелчков (затухание ~5 мс), все MP4 в BT.709, настраиваемый запас VRAM во время генерации.
+- ↺ **Надёжный кэш и восстановление.** Готовый дубль хранится вместе с латентом, рецептом, мастер-кадрами и звуком: повторный запуск не вызывает ни модель, ни VAE, «Очистить кэш» не теряет продолжение. Референсы сравниваются по содержимому (копия / zip / пересохранение не сбрасывают кэш). На клипе «изменён» — «↺ Восстановить»: список «что изменилось» и возврат выбранных полей; причина промаха кэша — в консоли (`[H3ZS] cache miss: … reason`).
 - 💾 **Кэш по хэшу параметров.** Перегенерируется только то, что изменилось. Прогресс не теряется при перезагрузке вкладки.
 - 📖 **«Справка»** прямо в редакторе: 27 разделов с поиском.
 - ⌨️ **Undo/Redo и горячие клавиши.**
@@ -343,6 +344,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 - **Live preview.** Every step is decoded with `taeh3`, with audio, σ/Δ charts and a per-step log.
 - **Prompt editor.** «✎ Редактировать» on every prompt field opens a large CodeMirror 6 editor: `@` lists this prompt's references (with thumbnails) and inserts `<Picture N>` / `<Video N>` / `<Audio N>`; tokens are highlighted and dangling ones flagged; find/replace, undo/redo, wrap, line numbers, mono font, word/char/token counter; a side panel explains the recommended H3 prompt structure (subject_definitions … non_diegetic_music), counts detailed_description words against 350–500 and inserts a skeleton.
 - **Seams.** Every extend join is rated after generation (seamless / soft bump / hard cut, plus the loudness jump) on the timeline, clip card and gallery, with a hint to reroll. Hard audio cuts get a ~5 ms de-click taper; all MP4s are BT.709-tagged; a configurable VRAM headroom is kept free during runs (ideas after chanon/comfyui-obvpm-timeline, GPL-3.0).
+- **Reliable cache & restore.** Every finished take keeps its latent sidecar, recipe, a near-lossless frame master and its sound, so re-runs call neither the model nor the VAE and «Clear cache» no longer loses continuations. Reference files are matched by content (copies / zip imports keep the keys). Stale clips get «↺ Restore» with a per-field "what changed" diff and partial restore; cache misses are logged with their reason.
 - **Also included:** markers, gallery with A/B compare, projects with zip export/import, undo/redo, hotkeys, and a built-in help tab. The UI is plain JS (plus a vendored CodeMirror 6 bundle for the prompt editor), works offline and uses no CDN.
 
 **Install:** `git clone https://github.com/zeroleloushe/H3ZeroStudio.git` into `ComfyUI/custom_nodes`, then restart ComfyUI. No extra pip packages are required.

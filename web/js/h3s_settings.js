@@ -219,7 +219,8 @@ export function installSettings(Editor, { C, h, ICON }) {
         this.toggle("Убирать щелчки на склейках", g.audio_declick !== false, (v) => set("audio_declick", v), "Жёсткие склейки звука (новая сцена, футаж, края экспорта и обрезки): плавное затухание ~5 мс с каждой стороны вместо щелчка"));
       const cache = det("Кэш",
         this.toggle("Кэш готовых отрезков", g.cache, (v) => set("cache", v), "Пропускать неизменённые отрезки"),
-        h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", onclick: () => this.clearCache() }));
+        h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", title: "Готовые дубли остаются (восстановятся без генерации)", onclick: () => this.clearCache() }),
+        h("button", { class: "h3z-btn sm danger", title: "Кэш и все готовые дубли (кроме зафиксированных)", onclick: () => this.clearCache(true) }, "…и дубли"));
       const taes = ["auto", "none", ...((this.opts.tiny_vaes || []).filter((x) => x !== "auto" && x !== "none"))];
       const taeSel = h("select", { class: "h3z-sel" }, (taes.includes(g.preview_tiny_vae) ? taes : [g.preview_tiny_vae, ...taes]).map((x) => h("option", { value: x, selected: x === g.preview_tiny_vae }, x === "auto" ? "авто (taeh3, если есть)" : x === "none" ? "нет — latent2rgb" : x)));
       taeSel.onchange = () => set("preview_tiny_vae", taeSel.value);

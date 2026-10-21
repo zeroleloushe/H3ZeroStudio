@@ -595,8 +595,13 @@ def test_frozen_segment_is_never_regenerated(patcher, dirs, monkeypatch):
     monkeypatch.setattr(gen, "sample_segment", lambda *a, **k: (calls.append(a[4]), real(*a, **k))[1])
     _, _, _, info2 = gen.run_project(patcher, FakeClip(), FakeVAE(), p)
     assert calls == [] and info2["keys"][0] == k0
-    # «Очистить кэш» leaves frozen/ alone: the frozen one loads, the continuation is regenerated
+    # «Очистить кэш» (cache/ gone): the continuation comes back from its take's latent sidecar, nothing sampled
     shutil.rmtree(os.path.join(str(out), "h3zerostudio", "frz", "cache"))
+    _, _, _, info3 = gen.run_project(patcher, FakeClip(), FakeVAE(), p)
+    assert calls == [] and [r["cached"] for r in info3["segments"]] == [True, True]
+    # takes cleared too: the frozen one still loads, the continuation is regenerated
+    from h3s import h3s_store
+    h3s_store.clear(os.path.join(str(out), "h3zerostudio", "frz"), takes=True)
     _, _, _, info3 = gen.run_project(patcher, FakeClip(), FakeVAE(), p)
     assert calls == [1] and [r["cached"] for r in info3["segments"]] == [True, False]
     # a frozen segment whose file is gone is a clear error
@@ -1274,3 +1279,93 @@ def test_upscale_profiles_per_method():
     keys = core.upscale_keys(p, core.segment_keys(p))
     p["settings"]["upscale_profiles"]["rtx"]["sigma"] = 0.2               # another method's profile: keys of these clips unchanged
     assert core.upscale_keys(core.normalize_project(p), core.segment_keys(p)) == keys
+
+
+# ---------------------------------------------------------------- stage 2: take store, stable keys, restore
+def _reset_sigs():
+    from h3s import h3s_store as st
+    st._SIGS.update(loaded=False, paths={}, sigs={})
+
+
+def test_content_sig_survives_touch_copy_and_other_pc(dirs):
+    import json
+    import shutil
+    from h3s import h3s_store as st
+    out, inp = dirs
+    _reset_sigs()
+    p = project()
+    by = {a["id"]: a for a in core.normalize_project(p)["assets"]}
+    path = str(inp / "h3zerostudio" / "hero.png")
+    sig0, sha = st.content_sig(path, by["a1"])
+    assert sig0 == gen.file_sig(path) and sha           # existing keys keep their historical string
+    os.utime(path, (1_000_000, 1_000_000))              # re-saved / touched, same bytes
+    assert st.content_sig(path, by["a1"])[0] == sig0
+    cp = str(inp / "h3zerostudio" / "hero_copy.png")
+    shutil.copy(path, cp)
+    assert st.content_sig(cp)[0] == sig0                 # a copy (zip import) of the same picture
+    # another PC: no global table, but the project carries the asset's fsig
+    _reset_sigs()
+    os.remove(os.path.join(str(out), "h3zerostudio", "_filesigs.json"))
+    a = dict(by["a1"], fsig={"sha": sha, "sig": sig0})
+    n = core.normalize_project(json.loads(json.dumps(dict(p, assets=[a, by["a2"]]))))
+    assert n["assets"][0]["fsig"] == {"sha": sha, "sig": sig0}
+    assert st.content_sig(path, n["assets"][0])[0] == sig0
+    # changed content -> its own signature
+    Image.fromarray((np.random.rand(80, 64, 3) * 255).astype("uint8")).save(path)
+    os.utime(path, (2_000_000, 2_000_000))
+    assert st.content_sig(path, n["assets"][0])[0] != sig0
+
+
+def test_keys_stable_across_reload_and_migration(dirs):
+    import json
+    p = project()
+    sigs = {"a1": "1:2", "a2": "3:4"}
+    k = core.segment_keys(core.normalize_project(p), sigs, "env")
+    re = core.normalize_project(json.loads(json.dumps(core.normalize_project(p))))
+    assert core.segment_keys(re, sigs, "env") == k
+    # an asset fsig and recorded takes do not take part in the key
+    p2 = json.loads(json.dumps(p))
+    p2["assets"][0]["fsig"] = {"sha": "x" * 32, "sig": "1:2"}
+    p2["segments"][0]["takes"] = [{"id": "t", "key": k[0], "snap": {}, "psnap": {"settings": {}}}]
+    assert core.segment_keys(core.normalize_project(p2), sigs, "env") == k
+    parts = []
+    assert core.segment_keys(core.normalize_project(p), sigs, "env", parts=parts) == k and len(parts) == 2
+    assert parts[0]["v"] == core.KEY_VERSION and parts[1]["prev"] == k[0]
+
+
+def test_take_sidecar_restores_after_clear_without_model_or_vae(patcher, dirs, monkeypatch):
+    from h3s import h3s_store as st
+    out, _ = dirs
+    p = project(id="tk")
+    _, _, _, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE())
+    d = os.path.join(str(out), "h3zerostudio", "tk")
+    for k in info["keys"]:
+        td = os.path.join(d, "takes", k)
+        assert os.path.isfile(os.path.join(td, "latent.pt")) and os.path.isfile(os.path.join(td, "recipe.json"))
+        assert any(n.startswith("m_") and n.endswith(".mp4") for n in os.listdir(td)) and os.path.isfile(os.path.join(td, "audio.pt"))
+    assert st.clear(d) > 0 and os.path.isdir(os.path.join(d, "takes"))   # «Очистить кэш» keeps the takes
+    assert not os.path.isdir(os.path.join(d, "cache"))
+    boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model / VAE call expected"))
+    monkeypatch.setattr(gen, "sample_segment", boom)
+    monkeypatch.setattr(gen, "decode_video", boom)
+    monkeypatch.setattr(gen, "decode_audio", boom)
+    logs = []
+    monkeypatch.setattr(gen, "log", lambda m: logs.append(m))
+    images, aud, _, info2 = gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE())
+    assert info2["keys"] == info["keys"] and all(r["cached"] for r in info2["segments"])
+    assert images.shape[0] == 73 and aud["waveform"].shape[-1] > 0
+    assert any("restored from the take" in m for m in logs) or any("cache hit: segment 1" in m for m in logs)
+    assert sum("frames from the take master" in m for m in logs) == 2
+
+
+def test_cache_miss_reason_names_the_changed_field(patcher, dirs, monkeypatch):
+    p = project(id="mr")
+    gen.run_project(patcher, FakeClip(), FakeVAE(), p)
+    p["segments"][1]["prompt"] = "two, changed"
+    p["settings"]["steps"] = 3
+    logs = []
+    monkeypatch.setattr(gen, "log", lambda m: logs.append(m))
+    gen.run_project(patcher, FakeClip(), FakeVAE(), p)
+    miss = [m for m in logs if m.startswith("cache miss")]
+    assert len(miss) == 2
+    assert "steps 2→3" in miss[0] and "промпт" in miss[1] and "предыдущий отрезок" in miss[1]

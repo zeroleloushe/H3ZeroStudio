@@ -1380,11 +1380,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     VERBOSE[0] = bool(s.get("verbose_log", True))
     notify = Notifier(node_id)
     by_id = {a["id"]: a for a in proj["assets"]}
-    ref_sigs = {}
+    ref_sigs, fsigs = {}, {}
+    from . import h3s_store as store
     for seg in proj["segments"]:
         for rid in seg["refs"] + ([seg["source"]["asset"]] if seg.get("source") else []):
             if rid in by_id and rid not in ref_sigs:
-                ref_sigs[rid] = file_sig(asset_path(by_id[rid]))
+                # same CONTENT -> same signature (a copy / zip import / re-save no longer changes the cache keys)
+                ref_sigs[rid], sha = store.content_sig(asset_path(by_id[rid]), by_id[rid])
+                if sha:
+                    fsigs[rid] = {"sha": sha, "sig": ref_sigs[rid]}
     audio_z = None
     d, sub = project_dir(proj)
     src_info = source_audio_info(d, sub, audio) if audio is not None else None
@@ -1404,7 +1408,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         proj["audio"]["clips"] = []
     env = model_signature(model, clip, vae, audio_vae)
     kind = core.run_kind(s)
-    keys = core.segment_keys(proj, ref_sigs, env, up_env=upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "")
+    kparts = []
+    keys = core.segment_keys(proj, ref_sigs, env, up_env=upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "", parts=kparts)
     use_cache = bool(s.get("cache", True))
     keys = keys[:len(items)]
     # «Апскейл отрезка»: key of each segment's upscale (None = none); the base latents stay the generation chain
@@ -1417,14 +1422,43 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             f"{'yes (' + caps['learned_models'][0] + ')' if caps['learned'] else 'NO (' + ('model missing in models/latent_upscale_models' if caps['learned_node'] else 'node MinimaxH3LatentUpscaler3D not installed') + ')'}"
             f" · RTX VSR {'yes' if caps['rtx'] else 'no'}")
     # final from the draft: every segment's draft (same key as a «Черновик» run) is the start of its refine pass
-    dkeys = core.segment_keys(proj, ref_sigs, env, "draft")[:len(items)] if kind == "refine" else None
+    dparts = []
+    dkeys = core.segment_keys(proj, ref_sigs, env, "draft", parts=dparts)[:len(items)] if kind == "refine" else None
+    # take store: latents of finished takes come back from their sidecars when the cache was cleared,
+    # and every cache latent becomes a take (sidecar + recipe) — also those of earlier, interrupted runs
+    recipes = {}
+    for i_, k_ in enumerate(keys):
+        sid = proj["segments"][i_]["id"]
+        recipes[k_] = {"seg_id": sid, "seg": i_, "kind": kind, "parts": kparts[i_] if i_ < len(kparts) else None,
+                       "draft": dparts[i_] if kind == "refine" and i_ < len(dparts) else None}
+        if dkeys:
+            recipes.setdefault(dkeys[i_], {"seg_id": sid, "seg": i_, "kind": "draft", "parts": dparts[i_] if i_ < len(dparts) else None})
+
+    def _restore(k_, frozen_=False):
+        return frozen_ and os.path.isfile(seg_pt_path(d, k_, True)) or store.restore(d, k_, seg_pt_path(d, k_))
+
+    for k_ in list(keys) + list(dkeys or []):
+        _restore(k_)
     run_w, run_h = core.work_resolution(s)
     frozen = [bool(proj["segments"][i].get("freeze")) for i in range(len(keys))]
     for i, k in enumerate(keys):
         if frozen[i] and not os.path.isfile(seg_pt_path(d, k, True)) and not os.path.isfile(seg_pt_path(d, k)):
             raise ValueError(f"H3ZeroStudio: отрезок {i + 1} зафиксирован, но его файл не найден "
                              f"(frozen/seg_{k}.pt). Разморозьте отрезок, чтобы сгенерировать заново.")
+    for uk_ in ukeys:
+        if uk_:
+            _restore(uk_)
     cached = [frozen[i] or (use_cache and os.path.isfile(seg_pt_path(d, k))) for i, k in enumerate(keys)]
+    for i_, k_ in enumerate(keys):   # [H3ZS] cache hit/miss: reason
+        if i_ >= len(items):
+            break
+        if cached[i_]:
+            log(f"cache hit: segment {i_ + 1} {k_}" + (" (frozen)" if frozen[i_] else ""))
+        elif not use_cache:
+            log(f"cache miss: segment {i_ + 1} {k_} — reason: кэш выключен в настройках")
+        else:
+            pr_ = dict(kparts[i_]) if i_ < len(kparts) and kparts[i_] else {}
+            log(f"cache miss: segment {i_ + 1} {k_} — reason: {store.miss_reason(d, proj['segments'][i_]['id'], kind, pr_)}")
     # an upscale that will really run (final from the draft / «Апскейл отрезка») needs the learned upscaler or
     # RTX VSR: fail before any sampling with a clear message instead of a silent low-quality fallback
     need_up = [i for i in range(len(keys)) if not frozen[i] and not core.is_footage(proj["segments"][i])
@@ -1469,6 +1503,23 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                                     core.work_resolution(s, "draft"), upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "",
                                     d, use_cache) if proj.get("regions") else []
     todo_steps += sum(rp["steps"] for rp in reg_plans)
+
+    def keep_takes():
+        """Every finished latent of this run becomes a take (sidecar + recipe); cheap hard links."""
+        for k_ in list(keys) + list(dkeys or []):
+            store.keep(d, k_, seg_pt_path(d, k_), recipes.get(k_))
+        for i_, uk_ in enumerate(ukeys):
+            if uk_:
+                store.keep(d, uk_, seg_pt_path(d, uk_), {"seg_id": proj["segments"][i_]["id"], "seg": i_, "kind": "upscale", "base": keys[i_]})
+        for rp_ in reg_plans:
+            store.keep(d, "r" + rp_["key"], rp_["pt"], {"region": rp_["rg"]["id"], "kind": "region:" + kind})
+            if rp_.get("dkey"):
+                store.keep(d, "r" + rp_["dkey"], os.path.join(d, "cache", f"region_{rp_['dkey']}.pt"), {"region": rp_["rg"]["id"], "kind": "region:draft"})
+
+    try:
+        keep_takes()
+    except Exception as e:
+        log(f"take store: {e}")
     up_cached = [bool(uk) and use_cache and os.path.isfile(seg_pt_path(d, uk)) for uk in ukeys]
     _um = lambda i: proj["segments"][items[i]["index"]]["upscale"]["method"]
     todo_steps += sum(core.upscale_pass_params(proj, items[i]["index"], _um(i))["steps"] * core.upscale_chunking(s, items[i]["frames"], _um(i))[0]
@@ -1478,7 +1529,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     done_steps = [0]
     notify("start", segments=len(items), keys=[uk or k for k, uk in zip(keys, ukeys)],
            cached=[(c and (not ukeys[i] or up_cached[i])) or i < first for i, c in enumerate(cached)], steps_total=todo_steps, estimate=est,
-           upto=len(items) - 1, partial=len(items) < len(all_items))
+           upto=len(items) - 1, partial=len(items) < len(all_items), fsigs=fsigs)
     log(f"project {proj['id']}: {len(items)} segment(s), {est['frames']} frames ({est['seconds']} s), "
         f"{est['width']}x{est['height']}, cached {sum(cached)}/{len(items)}"
         + {"draft": f" · ЧЕРНОВИК ({s.get('draft_scale')}× size, {core.pass_steps(s, int(s.get('steps') or 20), 'draft')} steps)",
@@ -1495,6 +1546,30 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         vlog(f"  #{j + 1}: {itj['frames']} fr {itj['start'] / core.FPS:.2f}-{itj['end'] / core.FPS:.2f}s {itj['link']}"
              f"{' ov ' + str(itj['overlap']) if j and itj['overlap'] else ''} · {'untouched' if j < first else 'cache' if cached[j] else 'generate'} {kj}")
     seg_v, seg_a, seg_frames, results = [], [], [], []
+    run_wave_keys, wave_memo = [], {}
+
+    def take_frames(key_, lat_, fresh_, i_, dec=None):
+        """Frames of a finished take: from its saved master (no VAE call) unless it was sampled just now."""
+        fr_ = None if fresh_ else store.load_master(d, key_, lat_)
+        if fr_ is not None:
+            log(f"segment {i_ + 1}: frames from the take master {key_} (no VAE decode)")
+            return fr_
+        fr_ = dec() if dec else decode_video(vae, lat_.to(comfy.model_management.intermediate_device()))
+        store.save_master(d, key_, lat_, fr_, fps)
+        return fr_
+
+    def take_wave(j_):
+        """Raw (unnormalised) wave of run segment j_: saved take audio, else one audio-VAE decode (then saved)."""
+        if j_ in wave_memo:
+            return wave_memo[j_]
+        key_, fresh_, ai_ = run_wave_keys[j_]
+        w_ = None if fresh_ else store.load_wave(d, key_)
+        if w_ is None and audio_vae is not None:
+            au_ = decode_audio(audio_vae, seg_a[ai_].to(comfy.model_management.intermediate_device()), normalize=False)
+            w_ = (au_["waveform"][0].cpu(), int(au_["sample_rate"]))
+            store.save_wave(d, key_, *w_)
+        wave_memo[j_] = w_
+        return w_
     seg_up = []      # upscaled video latent per run segment (None = not upscaled)
     prev = None
     prev_up = None
@@ -1549,6 +1624,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         k = keys[i]
         pt = seg_pt_path(d, k, frozen[i])
         hit = cached[i]
+        fresh = not hit   # sampled now -> decode and (re)write its master; a hit reads the master, no VAE
         notify("seg_start", seg=i, key=k, cached=hit)
         vlog(f"── segment {i + 1}/{len(items)} · {it['frames']} fr · seed {core.effective_params(proj, i)['seed']} · "
              f"cache {'HIT' if hit else 'miss'} {k}")
@@ -1564,6 +1640,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             if ar_run and not core.is_footage(seg_i) and (ar_only < 0 or ar_only == i):
                 ak = audio_refine_key(k, ar_run["steps"], ar_run["denoise"], ar_run["video_denoise"], core.effective_params(proj, i)["seed"])
                 apt = seg_pt_path(d, ak)
+                store.restore(d, ak, apt)
                 if use_cache and os.path.isfile(apt):
                     v, a = [torch.load(apt, map_location="cpu", weights_only=True)[x] for x in ("v", "a")]
                     log(f"segment {i + 1}: audio refine from cache {ak}")
@@ -1583,6 +1660,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     torch.save({"v": v, "a": a}, apt + ".part")
                     media.replace_file(apt + ".part", apt)
                     log(f"segment {i + 1}: audio refined in {time.perf_counter() - t_ar:.1f}s -> {ak}")
+                    fresh = True
+                store.keep(d, ak, apt, {"seg_id": seg_i["id"], "seg": i, "kind": "audio_refine", "base": keys[i]})
                 k = ak
                 v_frozen = None
         elif core.is_footage(seg_i):
@@ -1649,7 +1728,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             media.replace_file(pt + ".part", pt)
             el_i = time.perf_counter() - seg_t0
             log(f"segment {i + 1}/{len(items)}: done in {el_i:.1f}s ({el_i / max(1, steps_i):.2f} s/step)" + (" · " + vram() if vram() else ""))
-        frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
+        frames = take_frames(k, v, fresh, i)
         prev = {"v": v, "a": a, "last_frame": frames[-1:].clone()}
         seg_v.append(v)
         seg_a.append(a)
@@ -1689,7 +1768,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 log(f"segment {i + 1}: upscale done in {time.perf_counter() - t_up:.1f}s -> {uinfo['wh'][0]}x{uinfo['wh'][1]} ({uinfo['input']})")
             notify("phase", seg=i, phase="decode")
             t_dec = time.perf_counter()
-            frames = upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"]))   # chunk by chunk when chunked
+            frames = take_frames(uk + k[len(keys[i]):], uv, fresh or not hit_up, i,   # chunk by chunk when chunked
+                                 lambda: upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"])))
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}
             rk, rwh = uk + k[len(keys[i]):], [int(uv.shape[-1]) * 16, int(uv.shape[-2]) * 16]   # + audio-refine suffix
@@ -1698,7 +1778,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         elif frozen[i] and hit and v_frozen is not None and tuple(v_frozen.shape[-2:]) != tuple(v.shape[-2:]) \
                 and v_frozen.shape[-1] > v.shape[-1]:
             # a take frozen after its upscale: shown at its own (larger) canvas, the run canvas copy is the chain
-            frames = decode_video(vae, v_frozen.to(comfy.model_management.intermediate_device()))
+            frames = take_frames(k, v_frozen, False, i)
             prev_up = {"v": v_frozen}
             rwh = [int(v_frozen.shape[-1]) * 16, int(v_frozen.shape[-2]) * 16]
             seg_up.append(v_frozen)
@@ -1706,7 +1786,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             prev_up = None
             seg_up.append(None)
         seg_frames.append(frames)
-        res = segment_media(d, sub, rk, frames, a, audio_vae, audio, proj, it, fps)
+        run_wave_keys.append((rk, fresh, len(seg_a) - 1))
+        res = segment_media(d, sub, rk, frames, a, audio_vae, audio, proj, it, fps, wave=lambda _j=len(run_wave_keys) - 1: take_wave(_j))
         if i > first and it["link"] == "extend" and len(seg_frames) > 1:   # seam rating of the join on the left
             try:
                 from . import h3s_seams
@@ -1776,7 +1857,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     if first and tl_audio is not None:   # the node/track audio from the run's start
         sr_ = tl_audio["sample_rate"]
         tl_audio = {"waveform": tl_audio["waveform"][..., int(round(items[first]["start"] / fps * sr_)):], "sample_rate": sr_}
-    out_audio = full_audio(audio_vae, tl_audio, lat_a, images.shape[0], fps, seg_a, run_items, seam)
+    out_audio = full_audio(audio_vae, tl_audio, lat_a, images.shape[0], fps, seg_a, run_items, seam,
+                           wave=take_wave if len(run_wave_keys) == len(seg_a) else None)
     if out_audio is not None:   # audio part of the seam rating (the stitched sound at each rated join)
         try:
             from . import h3s_seams
@@ -1907,11 +1989,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         + (f" · {total / max(1, todo_steps):.2f} s/step" if todo_steps else "") + (f" · cut at end marker {end}" if 0 < end < sum(x['frames'] for x in items) else ""))
     if out_audio is None:
         out_audio = {"waveform": torch.zeros(1, 2, int(images.shape[0] / fps * 44100)), "sample_rate": 44100}
+    try:
+        keep_takes()
+    except Exception as e:
+        log(f"take store: {e}")
     return images, out_audio, latent, {"segments": results, "full": full, "keys": keys, "estimate": est,
-                                       "audio_source": src_info, "regions": reg_results}
+                                       "audio_source": src_info, "regions": reg_results, "fsigs": fsigs}
 
 
-def segment_media(d, sub, key, frames, a, audio_vae, audio, proj, it, fps):
+def segment_media(d, sub, key, frames, a, audio_vae, audio, proj, it, fps, wave=None):
     name, strip, poster = f"seg_{key}.mp4", f"seg_{key}_tiles.jpg", f"seg_{key}_poster.jpg"
     try:
         if not os.path.isfile(os.path.join(d, strip)):
@@ -1920,7 +2006,10 @@ def segment_media(d, sub, key, frames, a, audio_vae, audio, proj, it, fps):
             media.write_poster(os.path.join(d, poster), frames[0])
         if not os.path.isfile(os.path.join(d, name)):
             wf = sr = None
-            if audio_vae is not None:
+            w = wave() if wave is not None else None   # the take's saved wave (no audio-VAE call)
+            if w is not None:
+                wf, sr = normalize_level(w[0][None])[0], w[1]
+            elif audio_vae is not None:
                 au = decode_audio(audio_vae, a.to(comfy.model_management.intermediate_device()))
                 wf, sr = au["waveform"][0], au["sample_rate"]
             media.write_mp4(os.path.join(d, name), frames, fps, wf, sr, max_width=1280)
@@ -1945,14 +2034,18 @@ def source_audio_info(d, sub, audio):
         return None
 
 
-def full_audio(audio_vae, tl_audio, lat_a, n_frames, fps, seg_a=None, items=None, seam=None):
+def full_audio(audio_vae, tl_audio, lat_a, n_frames, fps, seg_a=None, items=None, seam=None, wave=None):
     """Audio of the stitched video. With `seam` (not the locked soundtrack mode) every segment is decoded on its own
     and joined by stitch_audio (crossfade + loudness match); otherwise the concatenated latent is decoded."""
     if audio_vae is not None and seam is not None and seg_a and len(seg_a) > 1:
         try:
             dev = comfy.model_management.intermediate_device()
-            waves = [decode_audio(audio_vae, a.to(dev), normalize=False)["waveform"][0].cpu() for a in seg_a]
-            sr = audio_out_rate(audio_vae)
+            ws = [wave(j) for j in range(len(seg_a))] if wave is not None else []
+            if ws and all(w is not None for w in ws) and len({w[1] for w in ws}) == 1:
+                waves, sr = [w[0] for w in ws], ws[0][1]   # saved take audio: no audio-VAE decode
+            else:
+                waves = [decode_audio(audio_vae, a.to(dev), normalize=False)["waveform"][0].cpu() for a in seg_a]
+                sr = audio_out_rate(audio_vae)
             sinfo = []
             wf, gains = stitch_audio(waves, sr, items, fps, seam["xfade"], seam["match"], skip=seam.get("skip"), info=sinfo,
                                      declick=seam.get("declick", True))
@@ -1971,6 +2064,10 @@ def full_audio(audio_vae, tl_audio, lat_a, n_frames, fps, seg_a=None, items=None
             return {"waveform": normalize_level(wf[None]), "sample_rate": sr}
         except Exception as e:
             log(f"audio seam stitch failed ({e}); plain decode")
+    if audio_vae is not None and seam is not None and wave is not None and seg_a and len(seg_a) == 1:
+        w = wave(0)
+        if w is not None:
+            return {"waveform": normalize_level(w[0][None]), "sample_rate": w[1]}
     if audio_vae is not None:
         try:
             return decode_audio(audio_vae, lat_a.to(comfy.model_management.intermediate_device()))

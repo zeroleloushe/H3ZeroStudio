@@ -33,6 +33,7 @@ MAX_REF_VIDEOS = 3                 # <Video k> references per segment (MiniMaxH3
 REF_VIDEO_MAX_SEC = 15.0           # H3 reference videos: 2-15 s
 ASPECTS = {"16:9": (16, 9), "9:16": (9, 16), "1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "21:9": (21, 9)}
 SCHEMA_VERSION = 1
+KEY_VERSION = 1   # in every cache key — decoupled from the project schema, so a schema bump never re-samples clips
 
 DEFAULT_CONTINUITY = ("Continuity: <Picture {n}> is the last frame of the previous shot of this video; "
                       "continue seamlessly from it and keep characters, faces, clothing, lighting and details consistent with <Picture {n}>.")
@@ -436,6 +437,10 @@ def normalize_project(p):
                  "subfolder": str(a.get("subfolder") or ""), "type": str(a.get("type") or "input"), "category": cat}
         if cat == "audio":
             asset["duration"] = max(0.0, _num(a.get("duration"), 0.0))
+        # content signature (sha256 + the size:mtime first seen for it): the cache key of a copied/re-saved file stays
+        fs = a.get("fsig")
+        if isinstance(fs, dict) and isinstance(fs.get("sha"), str) and isinstance(fs.get("sig"), str):
+            asset["fsig"] = {"sha": fs["sha"][:64], "sig": fs["sig"][:64]}
         # asset editor: the original file and the ops of the processed derivative now in file/subfolder
         if isinstance(a.get("orig"), dict) and a["orig"].get("filename") and isinstance(a.get("edit"), dict):
             asset["orig"] = {"filename": str(a["orig"]["filename"]), "subfolder": str(a["orig"].get("subfolder") or ""),
@@ -1070,7 +1075,7 @@ def _h(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
 
 
-def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
+def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts=None):
     """Chained cache key per segment: changing a segment invalidates it and every extended segment after it.
     ref_sigs: {asset_id: file signature} (images, audio assets and "input" for the node's audio).
     kind: pass kind (default: the project's run kind). "full" keys are the one-pass keys of older versions; a
@@ -1079,8 +1084,9 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
     project = limited_project(project)
     kind = kind or run_kind(project["settings"])
     if kind == "refine":
-        return _refine_keys(project, segment_keys(project, ref_sigs, env_sig, "draft"),
-                            segment_keys(project, ref_sigs, env_sig, "full"), up_env)
+        dparts = [] if parts is not None else None
+        return _refine_keys(project, segment_keys(project, ref_sigs, env_sig, "draft", parts=dparts),
+                            segment_keys(project, ref_sigs, env_sig, "full"), up_env, parts, dparts)
     items = plan(project)
     w, h = work_resolution(project["settings"], kind)
     s = project["settings"]
@@ -1089,7 +1095,7 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
         i = it["index"]
         seg = project["segments"][i]
         data = {
-            "v": SCHEMA_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
+            "v": KEY_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
             "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
             "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
             "params": pass_params(project, i, kind), "lock": bool(s.get("lock_overlap", True)),
@@ -1109,7 +1115,7 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
             a = next((x for x in project["assets"] if x["id"] == src["asset"]), {})
             sd = [a.get("id"), a.get("file"), a.get("subfolder"), ref_sigs.get(src["asset"], ""), src["in"], src["denoise"]]
             if is_footage(seg):   # used as is: only the file range, size and VAE matter
-                data = {"v": SCHEMA_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "src": sd}
+                data = {"v": KEY_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "src": sd}
             else:
                 data["src"] = sd
         vr = video_refs(project, seg)
@@ -1117,6 +1123,8 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env=""):
             data["vrefs"] = [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in vr][:MAX_REF_VIDEOS]
         k = seg["freeze"]["key"] if seg.get("freeze") else _h(data)[:16]
         keys.append(k)
+        if parts is not None:   # what went into the key (cache miss reasons, take recipes)
+            parts.append(data)
         prev = k
     return keys
 
@@ -1142,7 +1150,7 @@ def upscale_keys(project, base_keys, kind=None, up_env=None):
         nch, cf, co = upscale_chunking(project["settings"], it["frames"], up["method"])
         upp, pr = upscale_pass_params(project, it["index"], up["method"]), upscale_profile(project["settings"], up["method"])
         smp = [pr.get("sampler") or "", pr.get("scheduler") or ""]   # in the key only when the profile sets its own (old keys stay)
-        k = _h({"v": SCHEMA_VERSION, "up": bk, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
+        k = _h({"v": KEY_VERSION, "up": bk, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
                 "steps": upp["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {}),
                 **({"ch": [cf, co]} if nch > 1 else {}), **({"smp": smp} if any(smp) else {})})[:16]
         out.append(k)
@@ -1156,7 +1164,7 @@ def refine_extra(s):
     return [["rx"] + x] if any(x) else []
 
 
-def _refine_keys(project, draft_keys, full_keys, up_env=""):
+def _refine_keys(project, draft_keys, full_keys, up_env="", parts=None, dparts=None):
     """Keys of the final-from-draft pass: footage as is and frozen clips keep their one-pass key (no refine).
     up_env: what really upscales (backend: learned model name / rtx / vae fallback)."""
     s = project["settings"]
@@ -1168,8 +1176,13 @@ def _refine_keys(project, draft_keys, full_keys, up_env=""):
         if seg.get("freeze") or is_footage(seg):
             k = fk
         else:
-            k = _h({"v": SCHEMA_VERSION, "refine": dk, "rp": rp, "steps": pass_params(project, it["index"], "refine")["steps"],
-                    "prev": prev if it["link"] == "extend" and it["index"] > 0 else ""})[:16]
+            data = {"v": KEY_VERSION, "refine": dk, "rp": rp, "steps": pass_params(project, it["index"], "refine")["steps"],
+                    "prev": prev if it["link"] == "extend" and it["index"] > 0 else ""}
+            k = _h(data)[:16]
+            if parts is not None:
+                parts.append(dict(data, _draft=dparts[len(keys)] if dparts else None))
+        if parts is not None and len(parts) == len(keys):
+            parts.append({"v": KEY_VERSION, "full": k})
         keys.append(k)
         prev = k
     return keys
@@ -1295,7 +1308,7 @@ def region_key(project, region, win, seg_keys, ref_sigs=None, env_sig="", kind=N
     kind = kind or run_kind(project["settings"])
     s = project["settings"]
     cs = win["chain"][0]
-    return _h({"v": SCHEMA_VERSION, "region": 1, "env": env_sig, "kind": kind, "wh": list(wh or []),
+    return _h({"v": KEY_VERSION, "region": 1, "env": env_sig, "kind": kind, "wh": list(wh or []),
                "src": [seg_keys[i] for i in win["segs"] if i < len(seg_keys)],
                "win": [win["ws"] - cs, win["a"] - cs, win["b"] - cs, win["we"] - cs, win["to_end"]],
                "prompt": region_prompt(project, region), "neg": s.get("negative") or "",

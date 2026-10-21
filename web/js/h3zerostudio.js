@@ -91,8 +91,8 @@ function makeHost(node) {
       if (!j.ok) throw new Error(j.error || r.status);
       return j.data;
     },
-    clearCache: async (id) => {
-      const r = await api.fetchApi("/h3zero/clear_cache", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    clearCache: async (id, takes = false) => {
+      const r = await api.fetchApi("/h3zero/clear_cache", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, takes }) });
       if (r.status !== 200) throw new Error(r.status + "");
       return r.json();
     },

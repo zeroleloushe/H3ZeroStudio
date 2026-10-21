@@ -57,6 +57,11 @@ def test_region_window_snaps_to_the_scene_grid():
     assert w4["to_end"] and w4["we"] == 316 and w4["tail"] == 0 and (w4["frames"] - 5) % 17 == 0
 
 
+def _near(a, b, tol=6 / 255):
+    """Cached clips come from their take master (H.264 4:4:4 crf 12), fresh ones from the VAE."""
+    return a.shape == b.shape and float((a - b).abs().max()) <= tol
+
+
 def test_region_regenerates_only_the_range_with_clean_context(patcher, dirs):
     out, _ = dirs
     vae, avae = FakeVAE(), FakeAudioVAE()
@@ -69,8 +74,8 @@ def test_region_regenerates_only_the_range_with_clean_context(patcher, dirs):
     assert [c[0] for c in clip.calls] == ["global\nshe waves"] and clip.calls[0][1] == ["image"]   # cached clips, one region pass
     r = info["regions"][0]
     assert (r["ws"], r["a"], r["b"], r["we"]) == (0, 17, 34, 56) and r["generated"] and not r["cached"]
-    assert torch.equal(img1[:17], img0[:17]) and torch.equal(img1[34:], img0[34:])
-    assert not torch.equal(img1[17:34], img0[17:34])
+    assert _near(img1[:17], img0[:17]) and _near(img1[34:], img0[34:])
+    assert not _near(img1[17:34], img0[17:34])
     rd = torch.load(os.path.join(str(out), "h3zerostudio", "rg", "cache", f"region_{r['key']}.pt"))
     rv, ra = rd["v"], rd["a"]
     assert rv.shape[2] == core.latent_t(56) == 17
@@ -102,7 +107,7 @@ def test_region_regenerates_only_the_range_with_clean_context(patcher, dirs):
     p3 = copy.deepcopy(p2)
     p3["regions"][0]["active_take"] = None                  # «Оригинал»
     img3, _, _, info3 = gen.run_project(patcher, FakeClip(), vae, p3, avae)
-    assert torch.equal(img3, img0) and info3["regions"] == []
+    assert _near(img3, img0) and info3["regions"] == []
     p4 = copy.deepcopy(p2)
     p4["segments"][0]["prompt"] = "one changed"
     _, _, _, info4 = gen.run_project(patcher, FakeClip(), vae, p4, avae)
@@ -143,7 +148,7 @@ def test_region_two_stage_and_footage(patcher, dirs, monkeypatch):
     img1, _, _, info = gen.run_project(patcher, FakeClip(), FakeVAE(), pf)
     r = info["regions"][0]
     assert calls and calls[0][0] == "full" and (r["a"], r["b"]) == (34, 51)
-    assert torch.equal(img1[:34], img0[:34]) and torch.equal(img1[51:], img0[51:])
+    assert _near(img1[:34], img0[:34]) and _near(img1[51:], img0[51:])
 
 
 def test_splice_audio_is_sample_exact_on_both_seams():

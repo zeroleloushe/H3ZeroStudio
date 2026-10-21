@@ -318,6 +318,10 @@ export function normalizeProject(p) {
     const cat = ASSET_CATEGORIES.includes(a.category) ? a.category : "other";
     const asset = { id: String(a.id), name: String(a.name || a.file), file: String(a.file), subfolder: String(a.subfolder || ""), type: String(a.type || "input"), category: cat };
     if (cat === "audio") asset.duration = Math.max(0, num(a.duration, 0));
+    // content signature (sha256 + the size:mtime first seen for it): the cache key of a copied/re-saved file stays
+    if (a.fsig && typeof a.fsig === "object" && typeof a.fsig.sha === "string" && typeof a.fsig.sig === "string") {
+      asset.fsig = { sha: a.fsig.sha.slice(0, 64), sig: a.fsig.sig.slice(0, 64) };
+    }
     // asset editor: the original file and the ops of the processed derivative now in file/subfolder
     if (a.orig && typeof a.orig === "object" && a.orig.filename && a.edit && typeof a.edit === "object" && !Array.isArray(a.edit)) {
       asset.orig = { filename: String(a.orig.filename), subfolder: String(a.orig.subfolder || ""), type: String(a.orig.type || "input") };

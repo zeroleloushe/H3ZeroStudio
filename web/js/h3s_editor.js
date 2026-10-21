@@ -1,7 +1,7 @@
 // H3ZeroStudio: full-screen timeline editor overlay. Plain DOM, no dependencies.
 import * as C from "./h3s_core.js";
 import { injectStyle } from "./h3s_style.js";
-import { installTakes } from "./h3s_takes.js";
+import { installTakes, installRestore } from "./h3s_takes.js";
 import { installMarkers } from "./h3s_markers.js";
 import { installAudio } from "./h3s_audio.js";
 import { installPolish } from "./h3s_polish.js";
@@ -507,7 +507,8 @@ export class H3Editor {
       h("div", { class: "h3z-note", html: "<b>«Новая сцена»</b> — монтажная склейка: отрезок генерируется с нуля, без связи с предыдущим." }),
       h("div", { class: "h3z-note", html: "Готовые отрезки кэшируются в <b>output/h3zerostudio/" + esc(this.p.id) + "</b>. Повторный запуск пропускает неизменённые отрезки; изменение отрезка пересчитывает его и все продолжения после него." }),
       h("div", { class: "h3z-note", html: `Обучающий диапазон H3 — ${C.TRAINED_MIN_FRAMES}–${C.TRAINED_MAX_FRAMES} кадров (${(C.TRAINED_MIN_FRAMES / 24).toFixed(1)}–${(C.TRAINED_MAX_FRAMES / 24).toFixed(1)} с) на отрезок. Сейчас в проекте: ${est.frames} кадров, ${est.seconds.toFixed(1)} с.` }),
-      h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", onclick: () => this.clearCache() }))));
+      h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", title: "Готовые дубли остаются (восстановятся без генерации)", onclick: () => this.clearCache() }),
+      h("button", { class: "h3z-btn sm danger", title: "Кэш и все готовые дубли (кроме зафиксированных)", onclick: () => this.clearCache(true) }, "…и дубли"))));
   }
 
   // ------------------------------------------------------------------ assets ops
@@ -742,7 +743,11 @@ export class H3Editor {
     const stale = r.sig && r.sig !== this.sigs()[i];
     const st = h("div", { class: "h3z-status" + (stale ? " stale" : "") }, stale ? "⟳ Изменён после генерации — пересчитается" : `✓ Готов · ${r.frames || s.frames} кадр.${r.cached ? " · из кэша" : ""}`);
     if (r.video) st.append(h("button", { class: "h3z-btn sm", style: { marginLeft: "auto" }, onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }, "Смотреть"));
-    return st;
+    if (!stale || !this.restoreTake(i)) return st;
+    const panel = h("div", { class: "h3z-rs-host" });   // «↺ Восстановить»: put the take's inputs back, the key matches again
+    st.append(h("button", { class: "h3z-btn sm", title: "Показать, что изменилось с этого дубля, и вернуть прежние значения — без перегенерации",
+      onclick: () => (panel.childNodes.length ? panel.replaceChildren() : this.restorePanel(i, panel)) }, "↺ Восстановить"));
+    return h("div", null, st, panel);
   }
 
   globalCard() {
@@ -1540,11 +1545,14 @@ export class H3Editor {
 
   async stop() { try { await this.host.interrupt(); this.toast("Останавливаю…"); } catch (e) { this.toast("Не удалось прервать", true); } }
 
-  async clearCache() {
+  /** «Очистить кэш» keeps the finished takes (latent sidecars, masters, previews): they come back without
+   *  sampling or decoding. With `takes` everything of the project goes, except frozen clips. */
+  async clearCache(takes = false) {
+    if (takes && !confirm("Удалить кэш и все готовые дубли проекта? Незафиксированные отрезки придётся генерировать заново.")) return;
     try {
-      const r = await this.host.clearCache(this.p.id);
-      this.mutate((p) => { for (const s of p.segments) delete s.result; p.result = null; });
-      this.toast(`Кэш очищен (${r?.removed ?? 0} файлов)`);
+      const r = await this.host.clearCache(this.p.id, takes);
+      if (takes) this.mutate((p) => { for (const s of p.segments) if (!s.freeze) { delete s.result; s.takes = []; s.active_take = null; } p.result = null; });
+      this.toast(`Кэш очищен (${r?.removed ?? 0} файлов)` + (takes ? "" : " · готовые дубли сохранены"));
     } catch (e) { this.toast("Не удалось очистить кэш: " + (e.message || e), true); }
   }
 
@@ -1613,6 +1621,10 @@ export class H3Editor {
     const wasActive = !!this.run?.active && !this.run?.queued;
     const r = this.run;
     if (d.event === "start") this.followRun = true;
+    if (d.event === "start" && d.fsigs) {   // content signatures of the reference files: stable keys on another PC / after a copy
+      for (const a of this.p.assets || []) { const f = d.fsigs[a.id]; if (f && (a.fsig?.sha !== f.sha || a.fsig?.sig !== f.sig)) { a.fsig = { sha: f.sha, sig: f.sig }; this._fsigDirty = true; } }
+      if (this._fsigDirty) { this._fsigDirty = false; this.scheduleSave(); }
+    }
     if (["start", "sigmas", "step", "done"].includes(d.event)) this.dynEvent?.(d);
     if (d.event === "sigmas") return;
     if (d.event === "start") this.run = { active: true, queued: false, seg: -1, segs: d.segments, cached: d.cached, total: d.steps_total, done: 0, step: 0, steps: 0, eta: null, kind: d.estimate?.kind || "full", phase: null };
@@ -1752,6 +1764,7 @@ export class H3Editor {
 }
 
 installTakes(H3Editor, { C, h, ICON, PALETTE });
+installRestore(H3Editor, { C, h });
 installMarkers(H3Editor, { C, h, ICON, PALETTE });
 installAudio(H3Editor, { C, h, ICON, PALETTE });
 installPolish(H3Editor, { C, h, ICON, PALETTE });

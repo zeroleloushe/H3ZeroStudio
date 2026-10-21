@@ -269,6 +269,10 @@ def plan_regions(proj, all_items, items, first, keys, dkeys, ref_sigs, env, kind
                     f"not applied; «↻ Пересоздать» makes a new one")
             continue
         pt = os.path.join(d, "cache", f"region_{key}.pt")
+        from . import h3s_store   # a region take's latent comes back from its sidecar after «Очистить кэш»
+        h3s_store.restore(d, "r" + key, pt)
+        if dkey:
+            h3s_store.restore(d, "r" + dkey, os.path.join(d, "cache", f"region_{dkey}.pt"))
         cached = os.path.isfile(pt) and (use_cache or not gen_it)
         steps = 0
         if not cached:

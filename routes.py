@@ -78,18 +78,8 @@ def register():
         if not pid:
             return web.json_response({"ok": False, "error": "no id"}, status=400)
         d = os.path.join(folder_paths.get_output_directory(), "h3zerostudio", pid)
-        n = 0
-        if os.path.isdir(d):
-            for name in os.listdir(d):
-                p = os.path.join(d, name)
-                if os.path.isdir(p) and name == "frozen":   # frozen segments survive «Очистить кэш»
-                    continue
-                if os.path.isdir(p):
-                    n += len(os.listdir(p))
-                    shutil.rmtree(p, ignore_errors=True)
-                elif name.startswith(("seg_", "full_")):
-                    os.remove(p)
-                    n += 1
+        from . import h3s_store   # finished takes (latent sidecars, masters, previews) survive unless takes=true
+        n = h3s_store.clear(d, takes=bool(body.get("takes"))) if os.path.isdir(d) else 0
         return web.json_response({"ok": True, "removed": n})
 
     @routes.post("/h3zero/freeze")

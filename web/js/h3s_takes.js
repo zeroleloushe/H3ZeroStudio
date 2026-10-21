@@ -16,7 +16,10 @@ export function installTakes(Editor, { C, h, ICON }) {
       let t = s.takes.find((x) => x.key === res.key);
       const result = { ...res };
       if (!t) {
-        t = { id: C.newId("t"), key: res.key, sig, seed: res.seed, created: res.created || Math.floor(Date.now() / 1000), snap: this.snapOf(s), result };
+        // + the project inputs and the previous clip's key it was made with («↺ Восстановить» puts them back)
+        const k = C.RUN_KINDS.includes(res.kind) ? res.kind : C.runKind(this.p.settings);
+        const psnap = { settings: clone(this.p.settings), prev: i > 0 ? (this.pendingSigs?.[i - 1] ?? C.segmentSigs(this.p, k)[i - 1]) : null };
+        t = { id: C.newId("t"), key: res.key, sig, seed: res.seed, created: res.created || Math.floor(Date.now() / 1000), snap: this.snapOf(s), psnap, result };
         s.takes.push(t);
         if (s.takes.length > C.MAX_TAKES) s.takes.splice(0, s.takes.length - C.MAX_TAKES);
       } else { t.result = result; t.sig = sig; if (res.seed !== undefined) t.seed = res.seed; }
@@ -164,6 +167,99 @@ export function installTakes(Editor, { C, h, ICON }) {
       const frzNote = s.freeze ? h("div", { class: "h3z-note" }, "🔒 Зафиксирован" + (s.freeze.created ? " " + new Date(s.freeze.created * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "") + ": промпт, референсы и параметры на него не влияют, длина закреплена.") : null;
       wrap.append(...[head, takes.length && !s.freeze ? row : null, frzNote, h("div", { class: "h3z-row wrap" }, btnGen, btnNew, btnFrz), !s.freeze && !C.isFootage(s) ? this.stageButtons(i) : null, why].filter(Boolean));
       return wrap;
+    },
+  });
+}
+
+// ---------------------------------------------------------------- «↺ Восстановить»: what changed since a take
+const SEG_LBL = { prompt: "промпт отрезка", refs: "референсы отрезка", frames: "длина", overrides: "параметры отрезка (сид, шаги…)",
+  link: "связь (продление / новая сцена)", upscale: "апскейл отрезка" };
+const SET_LBL = { prompt: "общий промпт", negative: "негатив", seed: "общий сид", steps: "шаги", cfg: "cfg", sampler: "сэмплер",
+  scheduler: "шедулер", shift_video: "shift видео", shift_audio: "shift звука", denoise: "denoise", aspect: "соотношение сторон",
+  res_mode: "режим размера", megapixels: "мегапиксели", width: "ширина", height: "высота", overlap_blocks: "перекрытие",
+  lock_overlap: "фиксация перекрытия", continuity_ref: "кадр-продолжение", ref_size: "размер референсов", run_kind: "черновик / финал" };
+const short = (v) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t === undefined ? "—" : t.length > 48 ? t.slice(0, 46) + "…" : t; };
+
+export function installRestore(Editor, { C, h }) {
+  Object.assign(Editor.prototype, {
+    /** The take shown on clip i (its active take) and the pass kind its key was made for. */
+    restoreTake(i) {
+      const s = this.seg(i); if (!s?.result) return null;
+      const t = (s.takes || []).find((x) => x.id === s.active_take) || (s.takes || []).find((x) => x.sig && x.sig === s.result.sig);
+      if (!t?.snap) return null;
+      const k = C.RUN_KINDS.includes(t.result?.kind) ? t.result.kind : C.runKind(this.p.settings);
+      return { s, t, k };
+    },
+
+    /** Fields whose current value differs from the take's inputs AND feed its key (checked one by one). */
+    takeDiff(i) {
+      const r = this.restoreTake(i); if (!r) return null;
+      const { t, k } = r;
+      const sigOf = (p) => C.segmentSigs(p, k)[i];
+      const now = sigOf(this.p), out = [];
+      const test = (label, scope, apply, from, to) => {
+        const p2 = clone(this.p); apply(p2);
+        if (sigOf(p2) !== now) out.push({ id: scope + ":" + label, label, scope, apply, from: short(from), to: short(to) });
+      };
+      for (const key of Object.keys(t.snap)) {
+        const cur = this.p.segments[i][key];
+        if (JSON.stringify(cur ?? null) !== JSON.stringify(t.snap[key] ?? null))
+          test(SEG_LBL[key] || key, "seg", (p) => { p.segments[i][key] = clone(t.snap[key]); }, t.snap[key], cur);
+      }
+      const ps = t.psnap?.settings;
+      if (ps) for (const key of new Set([...Object.keys(ps), ...Object.keys(this.p.settings)])) {
+        const was = ps[key], cur = this.p.settings[key];
+        if (JSON.stringify(was ?? null) === JSON.stringify(cur ?? null)) continue;
+        test(SET_LBL[key] || `настройка «${key}»`, "proj", (p) => { if (was === undefined) delete p.settings[key]; else p.settings[key] = clone(was); }, was, cur);
+      }
+      if (i > 0 && t.psnap?.prev) {
+        const p3 = clone(this.p); for (const it of out) if (it.scope === "proj") it.apply(p3);   // project fields restored first
+        const pk = C.segmentSigs(p3, k)[i - 1];
+        if (pk !== t.psnap.prev) {
+          const prev = this.p.segments[i - 1], pt = (prev.takes || []).find((x) => x.sig === t.psnap.prev);
+          if (pt) out.push({ id: "prev", label: `предыдущий отрезок: вернуть дубль ${this.takeIndex(prev, pt.id) + 1}`, scope: "prev",
+            apply: (p) => { const q = p.segments[i - 1]; Object.assign(q, clone(pt.snap || {})); q.active_take = pt.id; q.result = { ...clone(pt.result), sig: pt.sig }; } });
+          else out.push({ id: "prev", label: "предыдущий отрезок изменён (его дубль для этого ключа не найден)", scope: "prev", apply: null });
+        }
+      }
+      return { take: t, kind: k, items: out, match: now === t.sig };
+    },
+
+    /** Put the checked inputs back (one undo step); the key matches again when everything was restored. */
+    applyRestore(i, items) {
+      const r = this.restoreTake(i); if (!r || !items.length) return;
+      this.mutate((p) => { for (const it of items) it.apply?.(p); this.relinkDownstream(p, i - (items.some((x) => x.scope === "prev") ? 1 : 0)); }, { render: "none" });
+      const s = this.seg(i);
+      if (s.result) s.result = { ...clone(r.t.result), sig: r.t.sig };
+      this.renderAll();
+      const left = this.takeDiff(i);
+      this.toast(left?.match ? "Входы восстановлены — дубль снова актуален, перегенерации не будет"
+        : "Восстановлено частично" + (left?.items.length ? ": ещё отличается — " + left.items.map((x) => x.label).join(", ") : ""));
+    },
+
+    /** The panel under the card status of a stale clip. */
+    restorePanel(i, host) {
+      const d = this.takeDiff(i);
+      host.replaceChildren();
+      if (!d) { host.append(h("div", { class: "h3z-note" }, "У этого дубля нет сохранённых входов (сделан старой версией).")); return; }
+      if (!d.items.length) {
+        host.append(h("div", { class: "h3z-note" }, d.match ? "Входы совпадают." : "Поля отрезка и проекта совпадают; изменились файлы референсов или ассеты — их не вернуть отсюда."));
+        return;
+      }
+      const boxes = d.items.map((it) => {
+        const cb = h("input", { type: "checkbox" }); cb.checked = !!it.apply; cb.disabled = !it.apply;
+        cb.onchange = () => warn();
+        return { it, cb, row: h("label", { class: "h3z-rs-row" + (it.scope === "proj" ? " proj" : "") }, cb, h("span", null, it.label),
+          it.from !== undefined ? h("em", null, `${it.to} → ${it.from}`) : null) };
+      });
+      const wn = h("div", { class: "h3z-note h3z-rs-warn" });
+      const warn = () => { wn.textContent = boxes.some((b) => b.cb.checked && b.it.scope === "proj")
+        ? "Поля проекта влияют на все клипы" + (this.globScope?.() ? " и, при общих настройках, на другие проекты" : "") : ""; };
+      warn();
+      host.append(h("div", { class: "h3z-rs h3z-glass" }, h("b", null, "Что изменилось с этого дубля"), ...boxes.map((b) => b.row), wn,
+        h("div", { class: "h3z-rs-btns" },
+          h("button", { class: "h3z-btn sm primary", onclick: () => this.applyRestore(i, boxes.filter((b) => b.cb.checked).map((b) => b.it)) }, "↺ Восстановить выбранное"),
+          h("button", { class: "h3z-btn sm", onclick: () => host.replaceChildren() }, "Отмена"))));
     },
   });
 }

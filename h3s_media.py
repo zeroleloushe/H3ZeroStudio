@@ -29,12 +29,14 @@ BT709 = 1          # AVCOL_PRI_BT709 = AVCOL_TRC_BT709 = AVCOL_SPC_BT709
 RANGE_TV = 1       # AVCOL_RANGE_MPEG
 
 
-def video_stream(container, w, h, rate, options=None):
-    """H.264 (mpeg4 fallback) yuv420p stream, tagged BT.709 TV range."""
+def video_stream(container, w, h, rate, options=None, pix_fmt="yuv420p"):
+    """H.264 (mpeg4 fallback) stream, tagged BT.709 TV range."""
     import av
     codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
+    if codec != "libx264":
+        pix_fmt = "yuv420p"
     vs = container.add_stream(codec, rate=rate)
-    vs.width, vs.height, vs.pix_fmt = w, h, "yuv420p"
+    vs.width, vs.height, vs.pix_fmt = w, h, pix_fmt
     if codec == "libx264" and options:
         vs.options = dict(options)
     cc = vs.codec_context
@@ -46,17 +48,17 @@ def video_stream(container, w, h, rate, options=None):
     return vs
 
 
-def video_frame(arr):
-    """RGB uint8 [H,W,3] -> yuv420p frame converted with the BT.709 matrix, TV range."""
+def video_frame(arr, pix_fmt="yuv420p"):
+    """RGB uint8 [H,W,3] -> yuv frame converted with the BT.709 matrix, TV range."""
     import av
     f = av.VideoFrame.from_ndarray(np.ascontiguousarray(arr), format="rgb24")
     try:
-        return f.reformat(format="yuv420p", dst_colorspace="ITU709", dst_color_range="MPEG")
+        return f.reformat(format=pix_fmt, dst_colorspace="ITU709", dst_color_range="MPEG")
     except Exception:
         return f
 
 
-def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max_width=None):
+def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max_width=None, pix_fmt="yuv420p", preset="veryfast"):
     """frames: IMAGE tensor [F,H,W,3]. waveform: tensor [C,L] (float, -1..1) or None."""
     import av
     tmp = path + ".part"
@@ -71,7 +73,8 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
     h2, w2 = h // 2 * 2, w // 2 * 2
     container = av.open(tmp, mode="w", format="mp4")
     try:
-        vs = video_stream(container, w2, h2, int(fps), {"crf": str(crf), "preset": "veryfast", "movflags": "+faststart"})
+        vs = video_stream(container, w2, h2, int(fps), {"crf": str(crf), "preset": preset, "movflags": "+faststart"}, pix_fmt)
+        pix_fmt = vs.pix_fmt
         astream = None
         if waveform is not None and sample_rate:
             wf = waveform.detach().float().cpu().clamp(-1, 1).numpy()
@@ -81,7 +84,7 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
             layout = "stereo" if wf.shape[0] == 2 else "mono"
             astream = container.add_stream("aac", rate=int(sample_rate), layout=layout)
         for f in arr:
-            for p in vs.encode(video_frame(f[:h2, :w2])):
+            for p in vs.encode(video_frame(f[:h2, :w2], pix_fmt)):
                 container.mux(p)
         for p in vs.encode():
             container.mux(p)
@@ -96,6 +99,21 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
         container.close()
     replace_file(tmp, path)
     return path
+
+
+def read_frames(path):
+    """All frames of an mp4 -> IMAGE tensor [F,H,W,3] float 0..1 (the file's own colour matrix)."""
+    import av
+    import torch
+    out = []
+    with av.open(path) as c:
+        st = c.streams.video[0]
+        st.thread_type = "AUTO"
+        for fr in c.decode(st):
+            out.append(torch.from_numpy(fr.to_ndarray(format="rgb24")))
+    if not out:
+        raise ValueError(f"no frames in {path}")
+    return torch.stack(out).float().div_(255.0)
 
 
 STRIP_COUNT = 24
