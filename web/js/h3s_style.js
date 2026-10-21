@@ -756,6 +756,17 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-region.bad .core { border-color:var(--err); background:rgba(251,113,133,.14); }
 .h3z-region.stale .tab { background:linear-gradient(135deg,#b45309,#f59e0b); }
 .h3z-region.applied .core { background:rgba(236,72,153,.10); }
+.h3z-region .core.filled { overflow:hidden; pointer-events:auto; cursor:pointer; background:#05070f; }
+.h3z-region .core.filled .fillstrip { position:absolute; left:0; right:0; top:6px; bottom:6px; overflow:hidden; border-radius:6px; }
+.h3z-region .core.filled .fillstrip i { position:absolute; top:0; bottom:0; background-repeat:no-repeat; border-right:1px solid rgba(0,0,0,.55); }
+.h3z-region .core.filled::before { content:""; position:absolute; inset:0; z-index:1; pointer-events:none; background:linear-gradient(180deg, rgba(5,7,15,.6) 0%, rgba(5,7,15,0) 40%, rgba(5,7,15,.55) 100%); }
+.h3z-region .core.filled .flbl { position:absolute; left:8px; top:9px; z-index:2; display:flex; gap:6px; align-items:center; pointer-events:none; white-space:nowrap; }
+.h3z-region .core.filled .flbl b { font-size:11.5px; color:#fff; padding:2px 7px; border-radius:6px; background:linear-gradient(135deg,#8b5cf6,#22d3ee); }
+.h3z-region .core.filled .flbl span { font-size:10.5px; font-weight:700; color:rgba(255,255,255,.85); text-shadow:0 1px 3px #000; }
+.h3z-region .core.filled.stale .fillstrip { filter:saturate(.3) brightness(.55); }
+.h3z-region .core.filled.stale .flbl b { background:linear-gradient(135deg,#b45309,#f59e0b); }
+.h3z-region .core.filled .rbadge { position:absolute; right:8px; top:50%; transform:translateY(-50%); z-index:3; pointer-events:auto; }
+.h3z-region .core.filled { cursor:pointer; }
 .h3z-region.running .core { animation:h3z-pulse 1.6s ease-in-out infinite; }
 .h3z-regpop { position:absolute; z-index:100001; width:560px; padding:12px 14px; display:flex; flex-direction:column; gap:9px; border-color:rgba(236,72,153,.45); box-shadow:0 18px 50px rgba(0,0,0,.6), 0 0 0 1px rgba(236,72,153,.2); }
 .h3z-regpop.dropover { border-color:var(--a2); }

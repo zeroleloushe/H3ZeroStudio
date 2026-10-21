@@ -119,6 +119,9 @@ def test_bridge_e2e_over_a_gap_with_the_tiny_model(tmp_path, monkeypatch):
     L = core.level_lock_frames(core.normalize_project(project()))                   # level lock on both seams touches ±L frames
     assert near(img1[:34 - L], img0[:34 - L]) and near(img1[85 + L:], img0[85 + L:])
     assert float(img1[56:73].abs().max()) > 0.0                                      # the gap got picture
+    # the timeline draws the filled gap from the take's own filmstrip: window frames ws..we, span at a - ws
+    assert r["strip"] and r["strip_n"] > 0 and r["video"] and r["frames"] >= r["b"] - r["ws"]
+    assert os.path.isfile(os.path.join(str(out), r["strip"]["subfolder"], r["strip"]["filename"]))
     win = core.region_window(core.normalize_project(project(regions=[rg])), rg)
     sv = seen[0][0]
     assert sv.shape[2] == core.latent_t(90)

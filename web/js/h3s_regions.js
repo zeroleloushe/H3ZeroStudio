@@ -152,7 +152,8 @@ export function installRegions(Editor, { C, h, ICON }) {
         style: { left: ws * ppf + "px", width: Math.max(4, (we - ws) * ppf) + "px" } });
       const px = (f) => (f - ws) * ppf + "px";
       if (ok && a > ws) el.append(h("div", { class: "zh", style: { left: 0, width: px(a) }, title: `Контекст до: ${a - ws} кадр. — остаётся как есть и задаёт начало` }));
-      el.append(h("div", { class: "core", style: { left: px(a), width: Math.max(3, (b - a) * ppf) + "px" } }));
+      const core = h("div", { class: "core", style: { left: px(a), width: Math.max(3, (b - a) * ppf) + "px" } });
+      el.append(core);
       if (ok && we > b) el.append(h("div", { class: "zt", style: { left: px(b), width: (we - b) * ppf + "px" }, title: `Контекст после: ${we - b} кадр. — остаётся как есть и задаёт конец` }));
       if (!rg) return el;
       const n = this.regionNo(rg.id), k = tk ? (rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1 : 0;
@@ -167,7 +168,8 @@ export function installRegions(Editor, { C, h, ICON }) {
         m.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); } });
         el.append(m);
       }
-      tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); });
+      tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); this.spanMenu(e, rg.id); });
+      if (ok && tk?.take.result?.strip) this.spanFill(el, core, rg, w, tk, kn, ppf);
       el.append(tab);
       for (const side of ["start", "end"]) {
         const eg = h("div", { class: "eg " + side, style: { left: px(side === "start" ? a : b) }, title: `Тяните ${side === "start" ? "начало" : "конец"} участка (прилипает к сетке H3, 17 кадров)` });
@@ -203,6 +205,63 @@ export function installRegions(Editor, { C, h, ICON }) {
         this.selRegion = id; this.renderTimeline();
       };
       window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+    },
+
+    /** A span with a take shows ITS frames over [a, b) — over the gap it fills and over the parts of the neighbour
+     *  clips it regenerated — like a clip: filmstrip, «✂ Мост / Пролог» label, hover frames; a stale take dimmed + ↺. */
+    spanFill(el, core, rg, w, tk, kn, ppf) {
+      const res = tk.take.result, n = res.strip_n || 0, frames = res.frames || (w.we - w.ws);
+      const off = (res.a ?? w.a) - (res.ws ?? w.ws);                 // window frame of the span start (take's own geometry)
+      const len = Math.min(w.b - w.a, Math.max(1, frames - off)), wd = Math.max(3, len * ppf);
+      core.classList.add("filled"); if (!tk.fresh) core.classList.add("stale");
+      const box = h("div", { class: "fillstrip" });
+      const [vw, vh] = C.resolution(this.p.settings), H = 92, tw = Math.max(24, H * vw / vh), url = this.host.url(res.strip);
+      if (!n) box.style.backgroundImage = `url("${url}")`;
+      else for (let k = 0, cnt = Math.min(200, Math.ceil(wd / tw)); k < cnt; k++) {
+        const f = off + (k * tw + tw / 2) / ppf, idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
+        box.append(h("i", { style: { left: k * tw + "px", width: tw + "px", backgroundImage: `url("${url}")`, backgroundSize: `${n * tw}px ${H}px`, backgroundPosition: `${-idx * tw}px 0` } }));
+      }
+      core.append(box);
+      const name = kn === "region" ? "Участок" : C.SPAN_NAMES[kn];
+      if (wd > 46) core.append(h("div", { class: "flbl" }, h("b", null, wd > 120 ? `✂ ${name}` : "✂"), wd > 200 ? h("span", null, `${((w.b - w.a) / C.FPS).toFixed(1)} с · дубль ${(rg.takes || []).findIndex((t) => t.id === rg.active_take) + 1}`) : null));
+      if (!tk.fresh) {
+        const can = this.regionRestorable(rg);
+        const rb = h("button", { class: "h3z-btn sm rbadge", title: can ? "Дубль устарел: вы изменили участок (границы, промпт, рефы, сид). ↺ — вернуть входы дубля, и он снова применится"
+          : "Дубль устарел: изменились клипы или настройки под участком — в ролике сейчас пусто/старое. ↻ Пересоздать — в карточке участка или в меню (правый клик)",
+          html: wd > 170 ? "↺ Восстановить" : "↺" });
+        rb.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
+        rb.addEventListener("click", (e) => { e.stopPropagation(); if (can) this.restoreRegionTake(rg.id); else { this.selRegion = rg.id; this.renderTimeline(); } });
+        core.append(rb);
+      }
+      core.title = `${name} ${this.regionNo(rg.id)}: кадры дубля ${C.fmtTime(w.a / C.FPS)}–${C.fmtTime(w.b / C.FPS)}` + (tk.fresh ? " — в ролике, просмотре и экспорте" : " — устарел, не применяется") + "\nКлик — карточка участка · правый клик — меню";
+      core.addEventListener("pointerdown", (e) => { if (e.button !== 0) return; e.stopPropagation(); this.selGap = null; this.selAudio = null; this.selRegion = rg.id; this.playhead = Math.max(0, Math.min(this.totalFrames(), this.frameAt(e.clientX))); this.renderTimeline(); this.updatePlayhead?.(); });
+      core.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); this.spanMenu(e, rg.id); });
+      core.addEventListener("pointermove", (e) => {                     // hover: the take's frame under the cursor
+        if (e.buttons || !n) return this.hideHover?.();
+        const r = core.getBoundingClientRect(), f = off + (e.clientX - r.left) / ppf, idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
+        const W = 176, HH = Math.round(W * vh / vw);
+        let hv = this.$.hover;
+        if (!hv) { hv = this.$.hover = h("div", { class: "h3z-hover" }, h("div", { class: "im" }), h("span")); this.root.append(hv); }
+        const im = hv.firstChild; im.style.width = W + "px"; im.style.height = HH + "px";
+        im.style.backgroundImage = `url("${url}")`; im.style.backgroundSize = `${n * W}px ${HH}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
+        hv.lastChild.textContent = `${C.fmtTime((w.a + (e.clientX - r.left) / ppf) / C.FPS)} · ${name.toLowerCase()} ${this.regionNo(rg.id)}` + (tk.fresh ? "" : " · устарел");
+        hv.style.left = Math.max(8, Math.min(window.innerWidth - W - 16, e.clientX - W / 2)) + "px"; hv.style.top = r.top - HH - 34 + "px";
+        this.showHover(hv, core);
+      });
+      core.addEventListener("pointerleave", () => this.hideHover?.());
+    },
+    /** Right click on a span (its tab or its frames): regenerate / restore / remove the filling. */
+    spanMenu(e, id) {
+      const rg = this.region(id); if (!rg) return;
+      const w = this.regionWin(rg), kn = w.error ? "region" : C.spanKind(w), name = kn === "region" ? "Участок" : C.SPAN_NAMES[kn];
+      const gi = this.p.segments.findIndex((s, k) => s.gap && (() => { const it = this.items()[k]; return it && it.start - it.gap < w.b && it.start > w.a; })());
+      this.openMenu(e, `✂ ${name} ${this.regionNo(id)}`, [
+        { label: "↻ Пересоздать", fn: () => this.regenRegion(id), title: "Новый дубль (новый сид, если такой уже есть)" },
+        this.regionRestorable(rg) ? { label: "↺ Восстановить входы дубля", fn: () => this.restoreRegionTake(id) } : null,
+        { label: kn === "bridge" || kn === "prologue" ? "✕ Убрать заполнение" : "✕ Удалить участок", fn: () => this.deleteRegion(id), danger: true,
+          title: "Участок и его дубли убираются (Ctrl+Z — вернуть); промежуток снова пустой" },
+        gi >= 0 ? { label: "✕ Убрать промежуток", fn: () => this.removeGap(gi), danger: true } : null,
+      ].filter(Boolean));
     },
 
     spanSeamTip(rg, sd, sq) {

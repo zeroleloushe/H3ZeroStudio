@@ -130,17 +130,20 @@ export function installGaps(Editor, { C, h }) {
     /** Hatched gap blocks on the video track (select / Del / menu: remove, fill). */
     renderGaps(vt, its, ppf) {
       this.gapStyle();
+      const spans = (this.p.regions || []).map((rg) => { const w = C.regionWindow(this.p, rg, its); return w.error ? null : { rg, a: w.a, b: w.b, take: !!this.regionTake(rg)?.take.result?.strip }; }).filter(Boolean);
       for (const it of its) {
         if (!it.gap) continue;
+        const g0 = it.start - it.gap, over = spans.filter((x) => x.a < it.start && x.b > g0);
+        if (over.some((x) => x.take)) continue;      // filled: the span draws its frames there (menu: «Убрать заполнение»)
         const id = this.p.segments[it.index].id, w = it.gap * ppf;
         const el = h("div", { class: "h3z-tgap" + (this.selGap === id ? " sel" : ""), style: { left: (it.start - it.gap) * ppf + "px", width: Math.max(3, w) + "px" },
-          title: `Промежуток ${it.gap} кадр. (${(it.gap / C.FPS).toFixed(2)} с): чёрный кадр и тишина.\nКлик — выбрать (Del — убрать), правый клик — меню («Заполнить генерацией»).\nCtrl+перетаскивание клипа — изменить` },
+          title: `Промежуток ${it.gap} кадр. (${(it.gap / C.FPS).toFixed(2)} с): чёрный кадр и тишина.\n«✂ Заполнить» — мост/пролог поверх него · клик — выбрать (Del — убрать) · правый клик — меню.\nПеретаскивание клипа (магнит выключен) — изменить` },
           w > 150 ? h("span", { class: "dur" }, `⟷ ${(it.gap / C.FPS).toFixed(1)} с`) : null);
         // always-visible actions: «✂ Заполнить» (bridge / prologue span, its card opens) and ✕ remove
         const fill = h("button", { class: "gb fill" + (w < 104 ? " icon" : ""), title: it.index > 0 ? `Заполнить промежуток генерацией: мост ${it.index} → ${it.index + 1} (конец сцены до и начало следующей — контекст)` : "Заполнить промежуток генерацией: пролог перед отрезком 1 (контекст — начало отрезка)",
           html: w < 104 ? "✂" : "✂ <span>Заполнить</span>" });
         fill.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
-        fill.addEventListener("click", (e) => { e.stopPropagation(); this.selGap = null; this.fillGap(it.index); });
+        fill.addEventListener("click", (e) => { e.stopPropagation(); this.selGap = null; if (over.length) { this.selRegion = over[0].rg.id; this.renderTimeline(); } else this.fillGap(it.index); });
         const del = w >= 46 ? h("button", { class: "gb del", title: "Убрать промежуток (Del)", html: "✕" }) : null;
         del?.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
         del?.addEventListener("click", (e) => { e.stopPropagation(); this.removeGap(it.index); });

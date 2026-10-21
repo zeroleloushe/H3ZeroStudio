@@ -61,8 +61,8 @@ export function installComp(Editor, { C, h, PALETTE }) {
       const bg = ref ? `url("${this.host.url({ filename: ref.file, subfolder: ref.subfolder, type: ref.type || "input" })}")` : "none";
       return h("div", { class: "h3z-comp-ph" + (s ? "" : " gap"), style: { "--c": col, backgroundImage: bg } },
         h("div", { class: "in" },
-          h("b", null, s ? `Отрезок ${src.seg + 1}${s.name ? " · " + s.name : ""}` : "Пустота до маркера конца"),
-          h("span", null, s ? (src.seg >= this.genCount() ? "за маркером конца — не генерируется" : "ещё не сгенерирован — здесь будет видео") : "заполните её отрезком или сдвиньте маркер"),
+          h("b", null, s ? `Отрезок ${src.seg + 1}${s.name ? " · " + s.name : ""}` : src.start < this.contentFrames() ? "Промежуток" : "Пустота до маркера конца"),
+          h("span", null, s ? (src.seg >= this.genCount() ? "за маркером конца — не генерируется" : "ещё не сгенерирован — здесь будет видео") : src.start < this.contentFrames() ? "чёрный кадр и тишина · «✂ Заполнить» на таймлайне — мост или пролог" : "заполните её отрезком или сдвиньте маркер"),
           s?.prompt ? h("small", null, s.prompt.replace(/\s+/g, " ").slice(0, 140)) : null));
     },
 
