@@ -16,7 +16,7 @@ import time
 import zipfile
 
 ROOT = "h3zerostudio"
-SPECIAL = {"_projects", "_exports", "_thumbs", "export", "_import"}
+SPECIAL = {"_projects", "_exports", "_thumbs", "export", "_import", "_characters", "_presets"}
 KINDS = ("take", "draft", "refine", "upscale", "region", "final")
 _LOCK = threading.RLock()
 

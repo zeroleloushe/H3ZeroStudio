@@ -155,8 +155,9 @@ def sample_region(model, clip, vae, proj, region, win, src_v, src_a, kind, ref_i
             f"(latent keep {hv} + {T - tv if not win['to_end'] else 0}), audio keep {int((keep_a > 0.5).sum())}/{A}, "
             f"steps {p['steps']} cfg {p['cfg']} seed {p['seed']} {p['sampler']}/{p['scheduler']}")
     gen.vlog(f"  region prompt: {prompt[:220]}{'…' if len(prompt) > 220 else ''}")
-    pos = gen.encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"))
-    neg = pos if p["cfg"] == 1.0 else gen.encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"))
+    cards = gen.holder_cards(proj, region, vae, "full")
+    pos = gen.encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), cards=cards)
+    neg = pos if p["cfg"] == 1.0 else gen.encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), cards=cards)
     pos, neg = gen.add_keyframes(pos, keyframes), gen.add_keyframes(neg, keyframes)
     m = gen.apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
     mv = (1.0 - keep_v).view(1, 1, T, 1, 1).expand(1, 1, T, lh, lw).contiguous()

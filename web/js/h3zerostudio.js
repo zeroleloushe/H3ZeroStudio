@@ -63,6 +63,7 @@ function makeHost(node) {
       return await r.json();
     },
     url: viewUrl,
+    apiURL: (p) => api.apiURL(p),
     peaks: async (ref) => {
       const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", bins: "4000" });
       const r = await api.fetchApi("/h3zero/peaks?" + q.toString());

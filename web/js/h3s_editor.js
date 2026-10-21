@@ -23,6 +23,7 @@ import { installPresets } from "./h3s_presets.js";
 import { installModelTab } from "./h3s_modeltab.js";
 import { installGaps } from "./h3s_gaps.js";
 import { installTimer } from "./h3s_timer.js";
+import { installChars } from "./h3s_chars.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -46,6 +47,7 @@ export const ICON = {
   settings: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   projects: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   keys: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
+  chars: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14c1.6.7 2.6 2.4 3 5"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>'),
   play: svg('<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="none"/>'),
   pause: svg('<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/>'),
@@ -413,7 +415,7 @@ export class H3Editor {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
     const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
-    t.append(tool("assets", ICON.assets, "Ассеты"), tool("gallery", ICON.gallery, "Галерея"), tool("projects", ICON.projects, "Проекты"), tool("models", ICON.models, "Модели"), tool("settings", ICON.settings, "Настройки"), tool("keys", ICON.keys, "Клавиши"), h("div", { class: "sp" }), tool("help", ICON.help, "Справка"), tool("about", ICON.info, "Инфо"));
+    t.append(tool("assets", ICON.assets, "Ассеты"), tool("chars", ICON.chars, "Персонажи"), tool("gallery", ICON.gallery, "Галерея"), tool("projects", ICON.projects, "Проекты"), tool("models", ICON.models, "Модели"), tool("settings", ICON.settings, "Настройки"), tool("keys", ICON.keys, "Клавиши"), h("div", { class: "sp" }), tool("help", ICON.help, "Справка"), tool("about", ICON.info, "Инфо"));
   }
 
   renderLeft() {
@@ -461,6 +463,7 @@ export class H3Editor {
     if (this.tool !== "help") this.helpHide?.();
     if (this.tool === "audio") this.tool = "assets";   // the old «Аудио» rail tab: clips live on the timeline / inspector
     if (this.tool === "assets") return this.renderAssets(L);
+    if (this.tool === "chars") return this.renderChars(L);
     if (this.tool === "gallery") return this.renderGallery(L);
     if (this.tool === "projects") return this.renderProjects(L);
     if (this.tool === "models") return this.renderModels(L);
@@ -708,6 +711,7 @@ export class H3Editor {
     box.addEventListener("drop", (e) => { e.preventDefault(); box.classList.remove("over"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) this.addRef(i, id); });
     const nRefs = refs.length + (cp ? 1 : 0);
     card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Референсы", h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, `${nRefs} / ${C.MAX_REF_IMAGES} карт.` + (nVid ? ` · ${nVid} / ${C.MAX_REF_VIDEOS} видео` : "") + (arefs.length ? ` · ${arefs.length} / ${C.MAX_REF_AUDIOS} аудио` : "") + " · порядок: персонажи, локации, другое")), box));
+    { const cb = this.charChips({ seg: i }); if (cb) card.append(cb); }
     this.$.finalBox = h("div", { class: "h3z-final" });
     card.append(h("details", { class: "h3z-det" }, h("summary", null, "Итоговый промпт"), h("div", { class: "in" }, this.$.finalBox)));
     this.renderFinalPrompt();
@@ -1301,9 +1305,9 @@ export class H3Editor {
       clip.addEventListener("pointerdown", (e) => { if (e.target !== hr) this.clipDown(e, i); });
       clip.addEventListener("contextmenu", (e) => this.clipMenu(e, i));
       this.clipHover(clip, i);
-      clip.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("application/x-h3s-asset")) { e.preventDefault(); clip.classList.add("dropover"); } });
+      clip.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].some((t) => t === "application/x-h3s-asset" || t === "application/x-h3s-card")) { e.preventDefault(); clip.classList.add("dropover"); } });
       clip.addEventListener("dragleave", () => clip.classList.remove("dropover"));
-      clip.addEventListener("drop", (e) => { e.preventDefault(); clip.classList.remove("dropover"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { this.sel = i; this.addRef(i, id); this.toast((this.p.assets.find((a) => a.id === id)?.category === "video" ? "Видео-референс <Video> добавлен в отрезок " : "Референс добавлен в отрезок ") + (i + 1)); } });
+      clip.addEventListener("drop", (e) => { e.preventDefault(); clip.classList.remove("dropover"); const cid = e.dataTransfer.getData("application/x-h3s-card"); if (cid) { this.sel = i; this.charAdd({ seg: i }, cid); return; } const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { this.sel = i; this.addRef(i, id); this.toast((this.p.assets.find((a) => a.id === id)?.category === "video" ? "Видео-референс <Video> добавлен в отрезок " : "Референс добавлен в отрезок ") + (i + 1)); } });
       vt.append(clip);
       $.clips[i] = clip;
       { const sq = this.seamQ(i); if (sq) { const m = h("div", { class: "h3z-seamq " + sq.verdict, style: { left: (it.start + it.overlap) * ppf + "px" }, title: this.seamTip(i, sq) });
@@ -1548,6 +1552,7 @@ export class H3Editor {
     // a modal on top owns the keyboard: the asset editor has its own window listener (registered later, so it
     // runs after this one) and the save dialog listens on its box — the timeline must not react (Esc closed it all)
     if (this.ae) return;
+    if (this.cropM) { this.cropKey(e); return; }   // «Персонажи» crop window
     if (this.viewer) { this.viewerKey(e); return; }   // «Удобный просмотр» owns the keyboard
     if (this.$.saveModal) { if (e.key === "Escape" && !isTyping(e)) { e.preventDefault(); this.closeSaveDialog(); } return; }
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
@@ -1836,3 +1841,4 @@ installPresets(H3Editor, { C, h, ICON });
 installModelTab(H3Editor, { C, h, ICON });
 installGaps(H3Editor, { C, h, ICON });
 installTimer(H3Editor, { C, h });
+installChars(H3Editor, { C, h, ICON });

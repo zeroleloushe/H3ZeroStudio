@@ -2,7 +2,7 @@
 // A take = one generated result of a segment + the snapshot of the segment fields that produced it.
 // Choosing a take restores that snapshot, so the backend cache key matches again: the take's latent is
 // reused in the final stitch and as the continuity source of the next segment (no re-sampling).
-const SNAP_KEYS = ["prompt", "refs", "frames", "overrides", "link", "upscale", "model_preset"];
+const SNAP_KEYS = ["prompt", "refs", "cards", "frames", "overrides", "link", "upscale", "model_preset"];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 export function installTakes(Editor, { C, h, ICON }) {
@@ -174,7 +174,7 @@ export function installTakes(Editor, { C, h, ICON }) {
 }
 
 // ---------------------------------------------------------------- «↺ Восстановить»: what changed since a take
-const SEG_LBL = { model_preset: "пресет моделей отрезка", prompt: "промпт отрезка", refs: "референсы отрезка", frames: "длина", overrides: "параметры отрезка (сид, шаги…)",
+const SEG_LBL = { model_preset: "пресет моделей отрезка", prompt: "промпт отрезка", refs: "референсы отрезка", cards: "персонажи отрезка", frames: "длина", overrides: "параметры отрезка (сид, шаги…)",
   link: "связь (продление / новая сцена)", upscale: "апскейл отрезка" };
 const SET_LBL = { model_preset: "пресет моделей проекта", prompt: "общий промпт", negative: "негатив", seed: "общий сид", steps: "шаги", cfg: "cfg", sampler: "сэмплер",
   scheduler: "шедулер", shift_video: "shift видео", shift_audio: "shift звука", denoise: "denoise", aspect: "соотношение сторон",

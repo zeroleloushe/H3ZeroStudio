@@ -164,24 +164,46 @@ def ref_canvas(img, width, height, ref_size="match"):
     return max(m, round(w * scale / m) * m), max(m, round(h * scale / m) * m)
 
 
-def encode_cond(clip, vae, prompt, images, width, height, ref_size="match", ref_audios=None, ref_videos=None):
+def holder_cards(project, holder, vae, kind="full"):
+    """«Персонажи» of a clip / region -> h3s_chars.card_parts lists, or None. kind "refine" (and the upscale pass)
+    leaves video-kind looks out, as plain video references are (the prompt strips <Video N> there too)."""
+    if not holder.get("cards"):
+        return None
+    from . import h3s_chars
+    parts = h3s_chars.card_parts(project, holder["cards"], vae, kind)
+    return parts if any(parts.values()) else None
+
+
+def encode_cond(clip, vae, prompt, images, width, height, ref_size="match", ref_audios=None, ref_videos=None, cards=None):
     """Same presentation as comfy_extras MiniMaxH3ReferenceToVideo: images, then videos, then standalone audio.
-    ref_videos: frames [n,H,W,3] already on the reference canvas with n on the 17k+5 grid."""
+    ref_videos: frames [n,H,W,3] already on the reference canvas with n on the 17k+5 grid.
+    cards: pre-encoded «Персонажи» (h3s_chars.card_parts) — each kind after the plain ones of that kind, so the
+    plain refs keep their numbers and the cards continue them (h3s_core.card_labels)."""
     items, blocks = [], []
+    cards = cards or {}
     for img in images:
         tw, th = ref_canvas(img, width, height, ref_size)
         resized = _resize(img[:1], tw, th)
         items.append({"type": "image", "data": resized})
         blocks.append({"kind": "image", "latent_h": th // 16, "latent_w": tw // 16, "latent": vae.encode(resized)})
+    for item, block, _cid in cards.get("image", []):
+        items.append(item)
+        blocks.append(block)
     for fr in ref_videos or []:
         sample_idx = list(range(0, fr.shape[0], core.FPS // 2))   # the text encoder sees the video at 2 fps
         items.append({"type": "video", "data": fr[sample_idx], "timestamps": [k / 2.0 for k in range(len(sample_idx))]})
         z = vae.encode(fr)
         blocks.append({"kind": "video", "latent_t": z.shape[2], "latent_h": fr.shape[1] // 16, "latent_w": fr.shape[2] // 16,
                        "ref_audio_t": 0, "latent": z, "audio_latent": None})
+    for item, block, _cid in cards.get("video", []):
+        items.append(item)
+        blocks.append(block)
     for ra in ref_audios or []:
         items.append({"type": "audio"})
         blocks.append({"kind": "audio", "ref_audio_t": ra.shape[-1], "audio_latent": ra})
+    for item, block, _cid in cards.get("audio", []):
+        items.append(item)
+        blocks.append(block)
     tokens = clip.tokenize(prompt, minimax_ref_items=items)
     cond = clip.encode_from_tokens_scheduled(tokens)
     if blocks:
@@ -835,8 +857,13 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         vlog(f"  prompt: {prompt[:220]}{'…' if len(prompt) > 220 else ''}")
     log(f"segment {index + 1}{' [' + kind + ']' if kind != 'full' else ''}: {it['frames']} frames, {len(images)} ref(s), overlap {it['overlap']} fr, "
         f"steps {p['steps']} cfg {p['cfg']} seed {p['seed']} {p['sampler']}/{p['scheduler']}")
-    pos = encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), ref_audios, ref_videos)
-    neg = pos if p["cfg"] == 1.0 else encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), ref_audios, ref_videos)
+    cards = holder_cards(project, project["segments"][index], vae, kind)
+    if cards:
+        log(f"  characters: " + ", ".join(f"<{'Picture' if k == 'image' else k.title()}> ×{len(v)}" for k, v in cards.items() if v)
+            + " · " + "; ".join(f"{r['snap'].get('name', r['id'])}: " + ", ".join([f"<Picture {n}>" for n in r["image"]] + [f"<Video {n}>" for n in r["video"]] + [f"<Audio {n}>" for n in r["audio"]])
+                                for r in core.card_labels(project, project["segments"][index], index, video=(kind != "refine"))))
+    pos = encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), ref_audios, ref_videos, cards)
+    neg = pos if p["cfg"] == 1.0 else encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), ref_audios, ref_videos, cards)
     pos, neg = add_keyframes(pos, keyframes), add_keyframes(neg, keyframes)
     m = apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
     noise_mask = None
@@ -905,8 +932,9 @@ def refine_audio(model, clip, vae, project, index, items, v, a, ar, ref_images, 
     video, audio = v.to(dev).float().clone(), a.to(dev).float().clone()
     images = list(ref_images)[:core.MAX_REF_IMAGES]
     prompt = core.compose_prompt(project, index, video=True)
-    pos = encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), ref_audios, None)
-    neg = pos if p["cfg"] == 1.0 else encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), ref_audios, None)
+    cards = holder_cards(project, project["segments"][index], vae, "full")
+    pos = encode_cond(clip, vae, prompt, images, w, h, s.get("ref_size", "match"), ref_audios, None, cards)
+    neg = pos if p["cfg"] == 1.0 else encode_cond(clip, vae, s.get("negative") or "", images, w, h, s.get("ref_size", "match"), ref_audios, None, cards)
     m = apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
     # noise mask: 1 = re-sampled, 0 = kept exactly
     vmask = torch.full([1, 1] + list(video.shape[2:]), max(0.0, min(1.0, vden)))
@@ -1499,7 +1527,8 @@ def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=N
             gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 1.0)
         except Exception:
             gb = 1.0
-        with vram_headroom(gb):
+        from . import h3s_chars
+        with vram_headroom(gb), h3s_chars.LOCK:   # «Персонажи»: no card is being created while the VAEs are in use
             out = _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
         _run_end(rec, "done", out[3] if isinstance(out, tuple) and len(out) > 3 and isinstance(out[3], dict) else None)
         return out
@@ -1530,6 +1559,17 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         vae, audio_vae = MR.vae(), MR.audio_vae()
         log("models: " + "; ".join(f"#{i + 1} «{(core.segment_preset(proj, i) or {}).get('name', 'провод')}»" for i in range(len(proj["segments"]))))
     MC = MR.models   # (model, clip) of segment i
+    from . import h3s_chars
+    h3s_chars.remember_vaes(vae, audio_vae)
+    used_cards = {e["id"] for x in proj["segments"] + (proj.get("regions") or []) for e in x.get("cards") or [] if e.get("on", True)}
+    if used_cards:   # «Персонажи»: the library as it is now (signatures in the keys, kinds for the numbering)
+        lib = {c["id"]: c for c in h3s_chars.scan()}
+        gone = sorted(i for i in used_cards if i not in lib)
+        if gone:
+            raise ValueError("H3ZeroStudio: нет карточек персонажей: " + ", ".join((proj["cards"].get(i) or {}).get("name") or i for i in gone)
+                             + " — уберите их из клипов или верните файлы в библиотеку")
+        for i in used_cards:
+            proj["cards"][i] = core.card_snap(lib[i])
     est = core.estimate(proj)
     for wmsg in est["warnings"]:
         log("⚠ " + wmsg)
@@ -2170,7 +2210,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                            eta=round(el / max(1, done_steps[0]) * (todo_steps - done_steps[0]), 1), region=rg["id"])
                 refs_u = [load_asset_image(x) for x in core.region_refs(proj, rg)]
                 uvr, _ra, rinfo = upscale.run_upscale(*MC(si), vae, proj, si, all_items, rv, ra, None, None, refs_u, None, ru_step, None, None,
-                                                      up=rg["upscale"], prompt=core.region_prompt(proj, rg), label=f"region «{name}»")
+                                                      up=rg["upscale"], holder=rg, prompt=core.region_prompt(proj, rg), label=f"region «{name}»")
                 torch.save({"v": uvr, "a": ra, "info": rinfo}, rp["upt"] + ".part")
                 media.replace_file(rp["upt"] + ".part", rp["upt"])
                 log(f"region «{name}»: upscale done in {time.perf_counter() - t_u:.1f}s -> {rinfo['wh'][0]}x{rinfo['wh'][1]} ({rinfo['input']})")

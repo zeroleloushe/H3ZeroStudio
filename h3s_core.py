@@ -155,6 +155,7 @@ DEFAULT_SEGMENT = {
     "frames": 124,
     "prompt": "",
     "refs": [],
+    "cards": [],              # «Персонажи»: [{id, w (weight: >= 1 copies, < 1 weaker), on, look, voice}] after the plain refs
     "link": "extend",         # "extend": continue previous segment | "cut": new shot, no continuity
     "gap": 0,                 # empty frames before the clip (black + silence); a gap makes the clip a new shot
     "overlap_blocks": -1,      # per-segment extend overlap (blocks of 17 frames, 17o+5 frames); -1 = global setting
@@ -188,6 +189,7 @@ DEFAULT_REGION = {
     "tail": -1,          # clean context after it (17·o + 5 frames); -1 = the global overlap setting
     "prompt": "",
     "refs": [],
+    "cards": [],
     "seed": 0,
     "takes": [],         # [{id, key, sig, seed, created, snap{...}, result{...}}]
     "active_take": None, # take applied to the video; None = the original
@@ -233,6 +235,21 @@ MUSIC_LANE = 2
 
 AUDIO_REF_PHRASE = "Use {tags} as the sound reference of this shot."
 VIDEO_REF_PHRASE = "Use {tags} as the motion reference of this shot."
+# «Персонажи» (pre-encoded RefMod cards): a card whose labels the prompt does not cite gets one line by its concept
+MAX_CARDS = 8
+CARD_W_MAX = 4.0
+CARD_CONCEPTS = ("identity", "background", "clothing", "style", "pose_motion", "voice", "generic")
+CARD_LOOK_PHRASE = {
+    "identity": "{label} shows {who}; keep this identity and appearance.",
+    "background": "The location looks like {label}.",
+    "clothing": "The outfit is the one in {label}.",
+    "style": "The visual style follows {label}; its content is not copied.",
+    "pose_motion": "The motion follows {label}; its content is not copied.",
+    "generic": "Use {label} as a reference.",
+    "voice": "Use {label} as a reference.",
+}
+CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference."
+CARD_SNAP_KEYS = ("name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description")
 OVERRIDE_KEYS = ("seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio")
 
 
@@ -449,6 +466,7 @@ def normalize_project(p):
     }
     if out["end_mode"] == "auto":
         out["end"] = 0
+    out["cards"] = normalize_card_snaps(p.get("cards"))
     out["model_presets"] = {}
     if isinstance(p.get("model_presets"), dict):
         for k, v in list(p["model_presets"].items())[:MAX_PRESETS]:
@@ -561,6 +579,7 @@ def normalize_project(p):
         except (TypeError, ValueError):
             seg["color"] = 0
         seg["refs"] = [str(r) for r in (seg.get("refs") or [])]
+        seg["cards"] = normalize_card_refs(seg.get("cards"))
         seg["overrides"] = {k: v for k, v in (seg.get("overrides") or {}).items()
                             if k in OVERRIDE_KEYS and v is not None and v != ""}
         seg["takes"] = [t for t in (seg.get("takes") or []) if isinstance(t, dict) and t.get("key")][-MAX_TAKES:]
@@ -954,6 +973,9 @@ def compose_prompt(project, index, video=True):
     na = min(MAX_REF_AUDIOS, len(audio_refs(project, seg)))
     if na and "<Audio" not in text:
         text = (text + "\n" if text else "") + AUDIO_REF_PHRASE.replace("{tags}", ", ".join(f"<Audio {j + 1}>" for j in range(na)))
+    cl = card_phrases(card_labels(project, seg, index, video=video), text)
+    if cl:
+        text = (text + "\n" if text else "") + "\n".join(cl)
     if not video:
         text = re.sub(r"[ \t]*<Video\s*\d+>", "", text)
         text = re.sub(r"[ \t]+\n", "\n", text).strip()
@@ -1078,6 +1100,116 @@ def run_items(project, items=None):
     items = items if items is not None else plan(project)
     u = int((project.get("run") or {}).get("upto", -1))
     return items if u < 0 or u >= len(items) - 1 else items[:u + 1]
+
+
+def normalize_card_refs(v):
+    out, seen = [], set()
+    for e in v if isinstance(v, list) else []:
+        if isinstance(e, str):
+            e = {"id": e}
+        if not isinstance(e, dict) or not str(e.get("id") or "") or str(e["id"]) in seen:
+            continue
+        try:
+            w = round(max(0.0, min(CARD_W_MAX, float(e.get("w", 1.0)))), 2)
+        except (TypeError, ValueError):
+            w = 1.0
+        seen.add(str(e["id"]))
+        out.append({"id": str(e["id"])[:200], "w": w, "on": e.get("on", True) is not False,
+                    "look": e.get("look", True) is not False, "voice": e.get("voice", True) is not False})
+    return out[:MAX_CARDS]
+
+
+def normalize_card_snaps(v):
+    """project["cards"]: {card id: library snapshot (name, sig, kinds, tokens, subject fields)} of the cards in use."""
+    out = {}
+    for k, c in (v.items() if isinstance(v, dict) else []):
+        if not isinstance(c, dict):
+            continue
+        q = {x: c.get(x) for x in CARD_SNAP_KEYS if c.get(x) not in (None, "")}
+        q["concept"] = q.get("concept") if q.get("concept") in CARD_CONCEPTS else "generic"
+        q["vkind"] = q.get("vkind") if q.get("vkind") in ("image", "video") else None
+        q["audio"] = bool(q.get("audio"))
+        out[str(k)[:200]] = q
+    return out
+
+
+def card_snap(card):
+    """Library card (h3s_chars.scan) -> the project snapshot."""
+    return normalize_card_snaps({"x": {"name": card.get("name"), "sig": card.get("sig"), "concept": card.get("concept"),
+                                       "vkind": (card.get("visual") or {}).get("kind"), "audio": bool(card.get("audio")),
+                                       "tokens": ((card.get("visual") or {}).get("tokens") or 0) + ((card.get("audio") or {}).get("tokens") or 0),
+                                       **{k: card.get(k) for k in ("subject_name", "appearance", "retained_attributes", "voice_description")}}})["x"]
+
+
+def card_copies(w):
+    """Weight -> (copies, strength): >= 1 rounds to whole copies, < 1 one weaker copy (mirror: h3s_chars.copies_strength)."""
+    w = float(w)
+    if w <= 0:
+        return 0, 0.0
+    if w < 1.0:
+        return 1, round(w, 3)
+    return max(1, min(8, int(round(w)))), 1.0
+
+
+def card_labels(project, holder, index=None, video=True, region=False):
+    """The <Picture N> / <Video N> / <Audio N> labels of the applied cards of a clip (index) or a region, numbered
+    after the plain references (and the continuity picture): [{id, snap, image: [n..], video: [...], audio: [...]}]."""
+    snaps = project.get("cards") or {}
+    if region:
+        n_img, n_vid, n_aud = len(region_refs(project, holder)), 0, 0
+    else:
+        n_img = len(ordered_refs(project, holder)) + (1 if index is not None and continuity_picture(project, index) else 0)
+        n_vid = min(MAX_REF_VIDEOS, len(video_refs(project, holder))) if video else 0
+        n_aud = min(MAX_REF_AUDIOS, len(audio_refs(project, holder)))
+    out = []
+    for e in holder.get("cards") or []:
+        sn = snaps.get(e["id"])
+        if not sn or not e.get("on", True):
+            continue
+        copies, _st = card_copies(e.get("w", 1.0))
+        if not copies:
+            continue
+        r = {"id": e["id"], "snap": sn, "image": [], "video": [], "audio": []}
+        vk = sn.get("vkind")
+        if vk and e.get("look", True) and (video or vk == "image"):
+            if vk == "image":
+                r["image"] = list(range(n_img + 1, n_img + copies + 1)); n_img += copies
+            else:
+                r["video"] = list(range(n_vid + 1, n_vid + copies + 1)); n_vid += copies
+        if sn.get("audio") and e.get("voice", True) and not region:
+            r["audio"] = list(range(n_aud + 1, n_aud + copies + 1)); n_aud += copies
+        if r["image"] or r["video"] or r["audio"]:
+            out.append(r)
+    return out
+
+
+def card_phrases(labels, text):
+    """A line for every applied card none of whose labels the prompt cites (the drafted prompt cites them all)."""
+    lines = []
+    for r in labels:
+        sn = r["snap"]
+        tags = [f"<Picture {n}>" for n in r["image"][:1]] + [f"<Video {n}>" for n in r["video"][:1]]
+        aud = [f"<Audio {n}>" for n in r["audio"][:1]]
+        name = (sn.get("subject_name") or "").strip()
+        if tags and not any(t in text for t in [f"<Picture {n}>" for n in r["image"]] + [f"<Video {n}>" for n in r["video"]]):
+            who = name or {"identity": "the person"}.get(sn.get("concept"), "the subject")
+            lines.append(CARD_LOOK_PHRASE.get(sn.get("concept"), CARD_LOOK_PHRASE["generic"]).replace("{label}", tags[0]).replace("{who}", who))
+        if aud and not any(f"<Audio {n}>" in text for n in r["audio"]):
+            whose = f"{name}'s" if name else ("the person's" if tags and sn.get("concept") == "identity" else "the")
+            lines.append(CARD_VOICE_PHRASE.replace("{label}", aud[0]).replace("{whose}", whose).replace("the the", "the"))
+    return lines
+
+
+def card_key(project, holder, video=True):
+    """What the applied cards add to a cache key ([] when none: older keys stay as they were)."""
+    snaps = project.get("cards") or {}
+    out = []
+    for e in holder.get("cards") or []:
+        sn = snaps.get(e["id"])
+        if not sn or not e.get("on", True) or not card_copies(e.get("w", 1.0))[0]:
+            continue
+        out.append([e["id"], *card_copies(e["w"]), sn.get("sig", ""), bool(e.get("look", True)), bool(e.get("voice", True)), bool(video)])
+    return out
 
 
 def continuity_picture(project, index):
@@ -1206,6 +1338,9 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
             if segment_track(project, it) or audio_refs(project, seg) else None,
             "prev": prev if it["link"] == "extend" and i > 0 else "",
         }
+        ck = card_key(project, seg, video=(kind != "refine"))
+        if ck:   # «Персонажи»: only when used, so the keys of clips without cards are unchanged
+            data["cards"] = ck
         if it["link"] == "extend" and i > 0 and it["overlap"]:
             data["alock"] = [audio_lock_overlap(project), 4 if audio_lock_overlap(project) else 3,   # 4: hard mask boundary (no hand-off ramp)
                              round(min(float(s.get("audio_context_sec", 0) or 0), AUDIO_CONTEXT_MAX), 2)]
@@ -1320,6 +1455,7 @@ def normalize_region(r, i=0):
             rg[k] = -1
     rg["prompt"] = str(rg["prompt"] or "")
     rg["refs"] = [str(x) for x in (rg["refs"] if isinstance(rg["refs"], list) else [])]
+    rg["cards"] = normalize_card_refs(rg.get("cards"))
     rg["seed"] = max(0, int(_num(rg["seed"], 0)))
     rg["takes"] = [t for t in (rg["takes"] if isinstance(rg["takes"], list) else []) if isinstance(t, dict) and t.get("key")][-MAX_TAKES:]
     rg["active_take"] = None if rg["active_take"] is None else str(rg["active_take"])
@@ -1467,7 +1603,9 @@ def bridge_window(project, region, items=None):
 
 def region_prompt(project, region):
     s = project["settings"]
-    return "\n".join(t.strip() for t in (s.get("prompt") or "", region.get("prompt") or "") if t and t.strip())
+    text = "\n".join(t.strip() for t in (s.get("prompt") or "", region.get("prompt") or "") if t and t.strip())
+    cl = card_phrases(card_labels(project, region, region=True), text)
+    return (text + "\n" if text and cl else text) + "\n".join(cl)
 
 
 def region_refs(project, region):
@@ -1492,6 +1630,8 @@ def region_key(project, region, win, seg_keys, ref_sigs=None, env_sig="", kind=N
         kind = "full" if kind == "refine" else kind
         env_sig = env_sig.split("|")[0]
     extra = {"bridge": [win["ws"], win["a"], win["b"], win["we"], win.get("gaps") or [], level_lock_frames(project)]} if win.get("mode") == "bridge" else {}
+    if card_key(project, region):
+        extra["cards"] = card_key(project, region)
     return _h({"v": KEY_VERSION, "region": 1, **extra, "env": env_sig, "kind": kind, "wh": list(wh or []),
                "src": [seg_keys[i] for i in win["segs"] if i < len(seg_keys)],
                "win": [win["ws"] - cs, win["a"] - cs, win["b"] - cs, win["we"] - cs, win["to_end"]],

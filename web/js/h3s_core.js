@@ -197,13 +197,13 @@ export function passSteps(s, steps, kind) {
 }
 export const AUDIO_XFADE_RANGE = [0.1, 1.0];
 export const DEFAULT_SEGMENT = {
-  id: "", name: "", color: 0, frames: 124, prompt: "", refs: [], link: "extend", gap: 0, overlap_blocks: -1, overrides: {},
+  id: "", name: "", color: 0, frames: 124, prompt: "", refs: [], cards: [], link: "extend", gap: 0, overlap_blocks: -1, overrides: {},
   upscale: null, approved: false,
   takes: [], active_take: null, locked: false, freeze: null, model_preset: "",
 };
 export const MAX_TAKES = 12;
 // «✂ Участок»: regenerate a time range in the middle of the video (mirror of h3s_core.DEFAULT_REGION)
-export const DEFAULT_REGION = { id: "", name: "", start: 0, end: 0, head: -1, tail: -1, prompt: "", refs: [], seed: 0, takes: [], active_take: null, upscale: null };
+export const DEFAULT_REGION = { id: "", name: "", start: 0, end: 0, head: -1, tail: -1, prompt: "", refs: [], cards: [], seed: 0, takes: [], active_take: null, upscale: null };
 export const MAX_REGIONS = 16;
 export const MARKER_EFFECTS = ["note", "prompt", "boost"];
 export const DEFAULT_MARKER = { id: "", frame: 0, label: "", color: 0, effect: "note", text: "", asset: "" };
@@ -311,6 +311,7 @@ export function normalizeProject(p) {
     result: p.result && typeof p.result === "object" && !Array.isArray(p.result) ? clone(p.result) : null,
   };
   if (out.end_mode === "auto") out.end = 0;
+  out.cards = normalizeCardSnaps(p.cards);
   out.model_presets = {};
   if (p.model_presets && typeof p.model_presets === "object" && !Array.isArray(p.model_presets))
     for (const [k, v] of Object.entries(p.model_presets).slice(0, MAX_PRESETS)) { const q = normalizePreset(v, k); if (q) out.model_presets[q.id] = q; }
@@ -392,6 +393,7 @@ export function normalizeProject(p) {
     { const o = seg.overlap_blocks == null ? NaN : Math.trunc(Number(seg.overlap_blocks)); seg.overlap_blocks = Number.isFinite(o) ? Math.max(-1, Math.min(MAX_OVERLAP_BLOCKS, o)) : -1; }
     seg.color = Math.max(0, Math.trunc(Number(seg.color)) || 0);
     seg.refs = (seg.refs || []).map(String);
+    seg.cards = normalizeCardRefs(seg.cards);
     const ov = {};
     for (const [k, v] of Object.entries(seg.overrides || {})) if (OVERRIDE_KEYS.includes(k) && v !== null && v !== "" && v !== undefined) ov[k] = v;
     seg.overrides = ov;
@@ -627,7 +629,135 @@ export function composePrompt(project, index) {
   if (nv && !text.includes("<Video")) text = (text ? text + "\n" : "") + VIDEO_REF_PHRASE.split("{tags}").join(Array.from({ length: nv }, (_, k) => `<Video ${k + 1}>`).join(", "));
   const na = Math.min(MAX_REF_AUDIOS, audioRefs(project, seg).length);
   if (na && !text.includes("<Audio")) text = (text ? text + "\n" : "") + AUDIO_REF_PHRASE.split("{tags}").join(Array.from({ length: na }, (_, j) => `<Audio ${j + 1}>`).join(", "));
+  const cl = cardPhrases(cardLabels(project, seg, index), text);
+  if (cl.length) text = (text ? text + "\n" : "") + cl.join("\n");
   return text;
+}
+
+// ---------------------------------------------------------------- «Персонажи» (mirror of h3s_core card_*)
+export const MAX_CARDS = 8, CARD_W_MAX = 4;
+export const CARD_CONCEPTS = ["identity", "background", "clothing", "style", "pose_motion", "voice", "generic"];
+export const CARD_CONCEPT_NAMES = { identity: "Персонаж", background: "Локация", clothing: "Одежда", style: "Стиль", pose_motion: "Движение", voice: "Голос", generic: "Другое" };
+const CARD_LOOK_PHRASE = {
+  identity: "{label} shows {who}; keep this identity and appearance.",
+  background: "The location looks like {label}.",
+  clothing: "The outfit is the one in {label}.",
+  style: "The visual style follows {label}; its content is not copied.",
+  pose_motion: "The motion follows {label}; its content is not copied.",
+  generic: "Use {label} as a reference.",
+  voice: "Use {label} as a reference.",
+};
+const CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference.";
+const CARD_SNAP_KEYS = ["name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description"];
+export function normalizeCardRefs(v) {
+  const out = [], seen = new Set();
+  for (let e of Array.isArray(v) ? v : []) {
+    if (typeof e === "string") e = { id: e };
+    if (!e || typeof e !== "object" || !String(e.id || "") || seen.has(String(e.id))) continue;
+    let w = Number(e.w ?? 1); if (!isFinite(w)) w = 1;
+    seen.add(String(e.id));
+    out.push({ id: String(e.id).slice(0, 200), w: Math.round(Math.max(0, Math.min(CARD_W_MAX, w)) * 100) / 100, on: e.on !== false, look: e.look !== false, voice: e.voice !== false });
+  }
+  return out.slice(0, MAX_CARDS);
+}
+export function normalizeCardSnaps(v) {
+  const out = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, c] of Object.entries(v)) {
+    if (!c || typeof c !== "object") continue;
+    const q = {}; for (const x of CARD_SNAP_KEYS) if (c[x] != null && c[x] !== "") q[x] = c[x];
+    q.concept = CARD_CONCEPTS.includes(q.concept) ? q.concept : "generic";
+    q.vkind = ["image", "video"].includes(q.vkind) ? q.vkind : null;
+    q.audio = !!q.audio;
+    out[String(k).slice(0, 200)] = q;
+  }
+  return out;
+}
+/** Library card (GET /h3zero/chars) -> project snapshot (mirror of h3s_core.card_snap). */
+export function cardSnap(card) {
+  return normalizeCardSnaps({ x: { name: card.name, sig: card.sig, concept: card.concept, vkind: card.visual?.kind, audio: !!card.audio,
+    tokens: (card.visual?.tokens || 0) + (card.audio?.tokens || 0), subject_name: card.subject_name, appearance: card.appearance,
+    retained_attributes: card.retained_attributes, voice_description: card.voice_description } }).x;
+}
+export function cardCopies(w) {
+  w = Number(w);
+  if (!(w > 0)) return [0, 0];
+  if (w < 1) return [1, Math.round(w * 1000) / 1000];
+  return [Math.max(1, Math.min(8, Math.round(w))), 1];
+}
+/** Labels of the applied cards of a clip (index) / region, after the plain refs and the continuity picture. */
+export function cardLabels(project, holder, index = null, video = true, region = false) {
+  const snaps = project.cards || {};
+  let ni, nv, na;
+  if (region) { ni = orderedRefs(project, { refs: holder.refs || [] }).length; nv = 0; na = 0; }
+  else {
+    ni = orderedRefs(project, holder).length + (index != null && continuityPicture(project, index) ? 1 : 0);
+    nv = video ? Math.min(MAX_REF_VIDEOS, videoRefs(project, holder).length) : 0;
+    na = Math.min(MAX_REF_AUDIOS, audioRefs(project, holder).length);
+  }
+  const out = [], rng = (a, n) => Array.from({ length: n }, (_, k) => a + k + 1);
+  for (const e of holder.cards || []) {
+    const sn = snaps[e.id]; if (!sn || e.on === false) continue;
+    const [copies] = cardCopies(e.w ?? 1); if (!copies) continue;
+    const r = { id: e.id, snap: sn, image: [], video: [], audio: [] };
+    const vk = sn.vkind;
+    if (vk && e.look !== false && (video || vk === "image")) {
+      if (vk === "image") { r.image = rng(ni, copies); ni += copies; } else { r.video = rng(nv, copies); nv += copies; }
+    }
+    if (sn.audio && e.voice !== false && !region) { r.audio = rng(na, copies); na += copies; }
+    if (r.image.length || r.video.length || r.audio.length) out.push(r);
+  }
+  return out;
+}
+export function cardPhrases(labels, text) {
+  const lines = [];
+  for (const r of labels) {
+    const sn = r.snap, name = (sn.subject_name || "").trim();
+    const tags = [...r.image.slice(0, 1).map((n) => `<Picture ${n}>`), ...r.video.slice(0, 1).map((n) => `<Video ${n}>`)];
+    const all = [...r.image.map((n) => `<Picture ${n}>`), ...r.video.map((n) => `<Video ${n}>`)];
+    if (tags.length && !all.some((t) => text.includes(t))) {
+      const who = name || (sn.concept === "identity" ? "the person" : "the subject");
+      lines.push((CARD_LOOK_PHRASE[sn.concept] || CARD_LOOK_PHRASE.generic).split("{label}").join(tags[0]).split("{who}").join(who));
+    }
+    if (r.audio.length && !r.audio.some((n) => text.includes(`<Audio ${n}>`))) {
+      const whose = name ? `${name}'s` : tags.length && sn.concept === "identity" ? "the person's" : "the";
+      lines.push(CARD_VOICE_PHRASE.split("{label}").join(`<Audio ${r.audio[0]}>`).split("{whose}").join(whose).split("the the").join("the"));
+    }
+  }
+  return lines;
+}
+// card creation preview (mirror of h3s_chars snap_clip_frames / canvas_for / aspect_grid / estimate)
+const bankRound = (x) => { const f = Math.floor(x), d = x - f; return d > 0.5 + 1e-9 ? f + 1 : d < 0.5 - 1e-9 ? f : (f % 2 === 0 ? f : f + 1); };
+export const CARD_AUDIO_TOKENS_PER_SEC = 80;
+export function snapClipFrames(n) { n = Math.trunc(Number(n) || 0); if (n <= 1) return 1; if (n < 5) return n; return n - ((n - 5) % 17); }
+export function cardCanvas(w, h, res) {
+  const scale = Math.min(1, res / Math.max(1, Math.min(w, h)));
+  let tw = Math.max(32, bankRound(w * scale / 32) * 32), th = Math.max(32, bankRound(h * scale / 32) * 32);
+  if (Math.min(tw, th) < 320) { const k = 320 / Math.min(tw, th); tw = Math.max(320, bankRound(tw * k / 32) * 32); th = Math.max(320, bankRound(th * k / 32) * 32); }
+  return [tw, th];
+}
+export function cardAspectGrid(grid, aspect) {
+  const le = Math.trunc(grid); const [hh, ww] = aspect >= 1 ? [le, le / aspect] : [le * aspect, le];
+  return [Math.max(2, bankRound(hh / 2) * 2), Math.max(2, bankRound(ww / 2) * 2)];
+}
+/** spec {res, mode, grid, photos, clip: {frames}}; sizes [[w, h]] of the photos + clip in source order (first one cropped). */
+export function cardEstimate(spec, sizes) {
+  const res = Math.trunc(Number(spec.res) || 768), srcs = sizes || [];
+  if (!srcs.length) return { visual_tokens: 0 };
+  const [cw, ch] = cardCanvas(srcs[0][0], srcs[0][1], res);
+  const [gh, gw] = spec.mode === "compressed" ? cardAspectGrid(Math.trunc(Number(spec.grid) || 16), ch / cw) : [Math.floor(ch / 16), Math.floor(cw / 16)];
+  let t = (spec.photos || []).length;
+  if (spec.clip) { const n = snapClipFrames(Math.trunc(Number(spec.clip.frames) || 22)); t += n === 1 ? 1 : n >= 5 ? 2 + 5 * Math.floor((n - 5) / 17) : 1; }
+  return { visual_tokens: t * Math.floor(gh / 2) * Math.floor(gw / 2), canvas: [cw, ch], latent: [t, gh, gw] };
+}
+/** What the applied cards add to a signature ([] when none). */
+export function cardKey(project, holder) {
+  const snaps = project.cards || {}, out = [];
+  for (const e of holder.cards || []) {
+    const sn = snaps[e.id]; if (!sn || e.on === false || !cardCopies(e.w ?? 1)[0]) continue;
+    out.push([e.id, ...cardCopies(e.w), sn.sig || "", e.look !== false, e.voice !== false]);
+  }
+  return out;
 }
 
 export function plan(project) {
@@ -760,7 +890,7 @@ export function baseSigs(project, kind = null) {
     const sig = isFootage(seg) ? fnv(JSON.stringify(["footage", w, h, it.frames, sd])) : fnv(JSON.stringify([w, h, it.frames, it.overlap, composePrompt(project, i), s.negative || "",
       orderedRefs(project, seg).map((a) => [a.id, ...assetKf(a)]), passParams(project, i, kind), !!s.lock_overlap,
       continuityPicture(project, i), s.ref_size, segmentTrack(project, it), audioRefs(project, seg).map((a) => [a.id, assetKf(a)[0] || ""]).slice(0, MAX_REF_AUDIOS),
-      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [])));
+      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], cardKey(project, seg).length ? [["cards", cardKey(project, seg)]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [])));
     const fsig = seg.freeze ? (seg.freeze.sig || "F" + seg.freeze.key) : sig;   // frozen: fixed, so what follows stays valid
     out.push(fsig); prev = fsig;
   }
@@ -811,6 +941,7 @@ export function normalizeRegion(r, i = 0) {
   for (const k of ["head", "tail"]) { const v = rg[k] == null ? NaN : Math.trunc(Number(rg[k])); rg[k] = Number.isFinite(v) ? Math.max(-1, Math.min(MAX_OVERLAP_BLOCKS, v)) : -1; }
   rg.prompt = String(rg.prompt || "");
   rg.refs = (Array.isArray(rg.refs) ? rg.refs : []).map(String);
+  rg.cards = normalizeCardRefs(rg.cards);
   rg.seed = Math.max(0, Math.trunc(num(rg.seed, 0)));
   rg.takes = (Array.isArray(rg.takes) ? rg.takes : []).filter((t) => t && typeof t === "object" && !Array.isArray(t) && t.key).slice(-MAX_TAKES);
   rg.active_take = rg.active_take === null || rg.active_take === undefined ? null : String(rg.active_take);
@@ -924,7 +1055,9 @@ export function bridgeWindow(project, region, items = null) {
 }
 
 export function regionPrompt(project, region) {
-  return [project.settings.prompt || "", region.prompt || ""].map((t) => t.trim()).filter(Boolean).join("\n");
+  const text = [project.settings.prompt || "", region.prompt || ""].map((t) => t.trim()).filter(Boolean).join("\n");
+  const cl = cardPhrases(cardLabels(project, region, null, true, true), text);
+  return (text && cl.length ? text + "\n" : text) + cl.join("\n");
 }
 
 /** Editor signature of a region take (staleness): the window, its source clips' sigs, prompt, refs, params. */
@@ -938,5 +1071,5 @@ export function regionSig(project, region, kind = null) {
   const p = passParams(project, Math.max(0, win.seg), kind); p.seed = region.seed | 0;
   return fnv(JSON.stringify(["region", kind, br ? [win.ws, win.a, win.b, win.we, win.gaps, levelLockFrames(project)] : 0, win.ws - cs, win.a - cs, win.b - cs, win.we - cs, win.to_end, win.segs.map((i) => sigs[i] || ""),
     regionPrompt(project, region), project.settings.negative || "", orderedRefs(project, { refs: region.refs || [] }).map((a) => [a.id, ...assetKf(a)]), p,
-    Math.round(Math.min(Number(project.settings.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100, lockClips(project)]));
+    Math.round(Math.min(Number(project.settings.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100, lockClips(project)].concat(cardKey(project, region).length ? [["cards", cardKey(project, region)]] : [])));
 }

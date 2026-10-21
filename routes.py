@@ -142,6 +142,60 @@ def register():
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
 
+    # «Персонажи»: card library (output/h3zerostudio/_characters + models/refmods read-only)
+    @routes.get("/h3zero/chars")
+    async def chars_list(request):
+        from . import h3s_chars
+        try:
+            import asyncio
+            cards = await asyncio.get_running_loop().run_in_executor(None, h3s_chars.scan)
+            return web.json_response({"ok": True, "data": {"cards": cards, "roots": [{"key": k, "path": p, "writable": w, "label": l} for k, p, w, l in h3s_chars.roots()],
+                                      **h3s_chars.status()}})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.get("/h3zero/chars/preview")
+    async def chars_preview(request):
+        from . import h3s_chars
+        try:
+            p = h3s_chars.preview_path(request.query.get("id", ""))
+        except Exception:
+            p = None
+        if not p:
+            return web.Response(status=404)
+        return web.FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+    @routes.post("/h3zero/chars/create")
+    async def chars_create(request):
+        from . import h3s_chars
+        body = await request.json()
+        try:
+            import asyncio
+            card = await asyncio.get_running_loop().run_in_executor(None, h3s_chars.create_from_editor, body)
+            return web.json_response({"ok": True, "data": {"card": card}})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.post("/h3zero/chars/update")
+    async def chars_update(request):
+        from . import h3s_chars
+        body = await request.json()
+        try:
+            import asyncio
+            card = await asyncio.get_running_loop().run_in_executor(None, h3s_chars.update, str(body.get("id") or ""), body.get("fields") or {})
+            return web.json_response({"ok": True, "data": {"card": card}})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.post("/h3zero/chars/delete")
+    async def chars_delete(request):
+        from . import h3s_chars
+        body = await request.json()
+        try:
+            return web.json_response({"ok": True, "data": {"removed": h3s_chars.delete(str(body.get("id") or ""))}})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
     @routes.post("/h3zero/pick_folder")
     async def pick_folder(request):
         """Native «choose folder» dialog on the machine ComfyUI runs on (tkinter in a child process)."""

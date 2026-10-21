@@ -7,7 +7,7 @@
 // as context), before the first clip (prologue: following context only) and past the end of a shot (extension:
 // preceding context only); both seams of a span are level-locked and rated (h3s_seams.span_seams).
 // Entry points: the «✂ Участок» toggle on the timeline toolbar (drag on the timeline) and the clip menu.
-const SNAP = ["start", "end", "head", "tail", "prompt", "refs", "seed", "upscale"];
+const SNAP = ["start", "end", "head", "tail", "prompt", "refs", "cards", "seed", "upscale"];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const rnd = () => Math.floor(Math.random() * 2 ** 31);
 const SEAM_TXT = { ok: "шов незаметен", soft: "лёгкий скачок", hard: "резкий шов" };
@@ -331,6 +331,7 @@ export function installRegions(Editor, { C, h, ICON }) {
       pop.addEventListener("dragleave", () => pop.classList.remove("dropover"));
       pop.addEventListener("drop", (e) => { pop.classList.remove("dropover"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { e.preventDefault(); this.updateRegion(rg.id, (r) => { if (!r.refs.includes(id)) r.refs.push(id); }); } });
       pop.append(h("div", null, h("div", { class: "h3z-lbl" }, "Референсы"), refs));
+      { const cb = this.charChips?.({ region: rg.id }); if (cb) pop.append(cb); }
       // seed + context
       const seed = h("input", { class: "h3z-in sm", type: "number", min: 0, value: rg.seed });
       seed.onchange = () => this.updateRegion(rg.id, (r) => { r.seed = Math.max(0, Math.trunc(Number(seed.value) || 0)); });

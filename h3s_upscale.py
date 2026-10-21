@@ -552,7 +552,7 @@ class TileClock:
 
 # ---------------------------------------------------------------- the pass
 def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, ref_images,
-                ref_audios=None, step_cb=None, preview_cb=None, progress=None, up=None, prompt=None, label=None):
+                ref_audios=None, step_cb=None, preview_cb=None, progress=None, up=None, prompt=None, label=None, holder=None):
     """Upscale + refine segment `index` from its finished latents (v video, a audio).
     prev_up: dict(v) of the previous segment's upscaled latent when this one continues it on the same canvas.
     up / prompt / label: a span's upscale («Апскейл участка»: its window latent, its own prompt, no chain).
@@ -620,9 +620,10 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
             f", {nt} window(s), {p['steps']} steps from sigma {up['sigma']} ({p['sampler']}/{p['scheduler']}, cfg {p['cfg']}), "
             f"{len(crops)} crop(s) per model call, overlap lock {ov_t} latent fr, audio kept 1:1")
         if pos is None:   # the conditioning (prompt + refs at the tile size) is the same for every chunk
-            pos = gen.encode_cond(clip, vae, prompt, list(ref_images), cw * 16, ch * 16, s.get("ref_size", "match"), ref_audios)
+            cards = gen.holder_cards(project, holder or project["segments"][index], vae, "refine")   # no video looks (prompt has no <Video N>)
+            pos = gen.encode_cond(clip, vae, prompt, list(ref_images), cw * 16, ch * 16, s.get("ref_size", "match"), ref_audios, cards=cards)
             neg = pos if p["cfg"] == 1.0 else gen.encode_cond(clip, vae, s.get("negative") or "", list(ref_images), cw * 16, ch * 16,
-                                                              s.get("ref_size", "match"), ref_audios)
+                                                              s.get("ref_size", "match"), ref_audios, cards=cards)
         m = gen.apply_shift(model, p["shift_video"], p["shift_audio"]) if p["shift_video"] > 0 else model.clone()
         clock = TileClock(crops, p["steps"], index, progress, H // 16, W // 16, chunk=ci + 1, chunks=nch, spent_before=spent)
         wrapper = CropWrapper(crops, lock_v, w_v, clock=clock)
