@@ -216,7 +216,10 @@ export function installRegions(Editor, { C, h, ICON }) {
       ta.value = rg.prompt;
       ta.oninput = () => this.updateRegion(rg.id, (r) => { r.prompt = ta.value; }, { coalesce: "rgp" + rg.id, render: "none" });
       ta.onchange = () => this.renderTimeline();
-      pop.append(h("div", null, h("div", { class: "h3z-lbl" }, "Промпт участка", h("em", null, "к нему добавится общий промпт · по-английски")), ta));
+      pop.append(h("div", null, h("div", { class: "h3z-lbl" }, "Промпт участка", h("em", null, "к нему добавится общий промпт · по-английски"),
+        this.peButton(() => { const r = (this.p.regions || []).find((x) => x.id === rg.id) || rg;
+          return { title: `Промпт участка ${this.regionNo(rg.id)}`, value: r.prompt ?? "", ctx: { kind: "region", region: r }, placeholder: ta.placeholder,
+            apply: (t) => { this.updateRegion(rg.id, (x) => { x.prompt = t; }); this.renderTimeline(); } }; })), ta));
       // references
       const refs = h("div", { class: "refs" });
       for (const id of rg.refs) {

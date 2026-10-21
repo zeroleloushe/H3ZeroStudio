@@ -46,6 +46,11 @@
   - Категории: персонажи, локации, прочее, аудио.
   - Перетаскивание на клип и Ctrl+V.
   - Автонумерация `<Picture N>`, лимит H3 — 9 картинок на отрезок.
+- ✎ **Редактор промпта.** Кнопка «✎ Редактировать» у каждого поля промпта открывает большое окно (CodeMirror 6):
+  - `@` — список референсов этого промпта с миниатюрами, вставляет `<Picture N>` / `<Video N>` / `<Audio N>`; метки подсвечены, несуществующие помечены;
+  - поиск/замена (Ctrl+F / Ctrl+H), отмена/повтор, перенос, номера строк, моноширинный шрифт, размер, счётчик слов/символов/токенов;
+  - панель «Структура H3» (subject_definitions → non_diegetic_music) с пояснениями, счётчиком слов detailed_description (350–500) и «Вставить шаблон»;
+  - Ctrl+Enter — применить, Esc — отмена.
 - 🎭 **Дубли (takes).**
   - До 12 вариантов на отрезок. Выбранный дубль идёт в склейку и в продолжение.
   - Изменившиеся зависимые отрезки помечаются «изменён».
@@ -66,7 +71,7 @@
 - 💾 **Кэш по хэшу параметров.** Перегенерируется только то, что изменилось. Прогресс не теряется при перезагрузке вкладки.
 - 📖 **«Справка»** прямо в редакторе: 27 разделов с поиском.
 - ⌨️ **Undo/Redo и горячие клавиши.**
-- 🔌 **Офлайн.** Интерфейс на чистом JS/DOM, без сторонних библиотек и CDN.
+- 🔌 **Офлайн.** Интерфейс на чистом JS/DOM, без CDN; единственная библиотека — вложенный CodeMirror 6 (MIT) для редактора промпта.
 
 ## 📦 Установка
 
@@ -335,7 +340,8 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 - **Regenerate a range.** The «✂ Участок» toolbar button selects a range in the middle of a clip (generated or footage). Only that range is re-sampled; the video and audio before and after it stay as clean context (H3's native per-modality temporal mask). The result is spliced back frame-exactly and sample-exactly, and each result is a take of the region.
 - **Audio.** "Аудио" lanes **lock** your audio, so the video follows its rhythm and lip-sync. The "Музыка" lane is a background music bed mixed into the output.
 - **Live preview.** Every step is decoded with `taeh3`, with audio, σ/Δ charts and a per-step log.
-- **Also included:** markers, gallery with A/B compare, projects with zip export/import, undo/redo, hotkeys, and a built-in help tab. The UI is plain JS, works offline and uses no CDN.
+- **Prompt editor.** «✎ Редактировать» on every prompt field opens a large CodeMirror 6 editor: `@` lists this prompt's references (with thumbnails) and inserts `<Picture N>` / `<Video N>` / `<Audio N>`; tokens are highlighted and dangling ones flagged; find/replace, undo/redo, wrap, line numbers, mono font, word/char/token counter; a side panel explains the recommended H3 prompt structure (subject_definitions … non_diegetic_music), counts detailed_description words against 350–500 and inserts a skeleton.
+- **Also included:** markers, gallery with A/B compare, projects with zip export/import, undo/redo, hotkeys, and a built-in help tab. The UI is plain JS (plus a vendored CodeMirror 6 bundle for the prompt editor), works offline and uses no CDN.
 
 **Install:** `git clone https://github.com/zeroleloushe/H3ZeroStudio.git` into `ComfyUI/custom_nodes`, then restart ComfyUI. No extra pip packages are required.
 
@@ -364,6 +370,7 @@ H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — 
 - **Остальное для превью и RTX VSR:**
   - Вызов RTX VSR сверен с [Comfy-Org — Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (Apache-2.0); используется пакет NVIDIA `nvidia-vfx`.
   - Веса `taeh3` — [madebyollin/taehv](https://github.com/madebyollin/taehv).
+- **Редактор промпта:** [CodeMirror 6](https://codemirror.net) (MIT, © Marijn Haverbeke и др.) — вложен одним файлом `web/js/vendor/codemirror.js` (сборка esbuild, без CDN), лицензия рядом: `web/js/vendor/codemirror.LICENSE`. Формат промпта — по рекомендациям MiniMax H3 (Full-Reference).
 - **Латентный апскейлер H3:** [LBH-123-AI — Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) (MIT). Его нода только **вызывается**, если установлена.
 - **Схема «черновик → апскейл латента → доработка»** (идеи: старт σ 0.25–0.45, апскейл только видео, звук прохода 1 сохраняется):
   - [Tr1dae — ComfyUI-MiniMaxH3_LatentUpscaler](https://github.com/Tr1dae/ComfyUI-MiniMaxH3_LatentUpscaler);

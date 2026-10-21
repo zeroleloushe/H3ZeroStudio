@@ -18,6 +18,7 @@ import { installGallery } from "./h3s_gallery.js";
 import { installProjects } from "./h3s_projects.js";
 import { installRegions } from "./h3s_regions.js";
 import { installViewer } from "./h3s_viewer.js";
+import { installPromptEditor } from "./h3s_prompted.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -147,6 +148,7 @@ export class H3Editor {
   /** Refocus the keyboard sink unless the user is typing in a field of the editor. */
   focusSink() {
     if (!this.root || !this.$.sink) return;
+    if (this.pe?.el) { if (!this.pe.el.contains(document.activeElement)) this.pe.view?.focus(); return; }   // the prompt editor keeps its focus
     const a = document.activeElement;
     if (a && a !== this.$.sink && this.root.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
     this.$.sink.focus({ preventScroll: true });
@@ -545,6 +547,7 @@ export class H3Editor {
 
   onPaste(e) {
     if (!this.root) return;
+    if (this.pe?.el?.contains(e.target)) return;   // CodeMirror handles its own paste (the modal stops it after)
     e.stopPropagation();
     if (isTyping(e)) return;
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
@@ -632,7 +635,11 @@ export class H3Editor {
     ta.value = s.prompt;
     ta.oninput = () => this.mutate((p) => { p.segments[i].prompt = ta.value; }, { coalesce: "prompt" + s.id, render: "light" });
     this.$.segPrompt = ta;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Промпт отрезка", h("em", null, "добавляется к общему")), ta));
+    const segId = s.id;
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Промпт отрезка", h("em", null, "добавляется к общему"),
+      this.peButton(() => { const k = this.p.segments.findIndex((x) => x.id === segId), sg = this.p.segments[k];
+        return { title: `Промпт отрезка ${k + 1}` + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
+          apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }; })), ta));
     // refs
     const refs = C.orderedRefs(this.p, s);
     const box = h("div", { class: "h3z-refs" });
@@ -735,8 +742,9 @@ export class H3Editor {
     gp.oninput = () => set("prompt", gp.value, { coalesce: "gprompt", render: "light" });
     const neg = h("textarea", { class: "h3z-ta sm", placeholder: "Негатив (работает при cfg > 1)", spellcheck: "false" }); neg.value = g.negative;
     neg.oninput = () => set("negative", neg.value, { coalesce: "gneg", render: "light" });
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Общий промпт", h("em", null, "в начале каждого отрезка")), gp),
-      h("div", null, h("div", { class: "h3z-lbl" }, "Негатив", h("em", null, Number(g.cfg) === 1 ? "не используется при cfg 1" : "")), neg));
+    const peG = (key, title, kind, ph) => this.peButton(() => ({ title, value: this.p.settings[key] ?? "", ctx: { kind }, placeholder: ph, apply: (t) => this.mutate((p) => { p.settings[key] = t; }) }));
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Общий промпт", h("em", null, "в начале каждого отрезка"), peG("prompt", "Общий промпт (для всех отрезков)", "global", gp.placeholder)), gp),
+      h("div", null, h("div", { class: "h3z-lbl" }, "Негатив", h("em", null, Number(g.cfg) === 1 ? "не используется при cfg 1" : ""), peG("negative", "Негатив", "negative", neg.placeholder)), neg));
     // resolution
     const [w, hh] = C.resolution(g);
     const custom = g.res_mode === "custom";
@@ -1468,6 +1476,7 @@ export class H3Editor {
   // ------------------------------------------------------------------ keys
   onKey(e) {
     if (!this.root) return;
+    if (this.pe) { if (!this.pe.el?.contains(e.target)) { e.stopPropagation(); e.preventDefault(); } return; }   // prompt editor: its modal routes and stops the keys
     e.stopPropagation(); // keep ComfyUI shortcuts (Del = delete node, Ctrl+Z on graph, space-drag…) away from the editor
     // a modal on top owns the keyboard: the asset editor has its own window listener (registered later, so it
     // runs after this one) and the save dialog listens on its box — the timeline must not react (Esc closed it all)
@@ -1746,3 +1755,4 @@ installGallery(H3Editor, { C, h, ICON });
 installProjects(H3Editor, { C, h, ICON });
 installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurrent / compSource
 installViewer(H3Editor, { C, h, ICON });
+installPromptEditor(H3Editor, { C, h, ICON });

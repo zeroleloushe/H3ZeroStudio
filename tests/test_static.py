@@ -262,3 +262,33 @@ def test_tile_grid_matches_python(tmp_path):
         rows, cols = len({c["y"] for c in crops}), len({c["x"] for c in crops})
         c0 = crops[0]
         assert [rows, cols, (c0["x"][1] - c0["x"][0]) * 16, (c0["y"][1] - c0["y"][0]) * 16] == g, (bw, bh, W, H, u)
+
+
+@need_node
+def test_prompt_editor_sections_and_template(tmp_path):
+    """Prompt editor helpers: section parsing (detailed_description word count) and the H3 skeleton."""
+    js = pathlib.Path(JS, "h3s_prompted.js").as_uri()
+    code = textwrap.dedent(f"""
+        import {{ parseSections, promptTemplate }} from "{js}";
+        const t = promptTemplate([{{ token: "<Picture 1>", name: "lina", kind: "picture" }}, {{ token: "<Audio 1>", name: "v", kind: "audio" }}], {{ task: "[video continuation]" }});
+        const s = parseSections(t + "\\n").map((x) => x.key);
+        const d = parseSections("summary: [reference generation] a b\\ndetailed_description:\\n[Shot 1] one two three four\\nnon_diegetic_music: N/A");
+        console.log(JSON.stringify({{ t, s, d: d.map((x) => [x.key, x.words]) }}));
+    """)
+    f = tmp_path / "t.mjs"; f.write_text(code, encoding="utf-8")
+    r = subprocess.run([NODE, str(f)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["s"] == ["subject_definitions", "summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music"]
+    assert "<Picture 1> — lina: " in out["t"] and "<Audio 1>: reference" in out["t"] and "[video continuation]" in out["t"]
+    assert out["d"] == [["summary", 4], ["detailed_description", 6], ["non_diegetic_music", 1]]
+
+
+def test_prompt_editor_wired_and_vendored():
+    src = {n: pathlib.Path(JS, n).read_text(encoding="utf-8") for n in ("h3s_editor.js", "h3s_regions.js", "h3s_markers.js", "h3s_settings.js", "h3s_prompted.js")}
+    assert src["h3s_editor.js"].count("this.peButton(") >= 2 and "this.peButton(" in src["h3s_regions.js"] and "this.peButton(" in src["h3s_markers.js"] and "this.peButton(" in src["h3s_settings.js"]
+    assert "if (this.pe)" in src["h3s_editor.js"]   # the editor's window key handler steps aside for the modal
+    assert 'import("./vendor/codemirror.js")' in src["h3s_prompted.js"]
+    vend = pathlib.Path(JS, "vendor", "codemirror.js").read_text(encoding="utf-8")
+    assert vend.startswith("/*! CodeMirror 6") and "MIT" in vend[:400]
+    assert pathlib.Path(JS, "vendor", "codemirror.LICENSE").exists()

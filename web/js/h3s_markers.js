@@ -87,7 +87,11 @@ export function installMarkers(Editor, { C, h, ICON }) {
         const ta = h("textarea", { class: "h3z-ta sm", placeholder: m.effect === "prompt" ? "Что происходит в этот момент: she turns to the camera and smiles…" : "Заметка: что поправить, идея для монтажа…", spellcheck: "false" });
         ta.value = m.text;
         ta.oninput = () => this.updateMarker(id, (x) => { x.text = ta.value; }, { coalesce: "mkt" + id, render: "light" });
-        card.append(h("div", null, h("div", { class: "h3z-lbl" }, m.effect === "prompt" ? "Событие" : "Заметка", m.effect === "prompt" ? h("em", null, "лучше по-английски, как основной промпт") : null), ta));
+        card.append(h("div", null, h("div", { class: "h3z-lbl" }, m.effect === "prompt" ? "Событие" : "Заметка", m.effect === "prompt" ? h("em", null, "лучше по-английски, как основной промпт") : null,
+          m.effect !== "prompt" ? null : this.peButton(() => { const mm = (this.p.markers || []).find((x) => x.id === id) || m;
+            return { title: (mm.effect === "prompt" ? "Событие маркера" : "Заметка маркера") + (mm.label ? ` «${mm.label}»` : ""), value: mm.text ?? "", placeholder: ta.placeholder,
+              ctx: { kind: "marker", seg: C.markerSegment(this.items(), mm.frame) },
+              apply: (t) => this.updateMarker(id, (x) => { x.text = t; }) }; })), ta));
       } else {
         const chars = this.p.assets.filter((a) => a.category === "character");
         const sel = h("select", { class: "h3z-sel" }, h("option", { value: "" }, "Все персонажи отрезка"), chars.map((a) => h("option", { value: a.id, selected: m.asset === a.id }, a.name)));
