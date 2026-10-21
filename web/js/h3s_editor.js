@@ -645,7 +645,7 @@ export class H3Editor {
       gIn.onchange = () => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+gIn.value || 0))); });
       card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, "Промежуток перед отрезком"), gIn,
         h("em", { style: { opacity: .7, fontSize: "11px" } }, `${(s.gap / C.FPS).toFixed(2)} с`),
-        h("button", { class: "h3z-btn sm", onclick: () => this.fillGap(i), title: "Участок ✂ поверх промежутка: генерация связки между сценами" }, "✂ Заполнить"),
+        h("button", { class: "h3z-btn sm", onclick: () => this.fillGapSpan(i), title: "Участок ✂ поверх промежутка: генерация связки между сценами" }, "✂ Заполнить"),
         h("button", { class: "h3z-btn sm", onclick: () => this.removeGap(i) }, "✕ Убрать")));
     }
     if (i > 0 && s.link === "extend" && !s.gap && !C.isFootage(s)) {
@@ -1189,18 +1189,23 @@ export class H3Editor {
     this.mutate((p) => { p.end_mode = m; p.end = m === "auto" ? 0 : (p.end || cur); });
     this.toast(m === "auto" ? "Длина: авто — конец ролика следует за последним отрезком" : "Длина: фикс — маркер конца стоит на месте, пока вы его не сдвинете");
   }
-  /** Fill the empty gap before a fixed end marker with a new segment (continuing the last one). */
-  fillGap() {
+  /** Fill the empty tail before a fixed end marker with a new segment continuing the last one (link «продолжение»,
+   *  17-frame grid). Works whether or not the last clip is generated: the queue renders them in order.
+   *  (Not «fillGap»: that name is the ✂ span over a gap between clips, h3s_gaps.js — the two once collided and the
+   *  tail click silently did nothing.) */
+  fillEnd() {
     const gap = this.p.end - this.contentFrames(); if (!(gap > 0)) return this.extend();
     const last = this.p.segments[this.p.segments.length - 1];
     const s = this.newSegment(last);
     const o = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0), ov = last && o > 0 ? C.overlapFrames(o) : 0;
-    s.frames = Math.min(C.MAX_FRAMES, Math.max(C.MIN_FRAMES, C.snapFrames(gap + ov, "up")));
-    this.mutate((p) => { p.segments.push(s); }, { render: "none" });
-    this.sel = this.p.segments.length - 1; this.pvMode = "segment";
+    const fits = gap + ov <= C.MAX_FRAMES;
+    s.frames = fits ? C.snapFrames(gap + ov) : C.snapFrames(C.MAX_FRAMES, "down");   // nearest H3 length (17k+5)
+    // one undo step: the new piece and, when it fits, the end marker moved onto its end (no leftover / cut-off frames)
+    this.mutate((p) => { p.segments.push(s); if (fits) p.end = C.contentEnd(C.plan(p)); }, { render: "none" });
+    this.sel = this.p.segments.length - 1; this.pvMode = "segment"; this.selGap = null; this.selRegion = null; this.selAudio = null;
     const it = this.items()[this.sel]; this.playhead = it.start + (this.sel ? it.overlap : 0);
     this.renderAll(); this.scrollToPlayhead();
-    this.toast(`Пустота заполнена отрезком ${(s.frames / C.FPS).toFixed(2)} с (сетка 17 кадров${this.items()[this.sel].end > this.p.end ? ", хвост за маркером обрежется" : ""})`);
+    if (!fits) this.toast(`Пустота длиннее одного отрезка H3: добавлен отрезок ${(s.frames / C.FPS).toFixed(2)} с, до маркера осталось ${((this.p.end - it.end) / C.FPS).toFixed(2)} с — кликните ещё раз`);
   }
   endDrag(e) {
     if (e.button !== 0) return;
@@ -1333,12 +1338,12 @@ export class H3Editor {
     const endX = (its.length ? its[its.length - 1].end : 0) * ppf + 10;
     const gapF = this.p.end_mode !== "auto" && this.p.end > 0 ? this.p.end - this.contentFrames() : 0;
     if (gapF > 0 && its.length) {
-      const g = h("div", { class: "h3z-gap", style: { left: this.contentFrames() * ppf + "px", width: gapF * ppf + "px" }, title: `Пусто ${(gapF / C.FPS).toFixed(2)} с до маркера конца — не генерируется, ролик будет короче.\nКлик — заполнить новым отрезком · или растяните последний отрезок` },
+      const g = h("div", { class: "h3z-gap", style: { left: this.contentFrames() * ppf + "px", width: gapF * ppf + "px" }, title: `Пусто ${(gapF / C.FPS).toFixed(2)} с до маркера конца — не генерируется, ролик будет короче.\nКлик — новый отрезок-продолжение; маркер конца встанет на его конец (сетка H3) · или растяните последний отрезок` },
         gapF * ppf > 90 ? h("span", null, `пусто ${(gapF / C.FPS).toFixed(1)} с · клик — заполнить`) : null);
-      g.addEventListener("click", () => this.fillGap());
+      g.addEventListener("click", (e) => { e.stopPropagation(); this.fillEnd(); });
       vt.append(g);
     }
-    const ext = h("div", { class: "h3z-ext", style: { left: (gapF > 0 && its.length ? this.p.end * ppf + 10 : endX) + "px" }, title: "Продлить ролик: новый отрезок продолжит последний (E)\nСюда же можно перетащить видео из ассетов — футаж", html: ICON.plus + `<span>${its.length ? (gapF > 0 ? "Заполнить" : "Продлить") : "Отрезок"}</span><small>${gapF > 0 ? "до маркера" : "+5 с"}</small>`, onclick: () => (gapF > 0 ? this.fillGap() : this.extend()) });
+    const ext = h("div", { class: "h3z-ext", style: { left: (gapF > 0 && its.length ? this.p.end * ppf + 10 : endX) + "px" }, title: "Продлить ролик: новый отрезок продолжит последний (E)\nСюда же можно перетащить видео из ассетов — футаж", html: ICON.plus + `<span>${its.length ? (gapF > 0 ? "Заполнить" : "Продлить") : "Отрезок"}</span><small>${gapF > 0 ? "до маркера" : "+5 с"}</small>`, onclick: () => (gapF > 0 ? this.fillEnd() : this.extend()) });
     vt.append(ext);
     const isVid = (e) => [...(e.dataTransfer?.types || [])].includes("application/x-h3s-video");
     vt.addEventListener("dragover", (e) => { if (isVid(e) && !e.target.closest(".h3z-clip")) { e.preventDefault(); ext.classList.add("dropover"); } });

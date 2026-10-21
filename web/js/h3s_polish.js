@@ -65,39 +65,6 @@ export function installPolish(Editor, { C, h, ICON }) {
       this._hoverT = null; clearInterval(this._hoverIv); this._hoverIv = 0;
     },
 
-    clipMenu(e, i) {
-      e.preventDefault(); e.stopPropagation();
-      this.closeMenu();
-      if (this.sel !== i) { this.sel = i; this.renderInspector(); this.renderTimeline(); this.renderPreview(); }
-      const s = this.seg(i), stale = this.isStale(i), busy = !!this.run.active;
-      const f = Math.round(this.frameAt(e.clientX));
-      const item = (icon, label, fn, { dis = false, danger = false, hint = "" } = {}) => {
-        const el = h("div", { class: "it" + (dis ? " dis" : "") + (danger ? " danger" : ""), html: (() => { const [ic, lb] = splitGlyph(icon, label); label = lb; return `<i class="ic">${icon ? ic : String(ic).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</i>`; })() + `<span class="lb">${String(label).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</span>` + (hint ? `<kbd>${hint}</kbd>` : "") });
-        if (!dis) el.onclick = () => { this.closeMenu(); fn(); };
-        return el;
-      };
-      const m = this.$.menu = h("div", { class: "h3z-menu h3z-glass" },
-        h("div", { class: "hd" }, s.name || `Отрезок ${i + 1}`),
-        ...(() => { const st = this.segGenState(i); return [
-          item(ICON.spark, stale ? "Сгенерировать" : "Сгенерировать (уже готов)", () => this.genSegment(i), { dis: !st.ok || !stale }),
-          item(ICON.dice, "Ещё дубль (новый сид)", () => this.newTake(i), { dis: !st.ok }),
-          !st.ok && !busy && !s.freeze ? h("div", { class: "why" }, st.why) : null,
-          s.freeze ? item(null, "🔓 Разморозить", () => this.unfreezeSeg(i)) : item(null, "🔒 Зафиксировать", () => this.freezeSeg(i), { dis: busy || stale })]; })(),
-        s.takes?.length > 1 ? item(null, `Следующий дубль (${this.takeIndex(s, s.active_take) + 1}/${s.takes.length})`, () => this.cycleTake(i)) : null,
-        h("div", { class: "sep" }),
-        item(ICON.cut, "Разрезать здесь", () => { this.playhead = f; this.split(); }, { hint: "S" }),
-        item(ICON.copy, "Дублировать", () => this.duplicate(), { hint: "D" }),
-        item(null, "◆ Маркер здесь", () => this.addMarker(f), { hint: "M" }),
-        h("div", { class: "sep" }),
-        item(ICON.trash, "Удалить", () => this.deleteSeg(i), { danger: true, hint: "Del" }));
-      this.root.append(m);
-      const r = m.getBoundingClientRect();
-      m.style.left = Math.min(e.clientX, window.innerWidth - r.width - 8) + "px";
-      m.style.top = Math.max(8, Math.min(e.clientY, window.innerHeight - r.height - 8)) + "px";
-      this._menuOff = (ev) => { if (!m.contains(ev.target)) this.closeMenu(); };
-      setTimeout(() => window.addEventListener("pointerdown", this._menuOff, true), 0);
-    },
-
     closeMenu() {
       if (this.$.menu) { this.$.menu.remove(); this.$.menu = null; }
       if (this._menuOff) { window.removeEventListener("pointerdown", this._menuOff, true); this._menuOff = null; }

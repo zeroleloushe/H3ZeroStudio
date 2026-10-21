@@ -143,7 +143,7 @@ export function installGaps(Editor, { C, h }) {
         const fill = h("button", { class: "gb fill" + (w < 104 ? " icon" : ""), title: it.index > 0 ? `Заполнить промежуток генерацией: мост ${it.index} → ${it.index + 1} (конец сцены до и начало следующей — контекст)` : "Заполнить промежуток генерацией: пролог перед отрезком 1 (контекст — начало отрезка)",
           html: w < 104 ? "✂" : "✂ <span>Заполнить</span>" });
         fill.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
-        fill.addEventListener("click", (e) => { e.stopPropagation(); this.selGap = null; if (over.length) { this.selRegion = over[0].rg.id; this.renderTimeline(); } else this.fillGap(it.index); });
+        fill.addEventListener("click", (e) => { e.stopPropagation(); this.selGap = null; if (over.length) { this.selRegion = over[0].rg.id; this.renderTimeline(); } else this.fillGapSpan(it.index); });
         const del = w >= 46 ? h("button", { class: "gb del", title: "Убрать промежуток (Del)", html: "✕" }) : null;
         del?.addEventListener("pointerdown", (e) => { e.stopPropagation(); e.preventDefault(); });
         del?.addEventListener("click", (e) => { e.stopPropagation(); this.removeGap(it.index); });
@@ -156,7 +156,7 @@ export function installGaps(Editor, { C, h }) {
     gapMenu(e, i) {
       const g = this.seg(i)?.gap || 0;
       this.openMenu(e, `Промежуток ${g} кадр. · ${(g / C.FPS).toFixed(2)} с`, [
-        { label: i > 0 ? `✂ Заполнить генерацией (мост ${i} → ${i + 1})` : "✂ Заполнить генерацией (пролог)", fn: () => this.fillGap(i),
+        { label: i > 0 ? `✂ Заполнить генерацией (мост ${i} → ${i + 1})` : "✂ Заполнить генерацией (пролог)", fn: () => this.fillGapSpan(i),
           title: "Участок поверх промежутка: конец предыдущей сцены и начало следующей — контекст, середина генерируется" },
         { label: "✕ Убрать промежуток", hint: "Del", fn: () => this.removeGap(i), danger: true },
       ]);
@@ -167,8 +167,9 @@ export function installGaps(Editor, { C, h }) {
       this.selGap = null; this.renderAll(); this.toast("Промежуток убран · Ctrl+Z — вернуть");
     },
     /** A ✂ span over the gap with clean context on both sides: the end of the shot before and the start of the next. */
-    fillGap(i) {
-      const it = this.items()[i]; if (!it?.gap) return;
+    fillGapSpan(i) {
+      const it = this.items()[i];
+      if (!it?.gap) { this.toast("Промежутка здесь уже нет — обновите выделение", true); this.renderTimeline(); return null; }
       const s0 = it.start - it.gap;
       const id = this.addRegion(Math.max(0, s0 - (i > 0 ? 8 : 0)), it.start + 8);
       if (id) { this.selRegion = id; this.renderTimeline(); }

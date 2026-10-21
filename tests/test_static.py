@@ -297,3 +297,65 @@ def test_prompt_editor_wired_and_vendored():
     vend = pathlib.Path(JS, "vendor", "codemirror.js").read_text(encoding="utf-8")
     assert vend.startswith("/*! CodeMirror 6") and "MIT" in vend[:400]
     assert pathlib.Path(JS, "vendor", "codemirror.LICENSE").exists()
+
+
+def _proto_methods():
+    """Editor methods: class body of h3s_editor.js + every Object.assign(Editor.prototype, {...}) installer."""
+    import re
+    from collections import defaultdict
+    where = defaultdict(list)
+    ed = open(os.path.join(JS, "h3s_editor.js"), encoding="utf-8").read()
+    for n in re.findall(r"^  (?:async )?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", ed, re.M):
+        where[n].append("h3s_editor.js (class)")
+    for f in sorted(os.listdir(JS)):
+        if not f.endswith(".js"):
+            continue
+        s = open(os.path.join(JS, f), encoding="utf-8").read()
+        for m in re.finditer(r"Object\.assign\(\w+\.prototype,\s*\{", s):
+            end = s.find("\n  });", m.end())
+            for n in re.findall(r"^    (?:async )?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", s[m.end():end if end > 0 else len(s)], re.M):
+                where[n].append(f)
+    return where
+
+
+def test_no_editor_method_defined_twice():
+    """Two modules giving the editor a method of the same name: the later installer silently wins
+    (that is how the timeline's trailing «клик — заполнить» ended up calling the gap-span fill and doing nothing)."""
+    dup = {k: v for k, v in _proto_methods().items() if len(v) > 1}
+    assert not dup, dup
+
+
+@need_node
+def test_fill_trailing_area_moves_the_end_marker(tmp_path):
+    """Click on the empty tail before a fixed end marker: one new continuation piece of the nearest H3 length,
+    selected, and the marker moved onto its end — one undo step, no toast; a gap longer than one clip: a max piece."""
+    js = tmp_path / "fe.mjs"
+    js.write_text(textwrap.dedent(f"""
+        globalThis.window = globalThis; globalThis.localStorage = {{ getItem: () => null, setItem() {{}} }};
+        globalThis.document = {{ createElement: () => ({{ style: {{}} }}), head: {{ append() {{}} }}, addEventListener() {{}} }};
+        const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
+        const {{ H3Editor }} = await import({json.dumps(pathlib.Path(JS, "h3s_editor.js").as_uri())});
+        const out = [];
+        for (const gap of [77, 3, 40, 2000]) {{
+          const e = Object.create(H3Editor.prototype);
+          e.p = C.normalizeProject({{ segments: [{{ id: "a", frames: 90, prompt: "x" }}] }});
+          e.p.end_mode = "fixed"; e.p.end = e.contentFrames() + gap;
+          const undo = [], toasts = [];
+          e.mutate = (fn) => {{ undo.push(JSON.stringify(e.p)); fn(e.p); }};
+          e.renderAll = e.scrollToPlayhead = e.renderTimeline = () => {{}}; e.toast = (m) => toasts.push(m);
+          e.fillEnd();
+          const its = e.items();
+          out.push({{ gap, n: e.p.segments.length, sel: e.sel, frames: e.p.segments[1].frames, link: e.p.segments[1].link,
+                     end: e.p.end, last: its.at(-1).end, undo: undo.length, toasts: toasts.length, max: C.MAX_FRAMES }});
+        }}
+        console.log(JSON.stringify(out));
+    """))
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    for o in json.loads(r.stdout.strip().splitlines()[-1]):
+        assert o["n"] == 2 and o["sel"] == 1 and o["link"] != "cut" and o["undo"] == 1, o
+        assert (o["frames"] - 5) % 17 == 0, o
+        if o["gap"] < 1000:
+            assert o["end"] == o["last"] and o["toasts"] == 0, o           # marker exactly on the new piece's end
+        else:
+            assert o["end"] > o["last"] and o["toasts"] == 1, o            # longer than one clip: max piece, click again
