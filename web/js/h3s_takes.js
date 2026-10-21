@@ -303,9 +303,9 @@ export function installRestore(Editor, { C, h }) {
       const stop = (e) => e.stopPropagation();
       const main = h("button", { class: "h3z-rsb-main", onpointerdown: stop,
         onclick: (e) => { e.stopPropagation(); if (e.shiftKey) this.openRestorePanel(i); else this.restoreAll(i); },
-        oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); this.openRestorePanel(i); } }, wd > 170 ? "↺ Восстановить" : "↺");
+        oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); this.openRestorePanel(i); } }, wd > 200 ? "↺ Восстановить" : "↺");
       const more = h("button", { class: "h3z-rsb-more", title: "Выбрать поля", onpointerdown: stop, onclick: (e) => { e.stopPropagation(); this.openRestorePanel(i); } }, "▾");
-      const box = h("div", { class: "h3z-rsb", onpointerdown: stop }, main, wd > 110 ? more : null);
+      const box = h("div", { class: "h3z-rsb" + (wd > 200 ? "" : " icon"), onpointerdown: stop }, main, wd > 140 ? more : null);
       box.addEventListener("pointerenter", () => tip(main), { once: true });
       return box;
     },

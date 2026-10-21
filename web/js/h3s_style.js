@@ -786,9 +786,9 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-rs{margin-top:6px;padding:8px 10px;border-radius:10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
 .h3z-rs-row{display:flex;gap:6px;align-items:baseline;cursor:pointer}.h3z-rs-row em{opacity:.6;font-style:normal;margin-left:auto;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .h3z-rs-row.proj span::after{content:" · проект";opacity:.55}.h3z-rs-row.lib span::after{content:" · библиотека";opacity:.55}.h3z-rs-warn{color:var(--warn)}.h3z-rs-warn:empty{display:none}.h3z-rs-btns{display:flex;gap:6px;margin-top:4px}
-.h3z-rsb{position:absolute;right:6px;bottom:6px;display:flex;z-index:4;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.45)}
+.h3z-rsb{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;z-index:4;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.45)}
 .h3z-rsb button{border:0;background:rgba(255,181,71,.92);color:#1b1205;font:600 11.5px/1 inherit;padding:5px 9px;cursor:pointer}
-.h3z-rsb button:hover{background:#ffc66b}.h3z-rsb .h3z-rsb-more{padding:5px 6px;border-left:1px solid rgba(0,0,0,.18)}
+.h3z-rsb button:hover{background:#ffc66b}.h3z-rsb.icon .h3z-rsb-main{padding:5px 7px;font-size:13px}.h3z-rsb .h3z-rsb-more{padding:5px 6px;border-left:1px solid rgba(0,0,0,.18)}
 `;
 
 export function injectStyle() {

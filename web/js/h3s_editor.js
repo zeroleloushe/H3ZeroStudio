@@ -20,6 +20,7 @@ import { installRegions } from "./h3s_regions.js";
 import { installViewer } from "./h3s_viewer.js";
 import { installPromptEditor } from "./h3s_prompted.js";
 import { installPresets } from "./h3s_presets.js";
+import { installModelTab } from "./h3s_modeltab.js";
 import { installTimer } from "./h3s_timer.js";
 
 export const PALETTE = [
@@ -35,6 +36,7 @@ const loadLS = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); 
 const saveLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 export const ICON = {
+  models: svg('<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M21 7l-9 5-9-5"/>'),
   save: svg('<path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v6h9V3M7 21v-7h10v7"/>'),
   assets: svg('<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>'),
   audio: svg('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'),
@@ -156,6 +158,7 @@ export class H3Editor {
     if (!this.root || !this.$.sink) return;
     if (this.pe?.el) { if (!this.pe.el.contains(document.activeElement)) this.pe.view?.focus(); return; }   // the prompt editor keeps its focus
     const a = document.activeElement;
+    if (a?.closest?.(".h3z-lp")) return;   // the LoRA picker (a popover on <body>) keeps its search field
     if (a && a !== this.$.sink && this.root.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
     this.$.sink.focus({ preventScroll: true });
   }
@@ -409,7 +412,7 @@ export class H3Editor {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
     const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
-    t.append(tool("assets", ICON.assets, "Ассеты"), tool("gallery", ICON.gallery, "Галерея"), tool("projects", ICON.projects, "Проекты"), tool("settings", ICON.settings, "Настройки"), tool("keys", ICON.keys, "Клавиши"), h("div", { class: "sp" }), tool("help", ICON.help, "Справка"), tool("about", ICON.info, "Инфо"));
+    t.append(tool("assets", ICON.assets, "Ассеты"), tool("gallery", ICON.gallery, "Галерея"), tool("projects", ICON.projects, "Проекты"), tool("models", ICON.models, "Модели"), tool("settings", ICON.settings, "Настройки"), tool("keys", ICON.keys, "Клавиши"), h("div", { class: "sp" }), tool("help", ICON.help, "Справка"), tool("about", ICON.info, "Инфо"));
   }
 
   renderLeft() {
@@ -417,6 +420,7 @@ export class H3Editor {
     // a change inside the panel re-renders it: keep scroll positions and focus of the same tab (settings, gallery…)
     const snap = this._leftTool === this.tool ? this.uiSnap(L) : null; this._leftTool = this.tool;
     L.innerHTML = "";
+    L.closest(".h3z-body")?.classList.toggle("h3z-mtwide", this.tool === "models");
     try { this.renderLeftTool(L); } finally { this._leftSnap = snap ? { snap, t: Date.now() } : null; if (snap) this.uiRestore(L, snap); }
   }
   /** Async panels (gallery / projects lists) call this after filling, so the old scroll fits the new content. */
@@ -458,6 +462,7 @@ export class H3Editor {
     if (this.tool === "assets") return this.renderAssets(L);
     if (this.tool === "gallery") return this.renderGallery(L);
     if (this.tool === "projects") return this.renderProjects(L);
+    if (this.tool === "models") return this.renderModels(L);
     if (this.tool === "settings") return this.renderSettings(L);
     if (this.tool === "help") return this.renderHelp(L);
     if (this.tool === "keys") return this.renderKeys(L);
@@ -563,6 +568,7 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ inspector
   renderInspector() {
+    if (this.tool === "models" && this._mtSel !== this.sel && this.$.left) { this._mtSel = this.sel; queueMicrotask(() => this.tool === "models" && this.renderLeft()); }
     const I = this.$.insp, top = I.scrollTop, isnap = this.uiSnap(I); I.innerHTML = "";
     this.$.finalBox = null; this.$.segPrompt = null;
     if (this.selMarker && !this.marker()) this.selMarker = null;
@@ -1516,6 +1522,7 @@ export class H3Editor {
   onKey(e) {
     if (!this.root) return;
     if (this.pe) { if (!this.pe.el?.contains(e.target)) { e.stopPropagation(); e.preventDefault(); } return; }   // prompt editor: its modal routes and stops the keys
+    if (e.target?.closest?.(".h3z-lp")) { e.stopPropagation(); e.target.dispatchEvent(new CustomEvent("h3zkey", { detail: e })); return; }   // LoRA picker
     e.stopPropagation(); // keep ComfyUI shortcuts (Del = delete node, Ctrl+Z on graph, space-drag…) away from the editor
     // a modal on top owns the keyboard: the asset editor has its own window listener (registered later, so it
     // runs after this one) and the save dialog listens on its box — the timeline must not react (Esc closed it all)
@@ -1805,4 +1812,5 @@ installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurr
 installViewer(H3Editor, { C, h, ICON });
 installPromptEditor(H3Editor, { C, h, ICON });
 installPresets(H3Editor, { C, h, ICON });
+installModelTab(H3Editor, { C, h, ICON });
 installTimer(H3Editor, { C, h });

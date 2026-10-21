@@ -3,7 +3,7 @@
 // + an ordered LoRA list (on/off, model / clip strength). The library is global (server:
 // output/h3zerostudio/_presets/presets.json, shared by all projects); a project keeps a copy of the presets it uses
 // (project.model_presets) so it runs the same anywhere and the editor knows when a clip went stale. Project preset
-// in «Ролик», per-clip override in the clip card, the manager in «Настройки» → «📦 Модели». A wired node input
+// in «Ролик», per-clip override in the clip card, the manager in the «Модели» rail tab (h3s_modeltab.js). A wired node input
 // (model / clip / vae / audio_vae) always wins over the preset's file; the preset's LoRAs go on top of either base.
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const newPid = () => "mp" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -117,7 +117,7 @@ export function installPresets(Editor, { C, h, ICON }) {
       this.mpStyle();
       if (!this._mp) this.mpLoad().then(() => this.root && this.renderInspector());
       const id = this.p.settings.model_preset, pr = this.mpGet(id), w = this.mpWired(), miss = this.mpMissing(pr);
-      const manage = h("button", { class: "h3z-btn sm", title: "Менеджер пресетов: «Настройки» → «📦 Модели»", onclick: () => { this._mpSel = id || this._mpSel; this.openSettings("Пресеты моделей"); } }, "⚙ Пресеты");
+      const manage = h("button", { class: "h3z-btn sm", title: "Пресеты, модели и LoRA: вкладка «Модели» слева", onclick: () => { this._mpSel = id || this._mpSel; this._mtScope = "proj"; this.tool = "models"; this.renderTools(); this.renderLeft(); } }, "⚙ Пресеты");
       const wires = h("div", { class: "h3z-mp-wired", title: "Входы ноды H3ZeroStudio. Подключённый вход важнее файла пресета (LoRA пресета ложатся поверх подключённой модели)." },
         ...["model", "clip", "vae", "audio_vae"].map((k) => h("span", { class: w[k] ? "on" : "off" }, `${w[k] ? "⚡" : "○"} ${k}`)));
       const noModel = !pr && w.model === false;
@@ -131,13 +131,12 @@ export function installPresets(Editor, { C, h, ICON }) {
     mpSegBlock(i) {
       const s = this.seg(i); if (!s || C.isFootage(s)) return null;
       const pp = this.mpGet(this.p.settings.model_preset), own = s.model_preset, pr = this.mpGet(own), miss = this.mpMissing(pr);
-      const sel = this.mpSelect(own, (v) => this.setSegPreset(i, v), `как у ролика (${pp ? pp.name : "провода"})`);
-      const d = h("details", { class: "h3z-det" }, h("summary", null, "Модели клипа", own ? h("em", { style: "margin-left:8px;opacity:.75" }, pr?.name || own) : null),
-        h("div", { class: "in" }, sel,
-          miss.length ? h("div", { class: "h3z-note err" }, "Нет файлов: " + miss.map((m) => base(m[1])).join(", ")) : null,
-          h("div", { class: "h3z-note" }, "Свой пресет клипа меняет модель, LoRA и текстовый энкодер этого отрезка; VAE и аудио VAE — всегда пресета ролика. Разные базовые модели в одном запуске загружаются по очереди (на 12 ГБ одна база за раз).")));
-      if (own) d.open = true;
-      return d;
+      const sel = this.mpSelect(own, (v) => this.setSegPreset(i, v), `как у проекта (${pp ? pp.name : "провода ноды"})`);
+      return h("div", null, h("div", { class: "h3z-lbl" }, "Пресет моделей клипа", h("em", null, own ? "свой — только этот клип" : "как у проекта")),
+        h("div", { class: "h3z-row", style: "gap:6px" }, sel, own ? h("button", { class: "h3z-btn sm", title: "Открыть пресет во вкладке «Модели»",
+          onclick: () => { this._mpSel = own; this.tool = "models"; this.renderTools(); this.renderLeft(); } }, "✎") : null),
+        miss.length ? h("div", { class: "h3z-note err" }, "Нет файлов: " + miss.map((m) => base(m[1])).join(", ")) : null,
+        own ? h("div", { class: "h3z-note" }, "Свой пресет меняет модель, LoRA и текстовый энкодер этого клипа; VAE и аудио VAE — всегда проекта.") : null);
     },
     /** Gallery / takes label of a result's models record. */
     mpLabel(m) {
@@ -165,7 +164,7 @@ export function installPresets(Editor, { C, h, ICON }) {
             if (r?.missing) this._mp.missing = r.missing;
             if (msg) this.toast(msg);
           } catch (e) { this.toast("Не удалось сохранить пресеты: " + (e.message || e), true); }
-          if (this.root) { this.renderInspector(); if (this.tool === "settings") this.mpRefreshManager(); }
+          if (this.root) { this.renderInspector(); if (this.tool === "models") this.mpRefreshManager(); }
           res();
         }, msg ? 0 : 450);
       });
@@ -176,17 +175,18 @@ export function installPresets(Editor, { C, h, ICON }) {
       this.mpSave(list, msg);
       this.mpRefreshManager();
     },
-    mpNew(from) {
-      const lib = this.mpLib(); if (lib.length >= C.MAX_PRESETS) { this.toast(`Не больше ${C.MAX_PRESETS} пресетов`, true); return; }
+    mpNew(from, keepName = false) {
+      const lib = this.mpLib(); if (lib.length >= C.MAX_PRESETS) { this.toast(`Не больше ${C.MAX_PRESETS} пресетов`, true); return null; }
       const f = this._mp.files || {};
       const pick = (list, re) => (list || []).find((x) => re.test(x)) || "";
-      const p = from ? { ...clone(from), id: newPid(), name: (from.name + " копия").slice(0, 80) } : {
+      const p = from ? { ...clone(from), id: newPid(), name: keepName ? from.name : (from.name + " копия").slice(0, 80) } : {
         id: newPid(), name: `Пресет ${lib.length + 1}`, base: "unet", dtype: "default",
         model: pick(f.unet, /minimax.?h3/i), clip: pick(f.clip, /minimax.?h3|qwen3.?vl/i),
         vae: pick(f.vae, /h3.*video.*vae|minimax.*video/i), audio_vae: pick(f.audio_vae, /h3.*audio.*vae|minimax.*audio/i), loras: [] };
       this._mpSel = p.id;
       this.mpSave([...clone(lib), p], from ? `Пресет «${from.name}» продублирован` : "Новый пресет создан");
       this.mpRefreshManager();
+      return p.id;
     },
     mpDelete(id) {
       const pr = this.mpGet(id); if (!pr) return;
@@ -235,41 +235,53 @@ export function installPresets(Editor, { C, h, ICON }) {
       const nu = this.mpManager(); old.replaceWith(nu);
     },
 
-    /** «Настройки» → «📦 Модели» → «Пресеты моделей». */
+    /** The «Модели» tab body: preset bar on top, LoRA stack (left column) and model files (right column). */
     mpManager() {
       this.mpStyle();
       const mp = this._mp;
       const box = h("div", { class: "h3z-mp" }); this.$.mpMgr = box;
       if (!mp) { box.append(h("div", { class: "h3z-note" }, "Загрузка списка моделей…")); this.mpLoad().then(() => this.mpRefreshManager()); return box; }
       if (!mp.ok) box.append(h("div", { class: "h3z-note err" }, "Сервер не отдал список моделей (" + (mp.err || "ошибка") + "). Перезапустите ComfyUI после обновления H3ZeroStudio."));
-      const lib = this.mpLib();
-      if (!lib.some((x) => x.id === this._mpSel)) this._mpSel = this.p.settings.model_preset && lib.some((x) => x.id === this.p.settings.model_preset) ? this.p.settings.model_preset : lib[0]?.id || null;
-      const projId = this.p.settings.model_preset;
-      // list
-      const list = h("div", { class: "h3z-mp-list" }, lib.length ? lib.map((pr) => {
-        const miss = this.mpMissing(pr).length, use = this.p.segments.filter((s) => s.model_preset === pr.id).length;
-        const it = h("div", { class: "h3z-mp-item" + (pr.id === this._mpSel ? " on" : ""), onclick: () => { this._mpSel = pr.id; this.mpRefreshManager(); } },
-          h("b", null, pr.name), miss ? h("span", { class: "w", title: "Нет файлов: " + this.mpMissing(pr).map((m) => base(m[1])).join(", ") }, "⚠") : null,
-          h("small", null, (pr.id === projId ? "● ролик · " : "") + (use ? `${use} клип. · ` : "") + this.mpShort(pr)));
-        return it;
-      }) : h("div", { class: "h3z-note" }, "Пресетов пока нет. «＋ Новый» — модель, энкодер, VAE и LoRA из папок ComfyUI."));
-      const btn = (label, title, fn, dis) => h("button", { class: "h3z-btn sm", title, disabled: dis || undefined, onclick: fn }, label);
+      const lib = this.mpLib(), projId = this.p.settings.model_preset;
+      if (!lib.some((x) => x.id === this._mpSel)) this._mpSel = lib.some((x) => x.id === projId) ? projId : lib[0]?.id || null;
       const sel = lib.find((x) => x.id === this._mpSel);
-      box.append(list, h("div", { class: "h3z-mp-btns" },
-        btn("＋ Новый", "Новый пресет (подставит найденные файлы H3)", () => this.mpNew()),
-        btn("⧉ Дублировать", "Копия выбранного пресета", () => this.mpNew(sel), !sel),
-        btn("✕ Удалить", "Удалить выбранный пресет из библиотеки", () => this.mpDelete(sel.id), !sel),
-        btn("⇩ Экспорт", "Скачать выбранный пресет как JSON (Shift+клик — все)", (e) => this.mpExport(e.shiftKey), !sel),
-        btn("⇩ Все", "Скачать все пресеты одним JSON", () => this.mpExport(true), !lib.length),
-        btn("⇧ Импорт", "Загрузить пресеты из JSON (совпадающие id получат новые)", () => this.mpImport()),
-        btn("⟳ Обновить списки", "Перечитать папки моделей ComfyUI (новые файлы без перезапуска)", async () => { await this.mpLoad(true); this.mpRefreshManager(); this.renderInspector(); this.toast("Списки моделей обновлены"); })));
-      if (sel) box.append(this.mpEditor(sel));
-      // cache
+      const btn = (label, title, fn, dis, cls = "") => h("button", { class: "h3z-btn sm " + cls, title, disabled: dis || undefined, onclick: fn }, label);
+      // preset bar: the project's preset, which preset is being edited, library actions
+      const edSel = h("select", { class: "h3z-sel h3z-mp-sel", title: "Какой пресет библиотеки редактируется ниже" },
+        lib.length ? lib.map((pr) => h("option", { value: pr.id, selected: pr.id === this._mpSel },
+          `${pr.name}${pr.id === projId ? "  ● проект" : ""}${this.p.segments.some((x) => x.model_preset === pr.id) ? "  ◐ клипы" : ""}${this.mpMissing(pr).length ? "  ⚠" : ""}`))
+          : h("option", { value: "" }, "— библиотека пуста —"));
+      edSel.onchange = () => { this._mpSel = edSel.value; this.mpRefreshManager(); };
+      edSel.addEventListener("keydown", (e) => e.stopPropagation());
+      const i = this.sel, cs = i >= 0 ? this.seg(i) : null, clipOwn = cs && cs.model_preset && cs.model_preset !== this._mpSel ? this.mpGet(cs.model_preset) : null;
+      box.append(h("div", { class: "h3z-mt-bar" },
+        h("div", { class: "h3z-mt-barrow" },
+          this.field("Пресет проекта", this.mpSelect(projId, (v) => { this.setProjPreset(v); if (v) this._mpSel = v; this.mpRefreshManager(); })),
+          this.field("Редактировать", edSel)),
+        h("div", { class: "h3z-mp-btns" },
+          btn("＋ Новый", "Новый пресет (подставит найденные файлы H3)", () => this.mpNew()),
+          btn("💾 Сохранить как…", "Копия редактируемого пресета под новым именем", () => { const nm = prompt("Название нового пресета", (sel.name + " копия").slice(0, 80)); if (nm) this.mpNew({ ...sel, name: nm.slice(0, 80) }, true); }, !sel),
+          btn("⧉ Дублировать", "Копия редактируемого пресета", () => this.mpNew(sel), !sel),
+          btn("✕ Удалить", "Удалить пресет из библиотеки", () => this.mpDelete(sel.id), !sel),
+          btn("⇩ Экспорт", "Скачать пресет как JSON (Shift+клик — все)", (e) => this.mpExport(e.shiftKey), !sel),
+          btn("⇧ Импорт", "Загрузить пресеты из JSON (совпадающие id получат новые)", () => this.mpImport()),
+          btn("⟳ Обновить списки", "Перечитать папки моделей ComfyUI (новые файлы без перезапуска)", async () => { await this.mpLoad(true); this.mpRefreshManager(); this.renderInspector(); this.toast("Списки моделей обновлены"); }),
+          sel && sel.id !== projId ? btn("● В проект", "Сделать редактируемый пресет пресетом проекта", () => { this.setProjPreset(sel.id); this.mpRefreshManager(); }, false, "primary") : null),
+        clipOwn ? h("div", { class: "h3z-mt-note" }, `Клип ${i + 1} использует свой пресет «${clipOwn.name}». `,
+          h("a", { href: "#", onclick: (e) => { e.preventDefault(); this._mpSel = clipOwn.id; this.mpRefreshManager(); } }, "Редактировать его")) : null,
+        h("div", { class: "h3z-mt-note" }, sel ? (sel.id === projId ? "Правки сразу действуют на проект (все клипы без своего пресета)." : "Этот пресет не назначен проекту" + (this.p.segments.some((x) => x.model_preset === sel.id) ? " — его используют клипы." : "."))
+          + " Свой пресет клипа выбирается в карточке клипа." : "Пресетов пока нет. «＋ Новый» — модель, энкодер, VAE и LoRA из папок ComfyUI. Без пресета берутся провода ноды.")));
+      if (!sel) return box;
+      const ed = (fn, msg) => this.mpEdit(sel.id, fn, msg);
+      const miss = new Set(this.mpMissing(sel).map((m) => m[1]));
+      const left = h("div", { class: "h3z-mt-col" }, h("div", { class: "h3z-lbl" }, "LoRA", h("em", null, `до ${C.MAX_PRESET_LORAS} · выключенные не входят в ключ кэша`)), this.mpLoraStack(sel, ed, miss));
       const c = mp.cache || {};
-      box.append(h("div", { class: "h3z-lbl", style: "margin-top:12px" }, "Загружено пресетами", h("em", null, "кэш между запусками")),
+      const right = h("div", { class: "h3z-mt-col" }, this.mpEditor(sel),
+        h("div", { class: "h3z-lbl", style: "margin-top:12px" }, "Загружено пресетами", h("em", null, "кэш между запусками")),
         h("div", { class: "h3z-mp-cache" }, [`модель: ${(c.base || []).map(base).join(", ") || "—"}`, `энкодер: ${(c.clip || []).map(base).join(", ") || "—"}`, `VAE: ${(c.vae || []).map(base).join(", ") || "—"}`, `LoRA в памяти: ${c.loras || 0} (${c.lora_mb || 0} МБ)`].map((x) => h("div", null, x))),
         h("div", { class: "h3z-mp-btns" }, btn("⏏ Выгрузить модели пресетов", "Освободить VRAM и RAM: выгрузить модели, загруженные пресетами (модели с проводов ноды не трогает)", () => this.mpRelease())),
-        h("div", { class: "h3z-note" }, "Смена только LoRA не перезагружает базовую модель: LoRA накладываются патчами на её копию. При смене базы старая выгружается до загрузки новой."));
+        h("div", { class: "h3z-note" }, "Смена только LoRA не перезагружает базовую модель: LoRA накладываются патчами на её копию."));
+      box.append(h("div", { class: "h3z-mt-cols" }, left, right));
       return box;
     },
     mpEditor(pr) {
@@ -293,23 +305,9 @@ export function installPresets(Editor, { C, h, ICON }) {
       const dtype = h("select", { class: "h3z-sel", title: "weight_dtype как в UNETLoader: default — как в файле; fp8 — меньше VRAM" }, C.PRESET_DTYPES.map((x) => h("option", { value: x, selected: x === pr.dtype }, x)));
       dtype.onchange = () => ed((p) => { p.dtype = dtype.value; });
       const ck = pr.base === "checkpoint";
-      const loras = h("div", null, pr.loras.length ? h("div", { class: "h3z-mp-head" }, h("span"), h("span", null, "LoRA (по порядку)"), h("span", null, "модель"), h("span", null, "энкодер"), h("span")) : null,
-        ...pr.loras.map((l, k) => {
-          const on = h("input", { type: "checkbox", checked: l.on, title: "Вкл / выкл без удаления" });
-          on.onchange = () => ed((p) => { p.loras[k].on = on.checked; });
-          const numIn = (key) => { const e = h("input", { class: "h3z-in", type: "number", step: 0.05, min: -10, max: 10, value: l[key], title: key === "sm" ? "Сила для модели (strength_model)" : "Сила для текстового энкодера (strength_clip)" });
-            e.onchange = () => ed((p) => { p.loras[k][key] = Number(e.value) || 0; }); e.addEventListener("keydown", (x) => x.stopPropagation()); return e; };
-          const mv = (d) => ed((p) => { const j = k + d; if (j < 0 || j >= p.loras.length) return; [p.loras[k], p.loras[j]] = [p.loras[j], p.loras[k]]; });
-          return h("div", { class: "h3z-mp-lora" + (l.on ? "" : " off") }, on, fileSel("lora", l.file, (v) => ed((p) => { p.loras[k].file = v; })), numIn("sm"), numIn("sc"),
-            h("div", { class: "mv" }, h("button", { class: "h3z-btn sm", title: "Выше", disabled: k === 0 || undefined, onclick: () => mv(-1) }, "↑"), h("button", { class: "h3z-btn sm", title: "Ниже", disabled: k === pr.loras.length - 1 || undefined, onclick: () => mv(1) }, "↓"),
-              h("button", { class: "h3z-btn sm danger", title: "Убрать LoRA", onclick: () => ed((p) => { p.loras.splice(k, 1); }) }, "✕")));
-        }),
-        h("button", { class: "h3z-btn sm", disabled: pr.loras.length >= C.MAX_PRESET_LORAS || !(f.lora || []).length || undefined, title: (f.lora || []).length ? "Добавить LoRA (models/loras)" : "В models/loras нет файлов",
-          onclick: () => ed((p) => { p.loras.push({ file: (f.lora || [])[0], on: true, sm: 1, sc: 1 }); }) }, "＋ LoRA"));
       const note = h("textarea", { class: "h3z-ta sm", placeholder: "Заметка (для чего пресет)", spellcheck: "false" }); note.value = pr.note || "";
       note.onchange = () => ed((p) => { p.note = note.value; });
       note.addEventListener("keydown", (e) => e.stopPropagation());
-      const isProj = this.p.settings.model_preset === id;
       return h("div", { class: "h3z-mp-ed" },
         this.field("Название", name),
         h("div", { class: "h3z-lbl" }, "Базовая модель"), baseP,
@@ -317,11 +315,10 @@ export function installPresets(Editor, { C, h, ICON }) {
         this.field("Текстовый энкодер (CLIPLoader · minimax)", fileSel("clip", pr.clip, (v) => ed((p) => { p.clip = v; }), ck ? "— из чекпойнта / провод —" : "— с провода clip —")),
         h("div", { class: "h3z-grid2" }, this.field("VAE видео", fileSel("vae", pr.vae, (v) => ed((p) => { p.vae = v; }), ck ? "— из чекпойнта / провод —" : "— с провода vae —")),
           this.field("Аудио VAE", fileSel("audio_vae", pr.audio_vae, (v) => ed((p) => { p.audio_vae = v; }), "— с провода audio_vae —"))),
-        h("div", { class: "h3z-lbl", style: "margin-top:8px" }, "LoRA", h("em", null, `${pr.loras.filter((l) => l.on).length} вкл. из ${pr.loras.length} · до ${C.MAX_PRESET_LORAS}`)), loras,
         note,
         miss.size ? h("div", { class: "h3z-note err" }, "Нет файлов: " + [...miss].map(base).join(", ") + ". Положите их в папки ComfyUI и нажмите «⟳ Обновить списки».") : null,
-        h("div", { class: "h3z-mp-btns" }, h("button", { class: "h3z-btn sm" + (isProj ? "" : " primary"), disabled: isProj || undefined, onclick: () => { this.setProjPreset(id); this.mpRefreshManager(); } }, isProj ? "● Пресет этого ролика" : "Использовать в ролике")),
-        h("div", { class: "h3z-note" }, "Пустое поле — берётся вход ноды. Подключённый провод всегда важнее файла пресета; LoRA пресета накладываются и на модель с провода."));
+        h("div", { class: "h3z-note" }, "Пустое поле — берётся вход ноды. Подключённый провод всегда важнее файла пресета; LoRA пресета накладываются и на модель с провода."),
+        h("div", { class: "h3z-mp-wired" }, ...Object.entries(this.mpWired()).map(([k, v]) => h("span", { class: v ? "on" : "off" }, `${v ? "⚡" : "○"} ${k}`))));
     },
   });
 }
