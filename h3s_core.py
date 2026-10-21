@@ -67,6 +67,8 @@ DEFAULT_SETTINGS = {
     "audio_xfade": True,       # equal-power crossfade inside the overlap when stitching the final audio
     "audio_xfade_sec": 0.4,    # crossfade length, 0.1-1.0 s (limited to the overlap)
     "audio_match": True,       # match the next segment's loudness (RMS) to the previous one around the seam
+    "audio_declick": True,     # ~5 ms taper each side of hard audio cuts (new scene, footage, export edges)
+    "vram_headroom_gb": 1.0,   # VRAM kept free while sampling / decoding (ComfyUI's reserve, never lowered)
     # live preview while sampling (do not affect the cache keys)
     "preview_tiny_vae": "auto", "preview_max_res": 512, "preview_quality": 80, "preview_frames": 48,
     "preview_fps": 0, "preview_suppress": True, "preview_audio": True,
@@ -104,7 +106,7 @@ GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", 
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
                "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
-               "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match",
+               "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log")
 
@@ -964,7 +966,7 @@ def audio_seam_params(project):
     s = project["settings"]
     lo, hi = AUDIO_XFADE_RANGE
     xf = min(hi, max(lo, _num(s.get("audio_xfade_sec"), 0.4))) if s.get("audio_xfade", True) else 0.0
-    return {"xfade": xf, "match": bool(s.get("audio_match", True))}
+    return {"xfade": xf, "match": bool(s.get("audio_match", True)), "declick": bool(s.get("audio_declick", True))}
 
 
 def run_items(project, items=None):

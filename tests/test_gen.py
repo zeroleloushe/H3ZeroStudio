@@ -63,6 +63,8 @@ def test_two_segments_extend_and_cache(patcher, dirs):
     # overlap locked: segment 2 starts with segment 1's tail
     d = os.path.join(str(out), "h3zerostudio", "t1", "cache")
     k1, k2 = info["keys"]
+    sq = info["segments"][1].get("seam")   # seam rating of the extend join (video + stitched audio)
+    assert sq and sq["verdict"] in ("ok", "soft", "hard") and sq["ratio"] >= 0
     s1 = torch.load(os.path.join(d, f"seg_{k1}.pt"))
     s2 = torch.load(os.path.join(d, f"seg_{k2}.pt"))
     assert torch.allclose(s2["v"][:, :, :7], s1["v"][:, :, -7:], atol=1e-4)
@@ -355,7 +357,7 @@ def test_audio_seam_lock_and_locked_mode_skips_stitch(patcher, dirs, monkeypatch
     sr = 8000
     audio = {"waveform": torch.randn(1, 2, sr * 5) * 0.1, "sample_rate": sr}
     gen.run_project(patcher, FakeClip(), FakeVAE(), project(id="lk", audio={"mode": "locked"}), FakeAudioVAE(), audio)
-    assert [{k: v for k, v in c.items() if k != "info"} for c in calls] == [{"skip": [False, True]}]
+    assert [{k: v for k, v in c.items() if k != "info"} for c in calls] == [{"skip": [False, True], "declick": True}]
 
 
 def test_video_end_marker_limits_generation(patcher, dirs):

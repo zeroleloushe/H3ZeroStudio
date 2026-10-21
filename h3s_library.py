@@ -93,7 +93,7 @@ def segment_entry(pid, pname, sub, res, seg, index, kind):
             "frames": res.get("frames"), "wh": res.get("wh"), "seed": res.get("seed"),
             "prompt": str(seg.get("prompt") or "")[:2000], "seg_id": seg.get("id"), "seg_name": seg.get("name") or "",
             "seg_index": index, "upscale": res.get("upscale"), "base_key": res.get("base_key"), "draft_key": res.get("draft_key"),
-            "up_input": res.get("up_input"), "created": res.get("created")}
+            "up_input": res.get("up_input"), "created": res.get("created"), "seam": res.get("seam")}
 
 
 def region_entry(pid, pname, res, region, seg, index, base_key=None):

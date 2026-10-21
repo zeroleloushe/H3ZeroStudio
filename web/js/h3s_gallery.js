@@ -115,7 +115,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       const meth = e.kind === "upscale" && e.upscale ? (C.UPSCALE_LABELS?.[e.upscale.method] || e.upscale.method) : "";
       const st = e.kind === "region" ? `✂ ${e.region_name || (e.region_no ? "Участок " + e.region_no : "Участок")}` + (e.region_kind === "draft" ? " · черн." : "") :
         e.kind === "refine" ? "Финал ↑ из черновика" : (KIND[e.kind] || e.kind);
-      return [st, meth, wh, e.kind === "final" && e.count ? `${e.count} отр.` : "", e.seed != null ? `сид ${e.seed}` : "", ago(e.created)].filter(Boolean).join(" · ");
+      return [st, meth, wh, e.kind === "final" && e.count ? `${e.count} отр.` : "", e.seed != null ? `сид ${e.seed}` : "", e.seam && e.seam.verdict !== "ok" ? (e.seam.verdict === "hard" ? "⚠ резкий шов" : "◐ лёгкий скачок на шве") : "", ago(e.created)].filter(Boolean).join(" · ");
     },
     galOpenGroup(k) { this.galGroup = k; this.galFill(); },
 

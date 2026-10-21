@@ -25,6 +25,7 @@ export const PALETTE = [
   ["#10b981", "#14b8a6"], ["#3b82f6", "#06b6d4"], ["#a855f7", "#ec4899"], ["#84cc16", "#10b981"],
 ];
 const CAT = { character: "Персонажи", location: "Локации", other: "Другое", audio: "Аудио", video: "Видео" };
+const SEAM_TXT = { ok: "шов незаметен", soft: "лёгкий скачок", hard: "резкий шов" };
 const CAT1 = { character: "Персонаж", location: "Локация", other: "Другое", audio: "Аудио", video: "Видео" };
 const LAYOUT_KEY = "h3zs.layout.v1";
 const ZMIN = 1 / 16, ZMAX = 64; // timeline zoom relative to "fit"
@@ -586,6 +587,14 @@ export class H3Editor {
     }
   }
 
+  /** Seam rating of the join on the left of clip i (measured after generation; only for a current result). */
+  seamQ(i) { const s = this.p.segments[i]; const q = s?.result?.seam; return i > 0 && q && q.verdict && s.link === "extend" && !this.isStale(i) ? q : null; }
+  seamTip(i, q) {
+    return `Шов ${i}→${i + 1}: ${SEAM_TXT[q.verdict]} (скачок ×${q.ratio} к обычному движению кадра; < 1.2 — незаметен, < 1.8 — лёгкий)`
+      + (q.audio ? `\nЗвук: скачок громкости ${q.audio.db} дБ` + (q.audio.warn ? " — заметно" : "") : "")
+      + (q.verdict !== "ok" || q.audio?.warn ? "\n«Ещё дубль» (новый сид) обычно даёт более гладкий стык" : "");
+  }
+
   field(label, input, cls = "") { return h("div", { class: "h3z-field " + cls }, h("div", { class: "h3z-lbl" }, label), input); }
 
   toggle(label, on, cb, title) {
@@ -608,6 +617,8 @@ export class H3Editor {
       h("div", { class: "h3z-pills" },
         h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; }), title: "Продолжить предыдущий отрезок: перекрытие + последний кадр как референс" }, "⟶ Продление"),
         h("div", { class: "h3z-pill" + (i > 0 && s.link === "cut" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: "Новая сцена без связи с предыдущим" }, "✂ Новая сцена"))));
+    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), `Шов ${i}→${i + 1}: ${SEAM_TXT[sq.verdict]} · ×${sq.ratio}`
+      + (sq.audio?.warn ? ` · звук: скачок ${sq.audio.db} дБ` : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, " — «Ещё дубль» может дать ровнее") : null)); }
     if (i > 0 && s.link === "extend" && !C.isFootage(s)) {
       const gO = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0);
       const ovS = h("select", { class: "h3z-sel sm", title: "Перекрытие этого стыка: сколько кадров (и звука) нового отрезка берётся из хвоста предыдущего. Сетка H3: 17·k + 5 кадров." },
@@ -1251,6 +1262,8 @@ export class H3Editor {
       clip.addEventListener("drop", (e) => { e.preventDefault(); clip.classList.remove("dropover"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) { this.sel = i; this.addRef(i, id); this.toast((this.p.assets.find((a) => a.id === id)?.category === "video" ? "Видео-референс <Video> добавлен в отрезок " : "Референс добавлен в отрезок ") + (i + 1)); } });
       vt.append(clip);
       $.clips[i] = clip;
+      { const sq = this.seamQ(i); if (sq) { const m = h("div", { class: "h3z-seamq " + sq.verdict, style: { left: (it.start + it.overlap) * ppf + "px" }, title: this.seamTip(i, sq) });
+        m.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.sel = i; this.selAudio = null; this.renderAll(); } }); vt.append(m); } }
       if (i > 0 && s.link === "cut") vt.append(h("div", { class: "h3z-cutmark", style: { left: it.start * ppf + "px" }, title: "Монтажная склейка" }));
       if (i > 0 && it.overlap) vt.append(h("div", { class: "h3z-ovl", style: { left: it.start * ppf + 1 + "px", width: Math.max(2, it.overlap * ppf - 1) + "px" },
         title: `Перекрытие ${i}→${i + 1}: ${it.overlap} кадр. ≈ ${(it.overlap / C.FPS).toFixed(2)} с — отрезок ${i + 1} продолжает хвост отрезка ${i} (видео и звук)` },

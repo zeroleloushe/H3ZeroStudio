@@ -68,6 +68,7 @@
   - Все результаты с фильтрами и избранным. Варианты одного видео (черновик, финал, апскейлы, дубли, участки) собраны в одну стопку, клик открывает её как папку.
   - A/B-сравнение с синхронным воспроизведением и увеличением ×1/×2/×4: A и B увеличиваются и сдвигаются вместе.
   - Проекты сохраняются автоматически; есть экспорт и импорт zip с ассетами.
+- 〰 **Качество швов.** После генерации каждый стык оценивается (шов незаметен / лёгкий скачок / резкий шов, плюс скачок громкости) — точка над стыком, карточка клипа и галерея подсказывают, где сделать «Ещё дубль». Жёсткие склейки звука без щелчков (затухание ~5 мс), все MP4 в BT.709, настраиваемый запас VRAM во время генерации.
 - 💾 **Кэш по хэшу параметров.** Перегенерируется только то, что изменилось. Прогресс не теряется при перезагрузке вкладки.
 - 📖 **«Справка»** прямо в редакторе: 27 разделов с поиском.
 - ⌨️ **Undo/Redo и горячие клавиши.**
@@ -341,6 +342,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 - **Audio.** "Аудио" lanes **lock** your audio, so the video follows its rhythm and lip-sync. The "Музыка" lane is a background music bed mixed into the output.
 - **Live preview.** Every step is decoded with `taeh3`, with audio, σ/Δ charts and a per-step log.
 - **Prompt editor.** «✎ Редактировать» on every prompt field opens a large CodeMirror 6 editor: `@` lists this prompt's references (with thumbnails) and inserts `<Picture N>` / `<Video N>` / `<Audio N>`; tokens are highlighted and dangling ones flagged; find/replace, undo/redo, wrap, line numbers, mono font, word/char/token counter; a side panel explains the recommended H3 prompt structure (subject_definitions … non_diegetic_music), counts detailed_description words against 350–500 and inserts a skeleton.
+- **Seams.** Every extend join is rated after generation (seamless / soft bump / hard cut, plus the loudness jump) on the timeline, clip card and gallery, with a hint to reroll. Hard audio cuts get a ~5 ms de-click taper; all MP4s are BT.709-tagged; a configurable VRAM headroom is kept free during runs (ideas after chanon/comfyui-obvpm-timeline, GPL-3.0).
 - **Also included:** markers, gallery with A/B compare, projects with zip export/import, undo/redo, hotkeys, and a built-in help tab. The UI is plain JS (plus a vendored CodeMirror 6 bundle for the prompt editor), works offline and uses no CDN.
 
 **Install:** `git clone https://github.com/zeroleloushe/H3ZeroStudio.git` into `ComfyUI/custom_nodes`, then restart ComfyUI. No extra pip packages are required.
@@ -370,6 +372,7 @@ H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — 
 - **Остальное для превью и RTX VSR:**
   - Вызов RTX VSR сверен с [Comfy-Org — Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (Apache-2.0); используется пакет NVIDIA `nvidia-vfx`.
   - Веса `taeh3` — [madebyollin/taehv](https://github.com/madebyollin/taehv).
+- **Оценка швов, де-клик звука, BT.709, запас VRAM:** идеи из [chanon/comfyui-obvpm-timeline](https://github.com/chanon/comfyui-obvpm-timeline) (GPL-3.0, © chanon / obvpm) — оценка стыка относительно обычного движения кадра, ~5 мс затухание на жёстких склейках, теги BT.709, временный подъём штатного резерва VRAM на время запуска. Код написан заново.
 - **Редактор промпта:** [CodeMirror 6](https://codemirror.net) (MIT, © Marijn Haverbeke и др.) — вложен одним файлом `web/js/vendor/codemirror.js` (сборка esbuild, без CDN), лицензия рядом: `web/js/vendor/codemirror.LICENSE`. Формат промпта — по рекомендациям MiniMax H3 (Full-Reference).
 - **Латентный апскейлер H3:** [LBH-123-AI — Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) (MIT). Его нода только **вызывается**, если установлена.
 - **Схема «черновик → апскейл латента → доработка»** (идеи: старт σ 0.25–0.45, апскейл только видео, звук прохода 1 сохраняется):

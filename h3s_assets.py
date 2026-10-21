@@ -170,11 +170,7 @@ def edit_video(path, ops):
                 st.thread_type = "AUTO"
                 rate = st.average_rate or 24
                 w, h = out_size(st.codec_context.width, st.codec_context.height, ops)
-                codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
-                vs = out.add_stream(codec, rate=rate)
-                vs.width, vs.height, vs.pix_fmt = w, h, "yuv420p"
-                if codec == "libx264":
-                    vs.options = {"crf": "17", "preset": "veryfast", "movflags": "+faststart"}
+                vs = media.video_stream(out, w, h, rate, {"crf": "17", "preset": "veryfast", "movflags": "+faststart"})
                 try:
                     vs.thread_type = "AUTO"
                 except Exception:
@@ -185,6 +181,9 @@ def edit_video(path, ops):
                 if audio is not None and audio.shape[1]:
                     layout = "stereo" if audio.shape[0] >= 2 else "mono"
                     audio = audio[:2]
+                    if t0 > 0 or t1 is not None:   # trimmed mid-sound: 5 ms fades instead of clicks
+                        from .h3s_seams import taper_edges
+                        audio = taper_edges(np.array(audio, dtype=np.float32), int(sr), head=t0 > 0, tail=t1 is not None)
                     astream = out.add_stream("aac", rate=int(sr), layout=layout)
                     astream.bit_rate = 192000
                 if t0 > 0.5:
@@ -206,7 +205,7 @@ def edit_video(path, ops):
                         if img.size != (w, h):
                             img = img.resize((w, h), Image.BILINEAR)
                         arr = np.asarray(img)
-                    for p in vs.encode(av.VideoFrame.from_ndarray(np.ascontiguousarray(arr), format="rgb24")):
+                    for p in vs.encode(media.video_frame(arr)):
                         out.mux(p)
                     n += 1
                 for p in vs.encode():

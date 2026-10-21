@@ -353,7 +353,7 @@ def _drift_fix(w, d, q, sr):
     return v
 
 
-def stitch_audio(waves, sr, items, fps=core.FPS, xfade=0.4, match=True, release=core.AUDIO_MATCH_RELEASE, skip=None, info=None):
+def stitch_audio(waves, sr, items, fps=core.FPS, xfade=0.4, match=True, release=core.AUDIO_MATCH_RELEASE, skip=None, info=None, declick=True):
     """Final audio of an extend chain from separately decoded segments.
     waves[i]: [C, N] audio of segment i, sample 0 = the segment's first frame (timeline frame items[i]["start"]).
     At an extend seam both segments cover the overlap.
@@ -366,10 +366,11 @@ def stitch_audio(waves, sr, items, fps=core.FPS, xfade=0.4, match=True, release=
         (A long equal-power crossfade of two copies 8 ms apart combed/cancelled — an audible dip.)
       * Different sound on both sides: the next segment's loudness is matched (RMS gain, limited, back to 1 over
         `release` s) and an equal-power crossfade of `xfade` s is centred in the overlap; xfade 0 = hard cut.
-    Segments without overlap (new scene) are butt-joined. info: optional list, gets one dict per seam."""
+    Segments without overlap (new scene) are butt-joined. info: optional list, gets one dict per seam.
+    declick: every hard cut (new scene, footage, xfade 0, cut under a locked track) gets a ~5 ms taper each side."""
     total = int(round(items[-1]["end"] / fps * sr))
     out = torch.zeros(waves[0].shape[0], total)
-    gains = []
+    gains, cuts = [], []
     for i, it in enumerate(items):
         s0 = int(round(it["start"] / fps * sr))
         n = max(0, min(waves[i].shape[-1], total - s0))
@@ -424,6 +425,8 @@ def stitch_audio(waves, sr, items, fps=core.FPS, xfade=0.4, match=True, release=
                 else:
                     L, a = 0, s0 + ov_n
                 b = a + L
+                if not L:
+                    cuts.append(a)
                 if match:
                     r_prev, r_cur = _rms(out[:, s0:s0 + ov_n]), _rms(w[:, :ov_n])
                     if r_prev > 1e-6 and r_cur > 1e-6:
@@ -446,9 +449,17 @@ def stitch_audio(waves, sr, items, fps=core.FPS, xfade=0.4, match=True, release=
                     info.append({"seam": i, "mode": "crossfade", "corr": round(corr, 3), "xfade_s": xfade})
         elif ov_n > 0:   # under a locked track clip: hard cut at the overlap end
             out[:, s0 + ov_n:s0 + n] = w[:, ov_n:]
+            cuts.append(s0 + ov_n)
         else:
             out[:, s0:s0 + n] = w
+            if i:
+                cuts.append(s0)
         gains.append(g)
+    if declick and cuts:
+        from .h3s_seams import declick as _declick
+        _declick(out, sr, cuts)
+        if info is not None:
+            info.append({"seam": -1, "mode": "declick", "at_s": [round(c / sr, 3) for c in cuts]})
     return out, gains
 
 
@@ -1254,7 +1265,8 @@ def export_video(body):
         n = media.video_info(dst)["frames"]
     else:
         wf, sr = music if music is not None else (None, None)
-        n = media.export_video(src, dst, start, end, fps, wf, sr)
+        dc = core.normalize_project(proj)["settings"].get("audio_declick", True) if proj else True
+        n = media.export_video(src, dst, start, end, fps, wf, sr, declick=dc)
     log(f"export: {dst} ({n} frames, {n / fps:.2f}s)" + (" + music" if music is not None else ""))
     return {"path": dst, "frames": n, "seconds": round(n / fps, 3), "folder": folder}
 
@@ -1301,9 +1313,44 @@ def view_ref(sub, name):
     return {"filename": name, "subfolder": sub, "type": "output"}
 
 
+class vram_headroom:
+    """Keep `gb` of VRAM free while the run samples / decodes: ComfyUI's own reserve
+    (model_management.EXTRA_RESERVED_VRAM, the --reserve-vram value), raised for the run and put back afterwards,
+    also after an interrupt. Never lowers a larger reserve set at launch. The loader then streams a few more weights
+    from RAM instead of over-committing the card (Windows paging VRAM over PCIe makes a run crawl).
+    Idea after chanon/comfyui-obvpm-timeline («H3 VRAM Headroom»)."""
+
+    def __init__(self, gb):
+        try:
+            self.gb = max(0.0, min(8.0, float(gb or 0)))
+        except (TypeError, ValueError):
+            self.gb = 0.0
+        self.old = None
+
+    def __enter__(self):
+        mm = comfy.model_management
+        if self.gb > 0 and hasattr(mm, "EXTRA_RESERVED_VRAM") and mm.cpu_state == mm.CPUState.GPU:
+            want = int(self.gb * 1024 ** 3)
+            if want > mm.EXTRA_RESERVED_VRAM:
+                self.old = mm.EXTRA_RESERVED_VRAM
+                mm.EXTRA_RESERVED_VRAM = want
+                vlog(f"VRAM headroom: {self.gb:g} GB kept free during the run (was {self.old / 1024 ** 3:.2f} GB)")
+        return self
+
+    def __exit__(self, *exc):
+        if self.old is not None:
+            comfy.model_management.EXTRA_RESERVED_VRAM = self.old
+        return False
+
+
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
     try:
-        return _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
+        try:
+            gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 1.0)
+        except Exception:
+            gb = 1.0
+        with vram_headroom(gb):
+            return _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
     except BaseException as e:   # interrupted / failed: the polling editor must see the run as ended
         st = STATUS.get(str(node_id)) if node_id is not None else None
         if st and st.get("active"):
@@ -1660,6 +1707,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             seg_up.append(None)
         seg_frames.append(frames)
         res = segment_media(d, sub, rk, frames, a, audio_vae, audio, proj, it, fps)
+        if i > first and it["link"] == "extend" and len(seg_frames) > 1:   # seam rating of the join on the left
+            try:
+                from . import h3s_seams
+                sr_ = h3s_seams.rate_video(seg_frames[-2], frames[it["overlap"]:])
+                if sr_:
+                    res["seam"] = sr_
+                    if sr_["verdict"] != "ok":
+                        log(f"seam {i}->{i + 1}: {h3s_seams.VERDICTS[sr_['verdict']]} (×{sr_['ratio']}) — «Ещё дубль» may give a smoother join")
+            except Exception as e:
+                vlog(f"seam rating failed: {e}")
         res.update({"index": i, "key": rk, "cached": hit, "frames": int(frames.shape[0]), "kind": kind, "wh": rwh,
                     "seed": core.effective_params(proj, i)["seed"], "created": int(time.time())})
         if kind == "refine" and dkeys and i < len(dkeys):
@@ -1720,6 +1777,18 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         sr_ = tl_audio["sample_rate"]
         tl_audio = {"waveform": tl_audio["waveform"][..., int(round(items[first]["start"] / fps * sr_)):], "sample_rate": sr_}
     out_audio = full_audio(audio_vae, tl_audio, lat_a, images.shape[0], fps, seg_a, run_items, seam)
+    if out_audio is not None:   # audio part of the seam rating (the stitched sound at each rated join)
+        try:
+            from . import h3s_seams
+            wf_, sr_ = out_audio["waveform"][0], int(out_audio["sample_rate"])
+            for k, r in enumerate(results):
+                if r.get("seam") and k < len(run_items):
+                    at = int(round((run_items[k]["start"] + run_items[k]["overlap"]) / fps * sr_))
+                    ra = h3s_seams.rate_audio(wf_, sr_, at)
+                    if ra:
+                        r["seam"]["audio"] = ra
+        except Exception as e:
+            vlog(f"audio seam rating failed: {e}")
     reg_results = []
     for rp in reg_plans:
         rg, win = rp["rg"], rp["win"]
@@ -1885,8 +1954,12 @@ def full_audio(audio_vae, tl_audio, lat_a, n_frames, fps, seg_a=None, items=None
             waves = [decode_audio(audio_vae, a.to(dev), normalize=False)["waveform"][0].cpu() for a in seg_a]
             sr = audio_out_rate(audio_vae)
             sinfo = []
-            wf, gains = stitch_audio(waves, sr, items, fps, seam["xfade"], seam["match"], skip=seam.get("skip"), info=sinfo)
+            wf, gains = stitch_audio(waves, sr, items, fps, seam["xfade"], seam["match"], skip=seam.get("skip"), info=sinfo,
+                                     declick=seam.get("declick", True))
             for si in sinfo:
+                if si["mode"] == "declick":
+                    vlog(f"  audio de-click (5 ms taper) at hard cuts: {si['at_s']} s")
+                    continue
                 vlog(f"  audio seam {si['seam']}->{si['seam'] + 1}: " + (f"kept sound, sample-exact splice at {si['at_s']}s, grid offset {si['lag_ms']} ms"
                      + (f" removed at {si['drift_fix_s']}s" if si.get('drift_fix_s') else "") + f" (corr {si['corr']})" if si["mode"] == "splice"
                      else f"different sound (corr {si['corr']}), crossfade {si['xfade_s']}s"))

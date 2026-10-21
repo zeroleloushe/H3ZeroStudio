@@ -21,6 +21,41 @@ def to_uint8(frames):
     return (frames[..., :3].clamp(0, 1) * 255.0 + 0.5).to("cpu").byte().numpy()
 
 
+# ---------------------------------------------------------------- BT.709 (idea after chanon/comfyui-obvpm-timeline)
+# Every mp4 we write is converted with the BT.709 matrix and tagged BT.709 / TV range (primaries, transfer,
+# matrix), like ComfyUI's own Save Video. Untagged H.264 is read as BT.601 by some players and as BT.709 by
+# others, so greens looked duller and skin redder depending on where the file was played.
+BT709 = 1          # AVCOL_PRI_BT709 = AVCOL_TRC_BT709 = AVCOL_SPC_BT709
+RANGE_TV = 1       # AVCOL_RANGE_MPEG
+
+
+def video_stream(container, w, h, rate, options=None):
+    """H.264 (mpeg4 fallback) yuv420p stream, tagged BT.709 TV range."""
+    import av
+    codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
+    vs = container.add_stream(codec, rate=rate)
+    vs.width, vs.height, vs.pix_fmt = w, h, "yuv420p"
+    if codec == "libx264" and options:
+        vs.options = dict(options)
+    cc = vs.codec_context
+    for k, v in (("color_primaries", BT709), ("color_trc", BT709), ("colorspace", BT709), ("color_range", RANGE_TV)):
+        try:
+            setattr(cc, k, v)
+        except Exception:
+            pass
+    return vs
+
+
+def video_frame(arr):
+    """RGB uint8 [H,W,3] -> yuv420p frame converted with the BT.709 matrix, TV range."""
+    import av
+    f = av.VideoFrame.from_ndarray(np.ascontiguousarray(arr), format="rgb24")
+    try:
+        return f.reformat(format="yuv420p", dst_colorspace="ITU709", dst_color_range="MPEG")
+    except Exception:
+        return f
+
+
 def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max_width=None):
     """frames: IMAGE tensor [F,H,W,3]. waveform: tensor [C,L] (float, -1..1) or None."""
     import av
@@ -36,11 +71,7 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
     h2, w2 = h // 2 * 2, w // 2 * 2
     container = av.open(tmp, mode="w", format="mp4")
     try:
-        codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
-        vs = container.add_stream(codec, rate=int(fps))
-        vs.width, vs.height, vs.pix_fmt = w2, h2, "yuv420p"
-        if codec == "libx264":
-            vs.options = {"crf": str(crf), "preset": "veryfast", "movflags": "+faststart"}
+        vs = video_stream(container, w2, h2, int(fps), {"crf": str(crf), "preset": "veryfast", "movflags": "+faststart"})
         astream = None
         if waveform is not None and sample_rate:
             wf = waveform.detach().float().cpu().clamp(-1, 1).numpy()
@@ -50,8 +81,7 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
             layout = "stereo" if wf.shape[0] == 2 else "mono"
             astream = container.add_stream("aac", rate=int(sample_rate), layout=layout)
         for f in arr:
-            vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(f[:h2, :w2]), format="rgb24")
-            for p in vs.encode(vf):
+            for p in vs.encode(video_frame(f[:h2, :w2])):
                 container.mux(p)
         for p in vs.encode():
             container.mux(p)
@@ -104,7 +134,7 @@ def write_poster(path, frame, max_width=640):
 
 
 # ---------------------------------------------------------------- export
-def export_video(src, dst, start=0, end=None, fps=24, audio=None, sample_rate=None, video_gain=1.0, crf=17):
+def export_video(src, dst, start=0, end=None, fps=24, audio=None, sample_rate=None, video_gain=1.0, crf=17, declick=True):
     """Re-encode frames [start, end) of an mp4 (timeline frames at fps) to dst, streaming (no full decode in
     memory). audio: numpy [C, L] for the exported range (already mixed), or None = the file's own sound
     (times video_gain)."""
@@ -125,14 +155,13 @@ def export_video(src, dst, start=0, end=None, fps=24, audio=None, sample_rate=No
             st = c.streams.video[0]
             st.thread_type = "AUTO"
             w, h = st.codec_context.width // 2 * 2, st.codec_context.height // 2 * 2
-            codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
-            vs = out.add_stream(codec, rate=int(fps))
-            vs.width, vs.height, vs.pix_fmt = w, h, "yuv420p"
-            if codec == "libx264":
-                vs.options = {"crf": str(crf), "preset": "medium", "movflags": "+faststart"}
+            vs = video_stream(out, w, h, int(fps), {"crf": str(crf), "preset": "medium", "movflags": "+faststart"})
             astream = layout = None
             if audio is not None and sample_rate and audio.shape[-1] > 0:
                 audio = np.clip(audio[:2], -1, 1).astype(np.float32)
+                if declick:   # the range starts / ends mid-sound: 5 ms fades instead of clicks
+                    from .h3s_seams import taper_edges
+                    audio = taper_edges(audio.copy(), int(sample_rate))
                 layout = "stereo" if audio.shape[0] == 2 else "mono"
                 astream = out.add_stream("aac", rate=int(sample_rate), layout=layout)
                 astream.bit_rate = 192000
@@ -148,7 +177,7 @@ def export_video(src, dst, start=0, end=None, fps=24, audio=None, sample_rate=No
                 if end is not None and j >= end:
                     break
                 a = fr.to_ndarray(format="rgb24")[:h, :w]
-                for p in vs.encode(av.VideoFrame.from_ndarray(np.ascontiguousarray(a), format="rgb24")):
+                for p in vs.encode(video_frame(a)):
                     out.mux(p)
                 n += 1
             for p in vs.encode():

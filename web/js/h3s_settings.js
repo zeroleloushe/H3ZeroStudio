@@ -215,7 +215,8 @@ export function installSettings(Editor, { C, h, ICON }) {
         this.toggle("Продолжать звук прошлого отрезка", g.audio_seam_lock, (v) => set("audio_seam_lock", v), "Аудио-латент перекрытия фиксируется хвостом предыдущего отрезка"),
         this.toggle("Кроссфейд на стыке", g.audio_xfade, (v) => set("audio_xfade", v), "Различный звук — плавный переход внутри перекрытия; тот же звук — короткая склейка без провала"),
         xf,
-        this.toggle("Выравнивать громкость на стыке", g.audio_match, (v) => set("audio_match", v), "RMS у стыка, до ±6 дБ, возврат за 2 с"));
+        this.toggle("Выравнивать громкость на стыке", g.audio_match, (v) => set("audio_match", v), "RMS у стыка, до ±6 дБ, возврат за 2 с"),
+        this.toggle("Убирать щелчки на склейках", g.audio_declick !== false, (v) => set("audio_declick", v), "Жёсткие склейки звука (новая сцена, футаж, края экспорта и обрезки): плавное затухание ~5 мс с каждой стороны вместо щелчка"));
       const cache = det("Кэш",
         this.toggle("Кэш готовых отрезков", g.cache, (v) => set("cache", v), "Пропускать неизменённые отрезки"),
         h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", onclick: () => this.clearCache() }));
@@ -238,7 +239,9 @@ export function installSettings(Editor, { C, h, ICON }) {
         row(known ? uc.rtx : null, "RTX VSR (nvidia-vfx)", known ? (uc.rtx ? "доступен · ULTRA, как KJNodes Resize v2" : "нет пакета nvidia-vfx или видеокарты RTX") : ""),
         row(this.opts.tiny_vaes ? taeh3 : null, "taeh3 — живое превью", taeh3 ? (this.opts.tiny_vaes || []).filter((x) => /taeh3/i.test(x)).join(", ") : "нет — превью latent2rgb"),
         (paths.vae_approx || []).length ? h("div", { class: "h3z-note mono" }, (paths.vae_approx || []).join("\n")) : null,
-        h("div", { class: "h3z-note" }, "Папки — стандартные ComfyUI (и extra_model_paths.yaml). После установки модели перезапустите ComfyUI."));
+        h("div", { class: "h3z-note" }, "Папки — стандартные ComfyUI (и extra_model_paths.yaml). После установки модели перезапустите ComfyUI."),
+        num("vram_headroom_gb", "Запас VRAM во время генерации, ГБ", 0.25, 0, 8),
+        h("div", { class: "h3z-note" }, "Столько видеопамяти ComfyUI оставляет свободной, пока идёт генерация (штатный резерв --reserve-vram, поднимается только на время запуска и никогда не уменьшается). Помогает, когда открыт браузер / запись: иначе Windows выгружает VRAM в RAM и шаги идут в разы медленнее. 1 ГБ — голый рабочий стол, 2–3 ГБ — с браузером. 0 — выключено."));
       const upS = this.upscaleSection(g, set);
       const TABS = [["gen", "⚙ Генерация", [stages, st1, st2, upS]], ["ext", "🔗 Продление и звук", [ext]], ["prev", "👁 Превью и кэш", [pv, cache]], ["mod", "📦 Модели", [models]]];
       const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();

@@ -240,7 +240,7 @@ def test_end_marker_and_audio_clips(h3s):
     # legacy single-window audio (locked mode) becomes one clip of the node input
     old = core.normalize_project({"audio": {"mode": "locked", "start": 1.5, "in": 2, "length": 7.25}})
     assert old["audio"]["clips"] == [{"id": "a1", "asset": "input", "lane": 0, "start": 1.5, "in": 2.0, "length": 7.25, "volume": 1.0, "fade_in": 0.0, "fade_out": 0.0}]
-    assert core.audio_seam_params(core.normalize_project({"settings": {"audio_xfade_sec": 5}})) == {"xfade": 1.0, "match": True}
+    assert core.audio_seam_params(core.normalize_project({"settings": {"audio_xfade_sec": 5}})) == {"xfade": 1.0, "match": True, "declick": True}
     assert core.audio_seam_params(core.normalize_project({"settings": {"audio_xfade": False}}))["xfade"] == 0.0
 
 

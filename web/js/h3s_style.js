@@ -268,6 +268,10 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
   background:repeating-linear-gradient(-45deg, rgba(255,255,255,.28) 0 6px, rgba(255,255,255,.06) 6px 12px); border:1.5px solid rgba(255,255,255,.65);
   box-shadow:0 0 18px rgba(34,211,238,.35); display:grid; place-items:center; }
 .h3z-blend span { font-size:10px; font-weight:800; background:rgba(5,7,15,.75); padding:2px 6px; border-radius:6px; white-space:nowrap; }
+.h3z-seamq { position:absolute; top:3px; width:10px; height:10px; margin-left:-5px; border-radius:50%; z-index:7; cursor:pointer; border:2px solid rgba(0,0,0,.55); }
+.h3z-seamq.ok { background:#5fd38d; } .h3z-seamq.soft { background:#ffb547; box-shadow:0 0 8px #ffb547; } .h3z-seamq.hard { background:#ff5c7a; box-shadow:0 0 10px #ff5c7a; }
+.h3z-seamv { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; margin-top:6px; padding:3px 8px; border-radius:8px; background:rgba(255,255,255,.05); }
+.h3z-seamv b { width:8px; height:8px; border-radius:50%; display:inline-block; } .h3z-seamv.ok b { background:#5fd38d; } .h3z-seamv.soft b { background:#ffb547; } .h3z-seamv.hard b { background:#ff5c7a; }
 .h3z-cutmark { position:absolute; top:10px; bottom:10px; width:3px; margin-left:-1.5px; border-radius:3px; background:var(--a3); z-index:5; box-shadow:0 0 12px var(--a3); }
 .h3z-ext { position:absolute; top:0; bottom:0; width:116px; border-radius:12px; border:1.5px dashed rgba(148,163,255,.35); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
   color:var(--mut); cursor:pointer; font-weight:700; font-size:12px; transition:.15s; background:rgba(148,163,255,.03); }
