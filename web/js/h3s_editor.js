@@ -636,7 +636,7 @@ export class H3Editor {
       + (sq.audio?.warn ? ` · звук: скачок ${sq.audio.db} дБ` : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, " — «Ещё дубль» может дать ровнее") : null)); }
     if (s.gap) {
       const gIn = h("input", { class: "h3z-in", type: "number", min: 0, max: C.MAX_GAP, value: s.gap || 0, style: { width: "84px", padding: "4px 8px" },
-        title: "Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. Ctrl+перетаскивание клипа на таймлайне делает то же" });
+        title: "Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. перетаскивание клипа на таймлайне (магнит выключен) делает то же" });
       gIn.onchange = () => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+gIn.value || 0))); });
       card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, "Промежуток перед отрезком"), gIn,
         h("em", { style: { opacity: .7, fontSize: "11px" } }, `${(s.gap / C.FPS).toFixed(2)} с`),
@@ -1095,6 +1095,7 @@ export class H3Editor {
       B(ICON.trash, "", "Удалить (Del)", () => this.deleteSeg(this.sel)),
       h("button", { class: "h3z-btn sm", html: '<b style="color:#fbbf24">◆</b><span>Маркер</span>', title: "Маркер на плейхеде (M): заметка, событие в промпте или усиление персонажа", onclick: () => this.addMarker() }),
       ...this.regionToolbar(),
+      this.magnetButton(),
       h("div", { class: "sep" }), h("div", { class: "h3z-endbox", title: "Маркер конца ролика (красный флажок на линейке): за ним всё приглушено и не генерируется" }, h("span", null, "Длина ролика"), $.endIn, h("span", null, "с"), $.endAuto),
       h("div", { class: "sep" }), $.tlInfo, h("div", { class: "grow" }),
       h("div", { class: "h3z-zoom" }, B(ICON.minus || "−", "", "Отдалить (−)", () => this.setZoomBy(0.7)), $.zoomR, B(ICON.plus, "", "Приблизить (+)", () => this.setZoomBy(1.4)),
@@ -1217,6 +1218,7 @@ export class H3Editor {
   get ppf() { return this._ppf || 1; }
 
   renderTimeline() {
+    this.$.magBtn?._paint?.(); // undo / settings may have flipped «🧲 Магнит»
     const $ = this.$; if (!$.tinner) return;
     queueMicrotask(() => { if (this._hoverT && !this._hoverT.isConnected) this.hideHover?.(); });   // its clip was re-built / removed
     const its = this.items(), sigs = this.sigs(), nGen = sigs.length;
@@ -1384,8 +1386,9 @@ export class H3Editor {
 
   clipDown(e, i) {
     if (e.button !== 0) return;
-    if (e.ctrlKey || e.metaKey) return this.gapDrag(e, i);   // Ctrl+drag: move apart, a persistent gap
     if (this.selGap) { this.selGap = null; }
+    // «🧲 Магнит» off (default): a horizontal drag moves the clip (and what follows) and leaves a gap; Alt / Ctrl inverts
+    if (!this.magnetOn(e)) return this.freeDrag(e, i);
     e.preventDefault();
     const sx = e.clientX, clip = this.$.clips[i];
     let dragging = false, target = i, ins = null;
@@ -1411,17 +1414,20 @@ export class H3Editor {
           this.mutate((p) => { const [s] = p.segments.splice(i, 1); p.segments.splice(target, 0, s); }, { render: "none" });
           this.sel = target; this.renderAll(); this.toast(`Отрезок перемещён на позицию ${target + 1} · продления пересчитаются`);
         }
-      } else {
-        if (this.run.active) this.followRun = false; // the user took over the selection during a run
-        if (this.selAudio) { this.selAudio = null; this.renderInspector(); }
-        const changed = this.sel !== i;
-        this.sel = i;
-        this.playhead = clamp(this.frameAt(ev.clientX), 0, this.totalFrames());
-        if (changed) { this.pvMode = this.pvMode === "full" ? "full" : "segment"; this.renderInspector(); this.renderTimeline(); this.renderLeft(); this.renderPreview(); }
-        else { this.syncVideoToPlayhead(); this.updatePlayhead(); }
-      }
+      } else this.clipClick(ev, i);
     };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  }
+
+  /** A click on a clip (no drag): select it and put the playhead there. */
+  clipClick(ev, i) {
+    if (this.run.active) this.followRun = false; // the user took over the selection during a run
+    if (this.selAudio) { this.selAudio = null; this.renderInspector(); }
+    const changed = this.sel !== i;
+    this.sel = i;
+    this.playhead = clamp(this.frameAt(ev.clientX), 0, this.totalFrames());
+    if (changed) { this.pvMode = this.pvMode === "full" ? "full" : "segment"; this.renderInspector(); this.renderTimeline(); this.renderLeft(); this.renderPreview(); }
+    else { this.syncVideoToPlayhead(); this.updatePlayhead(); }
   }
 
   resizeStart(e, i) {

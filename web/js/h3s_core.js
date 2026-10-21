@@ -24,7 +24,7 @@ export const DEFAULT_SETTINGS = {
   steps: 20, cfg: 1.0, sampler: "res_multistep", scheduler: "simple", shift_video: 12.0, shift_audio: 3.0,
   seed: 0, fps: FPS, denoise: 1.0, overlap_blocks: 1, audio_context_sec: 1.0, lock_overlap: true, continuity_ref: true,
   continuity_phrase: DEFAULT_CONTINUITY, ref_size: "match", cache: true,
-  audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, vram_headroom_gb: 1.0,
+  audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, magnet: false, vram_headroom_gb: 1.0,
   preview_tiny_vae: "auto", preview_max_res: 512, preview_quality: 80, preview_frames: 48,
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
@@ -176,7 +176,7 @@ export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", 
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
                "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
-               "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "vram_headroom_gb",
+               "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log"];
 /** Refine-stage sampler / scheduler / cfg in the sigs — only when set (mirror of h3s_core.refine_extra). */

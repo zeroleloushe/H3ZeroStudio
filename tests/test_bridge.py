@@ -136,3 +136,9 @@ def test_bridge_e2e_over_a_gap_with_the_tiny_model(tmp_path, monkeypatch):
     p3 = project(regions=[dict(rg, takes=[{"id": "t1", "key": r["key"]}], active_take="t1")]); p3["segments"][1]["gap"] = 34
     _, _, _, info3 = gen.run_project(pt, FakeClip(), vae, p3, avae)
     assert info3["regions"] == []
+
+
+def test_magnet_setting_is_global_and_off_by_default():
+    assert core.DEFAULT_SETTINGS["magnet"] is False and "magnet" in core.GLOBAL_KEYS
+    p = core.normalize_project({"settings": {"magnet": True}, "segments": [{"prompt": "a"}, {"prompt": "b", "gap": 9}]})
+    assert p["settings"]["magnet"] is True and p["segments"][1]["gap"] == 9
