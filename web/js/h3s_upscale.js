@@ -277,9 +277,12 @@ export function installUpscale(Editor, { C, h, ICON }) {
       const chunks = h("div", null, h("label", { class: "h3z-row", style: { gap: "6px", alignItems: "center" } }, chk, h("span", null, T("По кускам ({0})", LBL[m0]))),
         h("div", { class: "h3z-grid2" }, chunkSel, ovSel),
         h("div", { class: "h3z-note" }, on ? T("Кусков на клип: {0}.", ex) + (m0 === "tiles" ? T(" Плитки работают внутри каждого куска.") : "") : T("Клип целиком за один проход — нужно больше VRAM.")));
-      const sig = h("select", { class: "h3z-sel up-sigma", title: T("Сила доработки (σ старта): меньше — бережнее, больше — больше новых деталей") },
-        [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6].concat([0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6].some((v) => Math.abs(f.sigma - v) < 1e-6) ? [] : [f.sigma]).sort((a, b) => a - b)
-          .map((v) => h("option", { value: v, selected: Math.abs(f.sigma - v) < 1e-6 }, `σ ${v.toFixed(2)}` + (Math.abs(C.SEG_UPSCALE_SIGMA[m0] - v) < 1e-6 ? T(" · по умолчанию") : ""))));
+      const rec = C.SEG_UPSCALE_SIGMA_RECOMMENDED[m0], near = (a, b) => b != null && Math.abs(a - b) < 1e-6;
+      const sig = h("select", { class: "h3z-sel up-sigma", title: T("Сила доработки (σ старта): меньше — бережнее, больше — больше новых деталей")
+          + (rec ? T(". Для плиток рекомендуется σ {0}: отлично держит согласованность, детали почти не меняются; ниже почти не влияет на картинку.", rec.toFixed(2)) : "") },
+        C.SEG_UPSCALE_SIGMA_CHOICES.concat(C.SEG_UPSCALE_SIGMA_CHOICES.some((v) => near(f.sigma, v)) ? [] : [f.sigma]).sort((a, b) => a - b)
+          .map((v) => h("option", { value: v, selected: near(f.sigma, v) }, `σ ${v.toFixed(2)}`
+            + (near(v, rec) ? T(" · рекомендуется") : "") + (near(C.SEG_UPSCALE_SIGMA[m0], v) ? T(" · по умолчанию") : ""))));
       sig.onchange = () => put({ sigma: Number(sig.value) });
       const st2 = C.passParams(this.p, Math.max(0, this.sel), "refine");
       const steps = h("select", { class: "h3z-sel up-steps", title: T("Шаги доработки после апскейла (для этого метода)") },

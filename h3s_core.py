@@ -90,7 +90,7 @@ DEFAULT_SETTINGS = {
     # draft -> final upscale: "learned" (H3 latent upscaler model, default; RTX VSR if it is missing) | "rtx"
     # (RTX VSR -> VAE encode; the learned upscaler if RTX is missing). Neither available = a clear error.
     "upscale_method": "learned",
-    "upscale_rev": 3,
+    "upscale_rev": 4,
     # «↑ Апскейл» (header: the whole video, clip: one clip): method / scale / sigma / RTX quality
     "seg_upscale": {"method": "latent", "scale": 2.0},   # legacy multiplier, migrated to a megapixel target ("mp")
     # upscale in temporal chunks (sequential, like ComfyUI-H3-WindowedRefine): approximate chunk length in seconds
@@ -110,7 +110,7 @@ RUN_KINDS = ("draft", "refine", "full")
 GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log")
@@ -120,7 +120,8 @@ def global_settings(values):
     """Normalized subset of the set-once settings (only the keys given)."""
     values = {k: v for k, v in (values or {}).items() if k in GLOBAL_KEYS}
     st = normalize_project({"settings": values, "segments": []})["settings"]
-    return {k: st[k] for k in values}
+    keys = list(values) + (["upscale_rev"] if "upscale_profiles" in values else [])   # the profiles' migration rev travels with them
+    return {k: st[k] for k in keys}
 DRAFT_SCALES = (0.5, 0.67, 0.75)
 REFINE_SIGMA_RANGE = (0.15, 0.8)
 UPSCALE_METHODS = ("learned", "rtx")   # nearest-exact / VAE-Lanczos were removed (garbage after the refine)
@@ -131,8 +132,10 @@ SEG_UPSCALE_MP_PRESETS = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)   # «Размер» pre
 SEG_UPSCALE_MP_RANGE = (0.01, 8.5)
 UPSCALE_CHUNK_SEC_RANGE = (2.0, 30.0)
 UPSCALE_CHUNK_OVERLAP_RANGE = (1, 3)
-SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.35}   # default refine strength (start sigma) per method
-SEG_UPSCALE_SIGMA_RANGE = (0.1, 0.7)
+SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.6}   # default refine strength (start sigma) per method
+SEG_UPSCALE_SIGMA_RANGE = (0.1, 1.0)
+SEG_UPSCALE_SIGMA_OLD_TILES = 0.35   # the tiles default before upscale_rev 4 (a profile still at it moves to 0.6)
+UPSCALE_REV = 4
 RTX_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA")
 # every upscale method keeps its own profile: switching the method in «Настройки» only selects another profile.
 # The upscale fields (mp, sigma, quality, tile, tile_ov) are what a clip gets; steps / sampler / scheduler of the
@@ -483,12 +486,19 @@ def normalize_project(p):
     st["refine_steps"] = max(0, min(200, int(_num(st.get("refine_steps"), 0))))
     st["refine_sigma"] = round(max(REFINE_SIGMA_RANGE[0], min(REFINE_SIGMA_RANGE[1], _num(st.get("refine_sigma"), 0.4))), 2)
     st["upscale_method"] = st.get("upscale_method") if st.get("upscale_method") in UPSCALE_METHODS else "learned"
-    st["upscale_rev"] = 3   # any older value ("vae", "latent" = nearest-exact, …) became "learned" above
+    raw_st = p.get("settings") if isinstance(p.get("settings"), dict) else {}
+    old_rev = _num(raw_st.get("upscale_rev"), 0)   # as stored (the merged defaults already say 4)
+    st["upscale_rev"] = UPSCALE_REV   # any older value ("vae", "latent" = nearest-exact, …) became "learned" above
     st["seg_upscale"] = normalize_upscale(st.get("seg_upscale")) or normalize_upscale({"method": "latent", "scale": 2.0})
     cs = _num(st.get("upscale_chunk_sec"), 5.0)
     st["upscale_chunk_sec"] = 0.0 if cs <= 0 else _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1)
     st["upscale_chunk_overlap"] = int(min(UPSCALE_CHUNK_OVERLAP_RANGE[1], max(UPSCALE_CHUNK_OVERLAP_RANGE[0], _num(st.get("upscale_chunk_overlap"), 1))))
     normalize_upscale_profiles(st)
+    if old_rev < 4:   # rev 4: tiles default σ 0.35 -> 0.60 (user-tested); a profile still at the old default follows,
+        tp = st["upscale_profiles"]["tiles"]   # a value the user picked stays; clips keep their own σ (cache keys unchanged)
+        if abs(tp["sigma"] - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6:
+            tp["sigma"] = SEG_UPSCALE_SIGMA["tiles"]
+            st["seg_upscale"] = profile_upscale(st, st["seg_upscale"]["method"])
     for k in ("draft", "refine"):
         st[k + "_sampler"] = str(st.get(k + "_sampler") or "")[:64]
         st[k + "_scheduler"] = str(st.get(k + "_scheduler") or "")[:64]

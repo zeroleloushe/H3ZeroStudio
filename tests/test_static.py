@@ -125,6 +125,11 @@ PROJECTS = [
     # legacy flat values only: migrated into the selected method (tiles) profile
     {"settings": {"seg_upscale": {"method": "tiles", "mp": 3, "sigma": 0.45, "tile": 768, "tile_ov": 64}, "upscale_chunk_sec": 6},
      "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}}]},
+    # upscale_rev 4: a tiles profile at the old default σ 0.35 moves to 0.60, a picked value stays, σ up to 1.0
+    {"settings": {"upscale_rev": 3, "seg_upscale": {"method": "tiles", "mp": 2, "sigma": 0.35}, "upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.35}}},
+     "segments": [{"frames": 124, "upscale": {"method": "tiles", "mp": 2, "sigma": 0.35}}, {"frames": 124, "upscale": {"method": "latent", "mp": 2, "sigma": 3}}]},
+    {"settings": {"upscale_rev": 3, "upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.85}}}, "segments": [{"frames": 124}]},
+    {"settings": {"upscale_rev": 4, "upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.35}}}, "segments": [{"frames": 124}]},
     # model & LoRA presets: project copy, per-clip override, garbage
     {"model_presets": {"t1": {"name": "Turbo", "model": "h3.safetensors", "dtype": "fp8_e4m3fn", "clip": "te.safetensors",
                              "loras": [{"file": "turbo.safetensors", "sm": 0.8125}, {"file": "b.safetensors", "on": False, "sm": 2, "sc": 0}]},

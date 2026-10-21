@@ -964,10 +964,10 @@ def test_upscale_keys_and_normalize():
         {"id": "s3", "frames": 39, "prompt": "3", "upscale": {"method": "nope"}}]))
     u = [s["upscale"] for s in p["segments"]]
     # legacy multipliers become megapixel targets with exactly the same canvas (96x64 x2 = 192x128)
-    assert u[0] == {"method": "rtx", "mp": 0.025, "sigma": 0.7, "quality": "ULTRA"}
-    assert u[1] == {"method": "tiles", "mp": 0.025, "sigma": 0.35} and u[2] is None
+    assert u[0] == {"method": "rtx", "mp": 0.025, "sigma": 1.0, "quality": "ULTRA"}
+    assert u[1] == {"method": "tiles", "mp": 0.025, "sigma": 0.6} and u[2] is None
     assert core.upscale_canvas(96, 64, u[0]) == (192, 128) and core.normalize_project(p) == p, "idempotent"
-    assert core.upscale_key_form(u[0], 96, 64) == {"method": "rtx", "scale": 2.0, "sigma": 0.7, "quality": "ULTRA"}
+    assert core.upscale_key_form(u[0], 96, 64) == {"method": "rtx", "scale": 2.0, "sigma": 1.0, "quality": "ULTRA"}
     base = core.segment_keys(p)
     uk = core.upscale_keys(p, base)
     assert uk[0] and uk[1] and uk[2] is None and len(set(uk[:2])) == 2 and not set(uk[:2]) & set(base)
@@ -1153,7 +1153,7 @@ def test_rtx_center_crop_like_reference():
 def test_upscale_tile_size_and_progress_events(patcher, dirs, monkeypatch, capsys):
     crops = upscale.plan_crops(5, 8, 8, 12, "tiles", 4, 6, tile=[96, 64], tile_ov=2)
     assert len(crops) == 9, "tile 6x4 cells, overlap 2, on 12x8 -> 3 cols x 3 rows"
-    assert core.normalize_upscale({"method": "tiles", "tile": [96, 64], "tile_ov": 2}) == {"method": "tiles", "scale": 2.0, "sigma": 0.35, "tile": [256, 256], "tile_ov": 2}
+    assert core.normalize_upscale({"method": "tiles", "tile": [96, 64], "tile_ov": 2}) == {"method": "tiles", "scale": 2.0, "sigma": 0.6, "tile": [256, 256], "tile_ov": 2}
     clock_ev = []
     c = upscale.TileClock(crops, 2, 0, lambda **kw: clock_ev.append(kw), 8, 12)
     import time as _t
@@ -1573,3 +1573,30 @@ def test_full_cache_hit_touches_no_model(patcher, dirs, monkeypatch, capsys):
     monkeypatch.setattr(upscale, "free_vram", boom)
     _, _, _, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p(), FakeAudioVAE(), None)
     assert not seen and all(r["cached"] for r in info["segments"])
+
+
+def test_tiles_sigma_default_migration_and_range(patcher):
+    """Tiles refine strength: default σ 0.60 (user-tested); a rev-3 profile still at the old default 0.35 follows,
+    a picked value stays, clips keep their own σ (cache keys unchanged); σ up to 1.0 is accepted and scheduled."""
+    d = core.normalize_project({})["settings"]
+    assert d["upscale_profiles"]["tiles"]["sigma"] == 0.6 and d["upscale_rev"] == 4
+    assert d["upscale_profiles"]["latent"]["sigma"] == 0.4 and d["upscale_profiles"]["rtx"]["sigma"] == 0.25
+
+    def st(sig, rev):
+        return {"upscale_rev": rev, "seg_upscale": {"method": "tiles", "mp": 2, "sigma": sig}, "upscale_profiles": {"tiles": {"mp": 2, "sigma": sig}}}
+    p = core.normalize_project({"settings": st(0.35, 3), "segments": [{"frames": 39, "upscale": {"method": "tiles", "mp": 2, "sigma": 0.35}}]})
+    assert p["settings"]["upscale_profiles"]["tiles"]["sigma"] == 0.6 and p["settings"]["seg_upscale"]["sigma"] == 0.6
+    assert p["segments"][0]["upscale"]["sigma"] == 0.35 and core.normalize_project(p) == p, "clip σ kept, idempotent"
+    assert core.normalize_project({"settings": st(0.45, 3)})["settings"]["upscale_profiles"]["tiles"]["sigma"] == 0.45
+    assert core.normalize_project({"settings": st(0.35, 4)})["settings"]["upscale_profiles"]["tiles"]["sigma"] == 0.35, "picked after the change"
+    assert core.normalize_upscale({"method": "tiles", "mp": 2, "sigma": 1.0})["sigma"] == 1.0
+    assert core.normalize_upscale({"method": "tiles", "mp": 2, "sigma": 3})["sigma"] == 1.0
+    for s0 in (0.6, 0.75, 0.9, 1.0):
+        sg = gen.refine_sigmas(patcher, 4, "simple", s0)
+        assert len(sg) == 5 and abs(float(sg[0]) - s0) < 1e-6 and float(sg[-1]) == 0.0
+        assert all(float(sg[k]) > float(sg[k + 1]) for k in range(4)), sg
+    # global settings (_settings.json): an old file migrates once; the rev travels with the profiles, so a later pick of 0.35 stays
+    g = core.global_settings({"upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.35}}})
+    assert g["upscale_profiles"]["tiles"]["sigma"] == 0.6 and g["upscale_rev"] == 4
+    g["upscale_profiles"]["tiles"]["sigma"] = 0.35
+    assert core.global_settings(g)["upscale_profiles"]["tiles"]["sigma"] == 0.35

@@ -1,5 +1,7 @@
 // H3ZeroStudio English UI strings, keyed by the Russian source text (see h3s_i18n.js). Generated from the code; edit freely.
 export default {
+  " · рекомендуется": " · recommended",
+  ". Для плиток рекомендуется σ {0}: отлично держит согласованность, детали почти не меняются; ниже почти не влияет на картинку.": ". For tiles σ {0} is recommended: keeps consistency very well and barely changes details; lower values hardly affect the picture.",
   "Поиск по справке…": "Search help…",
   "Развернуть все": "Expand all",
   "Свернуть все": "Collapse all",

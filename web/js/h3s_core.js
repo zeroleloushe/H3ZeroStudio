@@ -30,7 +30,7 @@ export const DEFAULT_SETTINGS = {
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 3, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
+  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 4, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
 };
 export const DRAFT_SCALES = [0.5, 0.67, 0.75];
@@ -45,8 +45,13 @@ export const UPSCALE_CHUNK_SEC_RANGE = [2.0, 30.0];
 export const UPSCALE_CHUNK_OVERLAP_RANGE = [1, 3];
 /** Half-up rounding (mirror of h3s_core._round). */
 export const roundHalf = (x, d) => Math.floor(Number(x) * 10 ** d + 0.5) / 10 ** d;
-export const SEG_UPSCALE_SIGMA = { latent: 0.4, rtx: 0.25, tiles: 0.35 };
-export const SEG_UPSCALE_SIGMA_RANGE = [0.1, 0.7];
+export const SEG_UPSCALE_SIGMA = { latent: 0.4, rtx: 0.25, tiles: 0.6 };
+export const SEG_UPSCALE_SIGMA_RANGE = [0.1, 1.0];
+export const SEG_UPSCALE_SIGMA_OLD_TILES = 0.35;   // the tiles default before upscale_rev 4
+export const UPSCALE_REV = 4;
+// «Сила доработки» choices of the upscale profiles; RECOMMENDED marks the user-tested value of a method
+export const SEG_UPSCALE_SIGMA_CHOICES = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0];
+export const SEG_UPSCALE_SIGMA_RECOMMENDED = { tiles: 0.6 };
 export const RTX_QUALITIES = ["LOW", "MEDIUM", "HIGH", "ULTRA"];
 export const UPSCALE_LABELS = { latent: T("Латент + доработка"), rtx: T("RTX VSR → доработка"), tiles: T("Плитки (SyncTile)") };
 export function normalizeUpscale(u) {
@@ -178,7 +183,7 @@ export const RUN_KINDS = ["draft", "refine", "full"];
 export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log"];
@@ -325,11 +330,16 @@ export function normalizeProject(p) {
     st.refine_steps = Math.max(0, Math.min(200, Math.trunc(num(st.refine_steps, 0))));
     st.refine_sigma = Math.round(Math.max(REFINE_SIGMA_RANGE[0], Math.min(REFINE_SIGMA_RANGE[1], num(st.refine_sigma, 0.4))) * 100) / 100;
     st.upscale_method = UPSCALE_METHODS.includes(st.upscale_method) ? st.upscale_method : "learned";
-    st.upscale_rev = 3;
+    const oldRev = num(p.settings && typeof p.settings === "object" ? p.settings.upscale_rev : 0, 0);   // as stored (the merged defaults already say 4)
+    st.upscale_rev = UPSCALE_REV;
     st.seg_upscale = normalizeUpscale(st.seg_upscale) || normalizeUpscale({ method: "latent", scale: 2 });
     { const cs = num(st.upscale_chunk_sec, 5.0); st.upscale_chunk_sec = cs <= 0 ? 0 : roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1);
       st.upscale_chunk_overlap = Math.trunc(Math.min(UPSCALE_CHUNK_OVERLAP_RANGE[1], Math.max(UPSCALE_CHUNK_OVERLAP_RANGE[0], num(st.upscale_chunk_overlap, 1)))); }
     normalizeUpscaleProfiles(st);
+    if (oldRev < 4) {   // rev 4: tiles default σ 0.35 -> 0.60; a profile still at the old default follows (picked values stay)
+      const tp = st.upscale_profiles.tiles;
+      if (Math.abs(tp.sigma - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6) { tp.sigma = SEG_UPSCALE_SIGMA.tiles; st.seg_upscale = profileUpscale(st, st.seg_upscale.method); }
+    }
     for (const k of ["draft", "refine"]) {
       st[k + "_sampler"] = String(st[k + "_sampler"] || "").slice(0, 64);
       st[k + "_scheduler"] = String(st[k + "_scheduler"] || "").slice(0, 64);
