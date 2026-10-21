@@ -597,6 +597,8 @@ export class H3Editor {
   seamQ(i) { const s = this.p.segments[i]; const q = s?.result?.seam; return i > 0 && q && q.verdict && s.link === "extend" && !this.isStale(i) ? q : null; }
   seamTip(i, q) {
     return `Шов ${i}→${i + 1}: ${SEAM_TXT[q.verdict]} (скачок ×${q.ratio} к обычному движению кадра; < 1.2 — незаметен, < 1.8 — лёгкий)`
+      + (q.raw ? `\nВыравнивание яркости и цвета: до ×${q.raw.ratio} (${SEAM_TXT[q.raw.verdict]}) → после ×${q.ratio}`
+        + (q.level?.offset ? ` · сдвиг ${q.level.offset.map((x) => (x > 0 ? "+" : "") + x).join("/")} (R/G/B из 255)` : "") : "")
       + (q.audio ? `\nЗвук: скачок громкости ${q.audio.db} дБ` + (q.audio.warn ? " — заметно" : "") : "")
       + (q.verdict !== "ok" || q.audio?.warn ? "\n«Ещё дубль» (новый сид) обычно даёт более гладкий стык" : "");
   }
@@ -623,7 +625,7 @@ export class H3Editor {
       h("div", { class: "h3z-pills" },
         h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; }), title: "Продолжить предыдущий отрезок: перекрытие + последний кадр как референс" }, "⟶ Продление"),
         h("div", { class: "h3z-pill" + (i > 0 && s.link === "cut" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: "Новая сцена без связи с предыдущим" }, "✂ Новая сцена"))));
-    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), `Шов ${i}→${i + 1}: ${SEAM_TXT[sq.verdict]} · ×${sq.ratio}`
+    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), `Шов ${i}→${i + 1}: ${SEAM_TXT[sq.verdict]} · ×${sq.ratio}` + (sq.raw ? ` (без выравнивания ×${sq.raw.ratio})` : "")
       + (sq.audio?.warn ? ` · звук: скачок ${sq.audio.db} дБ` : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, " — «Ещё дубль» может дать ровнее") : null)); }
     if (i > 0 && s.link === "extend" && !C.isFootage(s)) {
       const gO = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0);

@@ -83,3 +83,54 @@ def test_settings_defaults_and_seam_params():
     assert p["settings"]["audio_declick"] is True and p["settings"]["vram_headroom_gb"] == 1.0
     assert core.audio_seam_params(p)["declick"] is True
     assert "audio_declick" in core.GLOBAL_KEYS and "vram_headroom_gb" in core.GLOBAL_KEYS
+
+
+def _drift_clip():
+    torch.manual_seed(0)
+    base = torch.rand(1, 64, 96, 3) * 0.6 + 0.2
+    mv = torch.linspace(0, 0.02, 40)[:, None, None, None]
+    return torch.cat([(base + mv[:20]).clamp(0, 1), (base + mv[20:] + 0.06).clamp(0, 1)])
+
+
+def test_level_lock_matches_join_and_leaves_far_frames():
+    f = _drift_clip()
+    raw = f.clone()
+    before = seams.rate_video(f[:20], f[20:])
+    info = seams.level_lock(f, 20, n=8)
+    after = seams.rate_video(f[:20], f[20:])
+    assert before["verdict"] == "hard" and after["verdict"] == "ok"
+    assert info["offset"][0] < -10 and all(abs(g - 1) < 0.05 for g in info["gain"])
+    assert torch.equal(f[:12], raw[:12]) and torch.equal(f[28:], raw[28:])   # only the window each side
+    assert (f[19] - raw[19]).mean() > 0 > (f[20] - raw[20]).mean()           # both sides meet in the middle
+    # a real lighting change is softened, never flattened: the mean shift is limited
+    g = raw.clone(); g[20:] = (g[20:] + 0.4).clamp(0, 1)
+    seams.level_lock(g, 20)
+    assert float(g[20].mean() - g[19].mean()) > 0.1
+    assert seams.level_lock(f[:3], 1) is None and seams.level_lock(f, 20, n=0) is None
+
+
+def test_level_lock_in_run_only_touches_decoded_frames(tmp_path, monkeypatch):
+    import folder_paths
+    import importlib, sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    tg = importlib.import_module("test_gen")
+    from fakes import tiny_patcher, FakeClip, FakeVAE
+    out, inp = tmp_path / "out", tmp_path / "in"
+    out.mkdir(); (inp / "h3zerostudio").mkdir(parents=True)
+    from PIL import Image
+    for n in ("hero.png", "city.png"):
+        Image.new("RGB", (32, 32), (120, 80, 40)).save(inp / "h3zerostudio" / n)
+    monkeypatch.setattr(folder_paths, "get_output_directory", lambda: str(out))
+    monkeypatch.setattr(folder_paths, "get_input_directory", lambda: str(inp))
+    pt = tiny_patcher()
+    img1, _, lat1, info1 = gen.run_project(pt, FakeClip(), FakeVAE(), tg.project())
+    s1 = info1["segments"][1]["seam"]
+    assert s1["raw"]["ratio"] >= s1["ratio"] and "level" in s1
+    p = tg.project(); p["settings"]["level_lock"] = False
+    img2, _, lat2, info2 = gen.run_project(pt, FakeClip(), FakeVAE(), p)
+    assert all(r["cached"] for r in info2["segments"])                      # not in the cache key
+    assert "raw" not in info2["segments"][1]["seam"]
+    assert torch.equal(lat1["samples"].tensors[0], lat2["samples"].tensors[0])
+    assert info1["full"]["key"] != info2["full"]["key"] and not torch.equal(img1, img2)
+    assert core.level_lock_frames(core.normalize_project({"settings": {"level_lock_frames": 999}})) == 48
+    assert "level_lock" in core.GLOBAL_KEYS and "level_lock_frames" in core.GLOBAL_KEYS

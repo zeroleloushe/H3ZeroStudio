@@ -4,7 +4,11 @@
   motion around it (luma of small frames). ratio < 1.2 «шов незаметен», < 1.8 «лёгкий скачок», else «резкий шов».
 * rate_audio: loudness jump across the join (dB, 50 ms windows) against the usual 50 ms-to-50 ms change nearby.
 * declick: ~5 ms taper on each side of a hard audio cut — removes the sample-edge click without an audible hole
-  (10 ms in total stays under the gap-hearing threshold)."""
+  (10 ms in total stays under the gap-hearing threshold).
+* level_lock («Выравнивание яркости и цвета на стыках», idea after obvpm-timeline's level lock): brightness/colour
+  drift between two clips at a continuation join is matched on the decoded frames only — per channel gain + offset
+  from a few frames each side to their common middle, faded out over ~12 frames each side (smoothstep), clamped so a
+  real lighting change is softened, never flattened. Latents, cache and takes stay untouched."""
 import math
 
 import torch
@@ -98,3 +102,50 @@ def taper_edges(wave, sr, head=True, tail=True, ms=DECLICK_MS):
     if tail:
         wave[..., L - T:] = wave[..., L - T:] * r[::-1].copy() if isinstance(wave, np.ndarray) else wave[..., L - T:] * r.flip(0)
     return wave
+
+
+LEVEL_FRAMES = 12
+LEVEL_STAT = 4                 # frames each side the levels are measured on
+LEVEL_GAIN = (0.85, 1.18)      # contrast correction limits
+LEVEL_OFFSET = 0.08            # brightness/colour shift limit (0..1 scale, ≈ 20 of 255)
+
+
+def _stats(frames, width=96):
+    x = frames[..., :3].float().to("cpu").permute(0, 3, 1, 2)
+    k = max(1, int(x.shape[-1]) // width)
+    if k > 1:
+        x = torch.nn.functional.avg_pool2d(x, k)
+    x = x.permute(1, 0, 2, 3).reshape(3, -1)
+    return x.mean(1), x.std(1).clamp_min(1e-3)
+
+
+def level_lock(frames, at, n=LEVEL_FRAMES):
+    """In place on frames [F,H,W,C] 0..1: match the levels on both sides of the join at frame index `at`
+    (frames[at-1] | frames[at]). Returns {"gain", "offset"} of the correction applied at the join, or None."""
+    n = int(n)
+    if n <= 0 or at < 2 or frames.shape[0] - at < 2:
+        return None
+    nb, na = min(n, at), min(n, int(frames.shape[0]) - at)
+    k = min(LEVEL_STAT, nb, na)
+    mb, sb = _stats(frames[at - k:at])
+    ma, sa = _stats(frames[at:at + k])
+    mt, st = (mb + ma) / 2, (sb * sa).sqrt()
+    info = {"gain": [], "offset": []}
+
+    def side(seg, m, sd, ramp):
+        g = (st / sd).clamp(*LEVEL_GAIN)
+        dm = (mt - m).clamp(-LEVEL_OFFSET, LEVEL_OFFSET)   # limited shift of the mean (a real lighting change stays)
+        o = m * (1 - g) + dm                               # x' = (x - m)·g + m + dm
+        w = ramp.to(seg.device, seg.dtype)[:, None, None, None]
+        gg, oo = g.to(seg.device, seg.dtype), o.to(seg.device, seg.dtype)
+        c = seg[..., :3]
+        c.copy_((c * (1 + w * (gg - 1)) + w * oo).clamp(0, 1))
+        return g, dm
+
+    t = (torch.arange(max(nb, na), dtype=torch.float32) + 0.5) / max(nb, na)
+    ramp = 1 - t * t * (3 - 2 * t)                # 1 at the join -> 0 at n frames away
+    gb, ob = side(frames[at - nb:at], mb, sb, ramp[:nb].flip(0))
+    ga, oa = side(frames[at:at + na], ma, sa, ramp[:na])
+    info["gain"] = [round(float(x), 3) for x in (ga / gb)]
+    info["offset"] = [round(float(x) * 255, 1) for x in (oa - ob)]
+    return info

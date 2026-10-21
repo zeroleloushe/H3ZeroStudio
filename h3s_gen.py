@@ -1445,6 +1445,29 @@ def runs_state():
     return {"now": time.time(), "current": RUNS["current"], "history": run_history(5)}
 
 
+def level_lock_joins(images, parts, items, results, n):
+    """Level lock at every continuation join of the stitched frames; the seam rating keeps the raw value
+    («до») and shows the one after the correction."""
+    from . import h3s_seams
+    at = 0
+    for k, fr in enumerate(parts):
+        if k and items[k].get("link") == "extend" and items[k].get("overlap"):
+            try:
+                info = h3s_seams.level_lock(images, at, n)
+                r = results[k] if k < len(results) else None
+                if info and r is not None:
+                    after = h3s_seams.rate_video(images[max(0, at - 12):at], images[at:at + 12])
+                    raw = r.get("seam")
+                    if after and raw:
+                        r["seam"] = dict(after, raw={"ratio": raw["ratio"], "verdict": raw["verdict"]}, level=info)
+                    if raw and after and after["verdict"] != raw["verdict"]:
+                        log(f"seam {k}->{k + 1}: level lock {h3s_seams.VERDICTS[raw['verdict']]} (×{raw['ratio']}) -> "
+                            f"{h3s_seams.VERDICTS[after['verdict']]} (×{after['ratio']})")
+            except Exception as e:
+                vlog(f"level lock failed at join {k}: {e}")
+        at += int(fr.shape[0])
+
+
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
     rec = _run_begin(project)
     try:
@@ -1972,6 +1995,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             out_v.append(seg_v[i])
             out_a.append(seg_a[i])
     images = torch.cat(out_frames, dim=0)
+    level_n = core.level_lock_frames(proj)
+    if level_n:   # «Выравнивание яркости и цвета»: decoded frames only (latents, cache, takes untouched)
+        level_lock_joins(images, out_frames, run_items, results, level_n)
     lat_v, lat_a = torch.cat(out_v, dim=2), torch.cat(out_a, dim=-1)
     latent = {"samples": comfy.nested_tensor.NestedTensor((lat_v, lat_a))}
     seam = core.audio_seam_params(proj)
@@ -2091,7 +2117,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         if out_audio is not None:
             out_audio = {"waveform": out_audio["waveform"][..., :int(round(end / fps * out_audio["sample_rate"]))],
                          "sample_rate": out_audio["sample_rate"]}
-    full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}"
+    full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}" + (f"|L{level_n}" if level_n else "")
                                + "".join(f"|R{r['key']}" for r in reg_results)).encode()).hexdigest()[:16]
     full_name = f"full_{full_key}.mp4"
     full_path = os.path.join(d, full_name)

@@ -229,7 +229,14 @@ export function installSettings(Editor, { C, h, ICON }) {
         this.toggle("Кроссфейд на стыке", g.audio_xfade, (v) => set("audio_xfade", v), "Различный звук — плавный переход внутри перекрытия; тот же звук — короткая склейка без провала"),
         xf,
         this.toggle("Выравнивать громкость на стыке", g.audio_match, (v) => set("audio_match", v), "RMS у стыка, до ±6 дБ, возврат за 2 с"),
-        this.toggle("Убирать щелчки на склейках", g.audio_declick !== false, (v) => set("audio_declick", v), "Жёсткие склейки звука (новая сцена, футаж, края экспорта и обрезки): плавное затухание ~5 мс с каждой стороны вместо щелчка"));
+        this.toggle("Убирать щелчки на склейках", g.audio_declick !== false, (v) => set("audio_declick", v), "Жёсткие склейки звука (новая сцена, футаж, края экспорта и обрезки): плавное затухание ~5 мс с каждой стороны вместо щелчка"),
+        h("div", { class: "h3z-lbl" }, "Картинка на стыках", h("em", null, "только готовые кадры — кэш и дубли не меняются")),
+        this.toggle("Выравнивать яркость и цвет", g.level_lock !== false, (v) => set("level_lock", v),
+          "На стыках-продолжениях яркость, контраст и цвет обеих сторон плавно сводятся к общему среднему (не больше ±20/255), без перегенерации"),
+        g.level_lock !== false ? (() => { const r = h("input", { class: "h3z-range", type: "range", min: 2, max: 48, step: 1, value: g.level_lock_frames ?? 12 });
+          const v = h("div", { class: "h3z-val" }, `${g.level_lock_frames ?? 12} кадр.`);
+          r.oninput = () => { v.textContent = `${r.value} кадр.`; set("level_lock_frames", Number(r.value), { coalesce: "lvl", render: "none" }); };
+          return this.field("Окно перехода (каждая сторона)", h("div", { class: "h3z-row" }, r, v)); })() : null);
       const cache = det("Кэш",
         this.toggle("Кэш готовых отрезков", g.cache, (v) => set("cache", v), "Пропускать неизменённые отрезки"),
         h("button", { class: "h3z-btn sm danger", html: ICON.broom + "<span>Очистить кэш проекта</span>", title: "Готовые дубли остаются (восстановятся без генерации)", onclick: () => this.clearCache() }),
