@@ -57,6 +57,73 @@ def our_root():
     return os.path.join(os.path.abspath(folder_paths.get_output_directory()), "h3zerostudio", "_characters")
 
 
+UPLOAD_SUB = ".uploads"            # files from the PC for «Создать»: global, removed after the card is made / after a day
+UPLOAD_MAX_AGE = 86400
+
+
+def uploads_dir():
+    """<library>/.uploads — inside the global card library (never a project folder); scan() skips dot folders."""
+    return os.path.join(our_root(), UPLOAD_SUB)
+
+
+def uploads_subfolder():
+    import folder_paths
+    return os.path.relpath(uploads_dir(), os.path.abspath(folder_paths.get_output_directory())).replace("\\", "/")
+
+
+def prune_uploads(max_age=UPLOAD_MAX_AGE, now=None):
+    d, now, n = uploads_dir(), now or time.time(), 0
+    if not os.path.isdir(d):
+        return 0
+    for f in os.listdir(d):
+        p = os.path.join(d, f)
+        try:
+            if os.path.isfile(p) and now - os.path.getmtime(p) > max_age:
+                os.remove(p)
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
+def save_upload(tmp, filename):
+    """A streamed upload -> <library>/.uploads/<sha12>_<name> (same content = same file). {name, subfolder, type}."""
+    import hashlib
+    prune_uploads()
+    h = hashlib.sha256()
+    with open(tmp, "rb") as f:
+        for c in iter(lambda: f.read(1 << 20), b""):
+            h.update(c)
+    base = re.sub(r"[^\w.\-]+", "_", os.path.basename(filename or "upload.bin"))[-80:] or "upload.bin"
+    name = h.hexdigest()[:12] + "_" + base
+    os.makedirs(uploads_dir(), exist_ok=True)
+    dst = os.path.join(uploads_dir(), name)
+    if os.path.exists(dst):
+        os.remove(tmp)
+        os.utime(dst)
+    else:
+        os.replace(tmp, dst)
+    return {"name": name, "subfolder": uploads_subfolder(), "type": "output"}
+
+
+def drop_uploads(spec):
+    """After «Создать»: the uploaded sources of this spec are no longer needed."""
+    d, n = os.path.normcase(os.path.abspath(uploads_dir())), 0
+    srcs = list(spec.get("photos") or []) + [spec.get("clip") or {}, spec.get("voice") or {}]
+    for s in srcs:
+        a = s.get("asset") if isinstance(s, dict) else None
+        if not isinstance(a, dict) or a.get("type", "input") != "output" or a.get("subfolder") != uploads_subfolder():
+            continue
+        p = os.path.join(uploads_dir(), os.path.basename(str(a.get("file") or "")))
+        if os.path.normcase(os.path.dirname(os.path.abspath(p))) == d and os.path.isfile(p):
+            try:
+                os.remove(p)
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
 def models_root():
     import folder_paths
     try:
@@ -702,7 +769,10 @@ def create_from_editor(body):
         if avae is None and body.get("audio_vae") and spec.get("voice"):
             avae = h3s_models._load_vae(str(body["audio_vae"]), "audio_vae")[1]
     li, lc, lv = _loaders()
-    return create_now(spec, vae=vae, audio_vae=avae, load_image=li, load_clip=lc, load_voice=lv)
+    card = create_now(spec, vae=vae, audio_vae=avae, load_image=li, load_clip=lc, load_voice=lv)
+    drop_uploads(spec)
+    prune_uploads()
+    return card
 
 
 def status():

@@ -261,3 +261,55 @@ console.log(JSON.stringify({{
     assert defs[1] == "<Picture 3> — Pine Forest: location" and defs[2].startswith("<Subject 2> Old_Narrator — <Audio 3>: speaker")
     assert [d["line"] for d in o["draft"]["ret"]][-2:] == ["<Picture 3>: partially_preserved", "<Audio 3>: reference"]
     assert "Pine Forest" in o["status"] and "Old Narrator" in o["status"] and "Subject 7" in o["status"] and "не упомянуты: Pine Forest" in o["status"].replace("Anna, ", "")
+
+
+def test_library_is_global_and_survives_project_ops(dirs, tmp_path):
+    """Cards live in one global library (output/h3zerostudio/_characters): project delete, «Очистить неиспользуемое»,
+    duplicate, zip export / import and the cache clear never touch it; a project only stores the card id + signature."""
+    from h3s import h3s_library as lib, h3s_projfiles as pf
+    card = make("Keeper")
+    root = chars.our_root()
+    assert root == os.path.join(str(dirs / "out"), "h3zerostudio", "_characters")
+    before = sorted(os.listdir(root))
+    p = core.normalize_project({"id": "pkeep", "segments": [{"id": "a", "frames": 124, "cards": [{"id": card["id"]}]}],
+                                "cards": {card["id"]: core.card_snap(card)}})
+    assert set(p["cards"][card["id"]]) <= {"name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance",
+                                           "retained_attributes", "voice_description"}   # id + signature, no files
+    os.makedirs(lib.project_root("pkeep"), exist_ok=True)
+    lib.project_save(p)
+    z = lib.export_zip(p)
+    assert all("_characters" not in n for n in __import__("zipfile").ZipFile(z["path"]).namelist())
+    lib.project_duplicate(p, "pkeep2")
+    lib.project_delete("pkeep", files=True)
+    lib.project_delete("pkeep2", files=True)
+    pf.clean_unused()
+    for bad in ("_characters", "_presets"):
+        with pytest.raises(ValueError):
+            lib.project_root(bad)
+        with pytest.raises(ValueError):
+            gen.project_dir({"id": bad})
+        with pytest.raises(ValueError):
+            lib.project_duplicate(p, bad)
+    assert sorted(os.listdir(root)) == before and chars.find(card["id"])
+
+
+def test_uploads_are_global_temp(dirs, monkeypatch):
+    """Files from the PC for «Создать» go to _characters/.uploads (not a project), are dropped after the card is made,
+    left-overs expire after a day, and the library scan never lists them."""
+    import time
+    src = dirs / "in" / "h3zerostudio" / "hero.png"
+    tmp = dirs / "x.part"
+    tmp.write_bytes(src.read_bytes())
+    r = chars.save_upload(str(tmp), "мой герой.png")
+    assert r["type"] == "output" and r["subfolder"] == "h3zerostudio/_characters/.uploads" and r["name"].endswith("мой_герой.png")
+    up = os.path.join(chars.uploads_dir(), r["name"])
+    assert os.path.isfile(up) and not tmp.exists()
+    assert all(c["rel"].find(".uploads") < 0 for c in chars.scan())
+    monkeypatch.setitem(chars.VAES, "vae", FakeVAE())
+    asset = {"file": r["name"], "subfolder": r["subfolder"], "type": "output"}
+    card = chars.create_from_editor({"spec": {"name": "FromDisk", "concept": "identity", "res": 512, "photos": [{"asset": asset}]}})
+    assert card and not os.path.exists(up)
+    old = os.path.join(chars.uploads_dir(), "old.png")
+    open(old, "wb").write(b"x")
+    os.utime(old, (time.time() - 2 * 86400,) * 2)
+    assert chars.prune_uploads() == 1 and not os.path.exists(old)

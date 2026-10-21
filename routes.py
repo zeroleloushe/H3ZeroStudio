@@ -116,7 +116,11 @@ def register():
         pid = re.sub(r"[^A-Za-z0-9_-]", "", str(body.get("id") or ""))
         if not pid:
             return web.json_response({"ok": False, "error": "no id"}, status=400)
-        d = os.path.join(folder_paths.get_output_directory(), "h3zerostudio", pid)
+        from . import h3s_library
+        try:
+            d = h3s_library.project_root(pid)   # refuses _characters / _presets / … (global libraries are never a project)
+        except ValueError as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
         from . import h3s_store   # finished takes (latent sidecars, masters, previews) survive unless takes=true
         n = h3s_store.clear(d, takes=bool(body.get("takes"))) if os.path.isdir(d) else 0
         return web.json_response({"ok": True, "removed": n})
@@ -173,6 +177,39 @@ def register():
             import asyncio
             card = await asyncio.get_running_loop().run_in_executor(None, h3s_chars.create_from_editor, body)
             return web.json_response({"ok": True, "data": {"card": card}})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.post("/h3zero/chars/upload")
+    async def chars_upload(request):
+        """multipart file -> the global card library's .uploads (never a project folder; cleaned after «Создать» / a day)."""
+        from . import h3s_chars
+        import asyncio, tempfile
+        try:
+            reader = await request.multipart()
+            res = None
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name in ("file", "image"):
+                    os.makedirs(h3s_chars.uploads_dir(), exist_ok=True)
+                    fd, tmp = tempfile.mkstemp(prefix=".up-", suffix=".part", dir=h3s_chars.uploads_dir())
+                    os.close(fd)
+                    try:
+                        with open(tmp, "wb") as f:
+                            while True:
+                                c = await part.read_chunk(1 << 20)
+                                if not c:
+                                    break
+                                f.write(c)
+                        res = await asyncio.get_running_loop().run_in_executor(None, h3s_chars.save_upload, tmp, part.filename)
+                    finally:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+            if not res:
+                raise ValueError("no file")
+            return web.json_response({"ok": True, "data": res})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
 

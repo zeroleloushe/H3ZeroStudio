@@ -325,7 +325,7 @@ def _link_tree(src, dst):
 
 def project_duplicate(project, new_id, name=None):
     old, new = clean_id(project.get("id")), clean_id(new_id)
-    if not old or not new or new == old:
+    if not old or not new or new == old or new in SPECIAL:
         raise ValueError("нужен новый id")
     p = _relink(project, old, new)
     p["name"] = str(name or (str(project.get("name") or "H3 проект") + " (копия)"))[:200]
@@ -427,9 +427,9 @@ def import_zip(zip_path, new_id):
         if not old:
             raise ValueError("в проекте нет id")
         new = old
-        if os.path.isfile(os.path.join(projects_dir(), old + ".json")) or os.path.isdir(os.path.join(_out(), ROOT, old)):
+        if old in SPECIAL or os.path.isfile(os.path.join(projects_dir(), old + ".json")) or os.path.isdir(os.path.join(_out(), ROOT, old)):
             new = clean_id(new_id)
-            if not new:
+            if not new or new in SPECIAL:
                 raise ValueError("нужен новый id")
         renames = {}
         for info in z.infolist():

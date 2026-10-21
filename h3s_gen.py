@@ -1186,6 +1186,9 @@ def run_status(node_id):
 
 def project_dir(project):
     import folder_paths
+    from .h3s_library import SPECIAL
+    if project["id"] in SPECIAL or not project["id"]:
+        raise ValueError(f"H3ZeroStudio: недопустимый id проекта {project['id']!r}")
     sub = os.path.join("h3zerostudio", project["id"])
     d = os.path.join(folder_paths.get_output_directory(), sub)
     os.makedirs(os.path.join(d, "cache"), exist_ok=True)

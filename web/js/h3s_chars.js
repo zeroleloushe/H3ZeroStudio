@@ -443,8 +443,8 @@ export function installChars(Editor, { C, h, ICON }) {
       inp.onchange = () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) this.charAddFiles(fs, accept.startsWith("image") ? "photo" : accept.startsWith("video") ? "clip" : "voice"); };
       return h("span", { class: "fb" }, h("button", { class: "h3z-btn sm", type: "button", title, onclick: () => inp.click() }, "📁 С диска"), inp);
     },
-    /** Files from the PC → the project's own folder (output/h3zerostudio/<id>/assets, one copy per content — the
-     *  self-contained project rule) but NOT into the asset list: they live in this form and in the card's sources.
+    /** Files from the PC → the global card library's temp folder (output/h3zerostudio/_characters/.uploads, one copy
+     *  per content; removed after «Создать» or after a day) — never a project folder and never the asset list.
      *  want: "photo" | "clip" | "voice" | undefined (by file type: images → photos, video → clip, audio → voice). */
     async charAddFiles(files, want) {
       const f = this.cf; if (!f || f.edit) return;
@@ -457,10 +457,10 @@ export function installChars(Editor, { C, h, ICON }) {
       for (const x of list) {
         const k = kind(x);
         try {
-          const r = await this.host.upload(x, this.p.id);
+          const r = await this.host.charsUpload(x);
           const rf = { file: r.name, subfolder: r.subfolder || "", type: r.type || "output" };
           const url = this.host.url({ filename: rf.file, subfolder: rf.subfolder, type: rf.type });
-          const name = (x.name && x.name !== "image.png" ? x.name : r.name).replace(/\.[^.]+$/, "");
+          const name = (x.name && x.name !== "image.png" ? x.name : r.name.replace(/^[0-9a-f]{12}_/, "")).replace(/\.[^.]+$/, "");
           if (this.cf !== f) return;
           if (k === "image" && want !== "clip" && want !== "voice") {
             if (!f.photos.some((p) => p.key === "u:" + rf.subfolder + "/" + rf.file)) f.photos.push({ key: "u:" + rf.subfolder + "/" + rf.file, ref: rf, name, url, crop: null });
@@ -480,7 +480,7 @@ export function installChars(Editor, { C, h, ICON }) {
         } catch (e) { this.toast("Не удалось загрузить " + x.name + ": " + (e.message || e), true); }
       }
       f.uploading = Math.max(0, (f.uploading || 0) - list.length);
-      if (this.cf === f) { this.renderLeft(); if (ok) this.toast(`Загружено в папку проекта: ${ok} (в «Ассеты» не добавляются)`); }
+      if (this.cf === f) { this.renderLeft(); if (ok) this.toast(`Загружено: ${ok} — временно, для этой карточки (в проект и «Ассеты» не попадают)`); }
     },
     // ------------------------------------------------------------------ prompt editor (increment 2)
     /** The card labels of a clip / span as prompt-editor reference items (after the plain refs). */

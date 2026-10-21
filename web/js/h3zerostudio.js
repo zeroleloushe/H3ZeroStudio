@@ -64,6 +64,14 @@ function makeHost(node) {
     },
     url: viewUrl,
     apiURL: (p) => api.apiURL(p),
+    // «Персонажи»: files from the PC go to the global card library's .uploads (not a project folder)
+    charsUpload: async (file) => {
+      const fd = new FormData(); fd.append("file", file, file.name || "pasted.png");
+      const r = await api.fetchApi("/h3zero/chars/upload", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));
+      if (!j.ok) throw new Error(j.error || r.status);
+      return j.data;
+    },
     peaks: async (ref) => {
       const q = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder || "", type: ref.type || "input", bins: "4000" });
       const r = await api.fetchApi("/h3zero/peaks?" + q.toString());
