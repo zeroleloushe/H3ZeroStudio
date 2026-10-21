@@ -86,6 +86,7 @@ export function installMenus(Editor, { C, h, ICON }) {
         { icon: ICON.dice, label: "Ещё дубль (новый сид)", fn: () => this.newTake(i), dis: !st.ok },
         stale && s.result && this.restoreTake?.(i) ? { label: "↺ Восстановить входы дубля", title: "Вернуть всё, что изменилось с этого дубля (один шаг отмены) — без перегенерации", fn: () => this.restoreAll(i), dis: busy } : null,
         stale && s.result && this.restoreTake?.(i) ? { label: "↺ Восстановить… (выбрать поля)", fn: () => this.openRestorePanel(i) } : null,
+        s.gap ? { label: "✕ Убрать промежуток перед отрезком", fn: () => this.removeGap(i) } : null,
         !st.ok && !busy && !s.freeze ? { why: st.why } : null,
         takes.length > 1 ? { label: `Дубли (${this.takeIndex(s, s.active_take) + 1}/${takes.length})`, sub: takes } : null,
         { icon: this.constructor.VIEWER_ICONS?.view || "", label: "Удобный просмотр", title: "Этот клип во весь экран: масштаб до ×4, покадрово, скорость, петля", fn: () => this.viewerForClip(i), dis: !this.viewerClipSpec(i) },

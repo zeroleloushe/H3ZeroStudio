@@ -85,6 +85,34 @@ def masks(win, T, A, h, w):
     return keep_v, keep_a, hv, tv, ha, ta
 
 
+def bridge_source(vae, audio_vae, images, audio, win, w, h):
+    """Source latents of a span over a join: the stitched frames [ws, we) (gaps are black, regenerated anyway)
+    VAE-encoded at the run canvas, and the stitched sound of the window encoded with the audio VAE (silence
+    without one). Returns (video [1,C,T,h,w], audio [1,32,2,A])."""
+    ws, we = win["ws"], win["we"]
+    px = images[ws:we]
+    if px.shape[0] < we - ws:
+        px = torch.cat([px, torch.zeros((we - ws - px.shape[0],) + tuple(px.shape[1:]), dtype=px.dtype)])
+    if (int(px.shape[2]), int(px.shape[1])) != (w, h):
+        px = gen._resize(px, w, h)
+    v = vae.encode(px[..., :3]).float().cpu()
+    A = core.audio_len(win["frames"])
+    a = None
+    if audio_vae is not None and audio is not None:
+        sr = int(audio["sample_rate"])
+        wf = audio["waveform"][0]
+        s0, n = int(round(ws / core.FPS * sr)), int(round((we - ws) / core.FPS * sr))
+        seg = torch.zeros(wf.shape[0], n)
+        part = wf[:, s0:s0 + n]
+        seg[:, :part.shape[-1]] = part
+        a = gen.encode_audio(audio_vae, {"waveform": seg[None], "sample_rate": sr}).float().cpu()
+    if a is None:
+        a = torch.zeros(1, 32, 2, A)
+    if a.shape[-1] < A:
+        a = torch.nn.functional.pad(a, (0, A - a.shape[-1]))
+    return v, a[..., :A]
+
+
 def sample_region(model, clip, vae, proj, region, win, src_v, src_a, kind, ref_images, ctx=None, audio_z=None,
                   audio_cov=None, step_cb=None, preview_cb=None, refine=None):
     """One sampling pass of a region window. src_v/src_a: the window's source latents (clean context everywhere).
@@ -264,7 +292,8 @@ def plan_regions(proj, all_items, items, first, keys, dkeys, ref_sigs, env, kind
             continue
         e = env[max(0, win["seg"])] if isinstance(env, (list, tuple)) else env   # model preset of the region's clip
         key = core.region_key(proj, rg, win, keys, ref_sigs, e + ("|" + up_tag if kind == "refine" else ""), kind, run_wh)
-        dkey = core.region_key(proj, rg, win, dkeys, ref_sigs, e, "draft", draft_wh) if kind == "refine" else None
+        bridge = win.get("mode") == "bridge"   # a span over a join: one pass from the stitched picture (no draft stage)
+        dkey = core.region_key(proj, rg, win, dkeys, ref_sigs, e, "draft", draft_wh) if kind == "refine" and not bridge else None
         if not gen_it and str(act.get("key")) != key:
             gen.log(f"region «{name}»: take {act.get('key')} is out of date (the clips under it changed: now {key}) — "
                     f"not applied; «↻ Пересоздать» makes a new one")
@@ -277,8 +306,8 @@ def plan_regions(proj, all_items, items, first, keys, dkeys, ref_sigs, env, kind
         cached = os.path.isfile(pt) and (use_cache or not gen_it)
         steps = 0
         if not cached:
-            n = core.region_params(proj, rg, win, kind)["steps"]
-            if kind == "refine":
+            n = core.region_params(proj, rg, win, "full" if bridge and kind == "refine" else kind)["steps"]
+            if kind == "refine" and not bridge:
                 steps = n + (0 if os.path.isfile(os.path.join(d, "cache", f"region_{dkey}.pt")) else core.region_params(proj, rg, win, "draft")["steps"])
             else:
                 steps = n

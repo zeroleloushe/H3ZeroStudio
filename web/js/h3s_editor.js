@@ -21,6 +21,7 @@ import { installViewer } from "./h3s_viewer.js";
 import { installPromptEditor } from "./h3s_prompted.js";
 import { installPresets } from "./h3s_presets.js";
 import { installModelTab } from "./h3s_modeltab.js";
+import { installGaps } from "./h3s_gaps.js";
 import { installTimer } from "./h3s_timer.js";
 
 export const PALETTE = [
@@ -627,13 +628,22 @@ export class H3Editor {
       h("span", { class: "h3z-num", style: { background: `linear-gradient(135deg,${pal[0]},${pal[1]})` } }, i + 1), name, colors,
       h("button", { class: "h3z-btn sm icon danger", title: "Удалить отрезок (Del)", html: ICON.trash, onclick: () => this.deleteSeg(i) })));
     // link
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Связь с предыдущим", h("em", null, i === 0 ? "первый отрезок" : s.link === "extend" ? (it.overlap ? `перекрытие ${it.overlap} кадр.` : "только последний кадр") : "монтажная склейка")),
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Связь с предыдущим", h("em", null, s.gap ? `промежуток ${s.gap} кадр. — новая сцена` : i === 0 ? "первый отрезок" : s.link === "extend" ? (it.overlap ? `перекрытие ${it.overlap} кадр.` : "только последний кадр") : "монтажная склейка")),
       h("div", { class: "h3z-pills" },
-        h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; }), title: "Продолжить предыдущий отрезок: перекрытие + последний кадр как референс" }, "⟶ Продление"),
-        h("div", { class: "h3z-pill" + (i > 0 && s.link === "cut" ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: "Новая сцена без связи с предыдущим" }, "✂ Новая сцена"))));
+        h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" && !s.gap ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; p.segments[i].gap = 0; }), title: "Продолжить предыдущий отрезок: перекрытие + последний кадр как референс" + (s.gap ? " (промежуток будет убран)" : "") }, "⟶ Продление"),
+        h("div", { class: "h3z-pill" + (i > 0 && (s.link === "cut" || s.gap) ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: "Новая сцена без связи с предыдущим" }, "✂ Новая сцена"))));
     { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), `Шов ${i}→${i + 1}: ${SEAM_TXT[sq.verdict]} · ×${sq.ratio}` + (sq.raw ? ` (без выравнивания ×${sq.raw.ratio})` : "")
       + (sq.audio?.warn ? ` · звук: скачок ${sq.audio.db} дБ` : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, " — «Ещё дубль» может дать ровнее") : null)); }
-    if (i > 0 && s.link === "extend" && !C.isFootage(s)) {
+    if (s.gap) {
+      const gIn = h("input", { class: "h3z-in", type: "number", min: 0, max: C.MAX_GAP, value: s.gap || 0, style: { width: "84px", padding: "4px 8px" },
+        title: "Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. Ctrl+перетаскивание клипа на таймлайне делает то же" });
+      gIn.onchange = () => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+gIn.value || 0))); });
+      card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, "Промежуток перед отрезком"), gIn,
+        h("em", { style: { opacity: .7, fontSize: "11px" } }, `${(s.gap / C.FPS).toFixed(2)} с`),
+        h("button", { class: "h3z-btn sm", onclick: () => this.fillGap(i), title: "Участок ✂ поверх промежутка: генерация связки между сценами" }, "✂ Заполнить"),
+        h("button", { class: "h3z-btn sm", onclick: () => this.removeGap(i) }, "✕ Убрать")));
+    }
+    if (i > 0 && s.link === "extend" && !s.gap && !C.isFootage(s)) {
       const gO = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0);
       const ovS = h("select", { class: "h3z-sel sm", title: "Перекрытие этого стыка: сколько кадров (и звука) нового отрезка берётся из хвоста предыдущего. Сетка H3: 17·k + 5 кадров." },
         h("option", { value: -1, selected: (s.overlap_blocks ?? -1) < 0 }, `по умолчанию (${this.ovLabel(gO)})`),
@@ -1252,7 +1262,7 @@ export class H3Editor {
         h("div", { class: "t" }, h("span", { class: "n" }, i + 1), h("span", { class: "nm" }, s.name || `Отрезок ${i + 1}`), h("span", { class: "d" }, `${(it.frames / 24).toFixed(1)} с`)),
         wd > 120 ? h("div", { class: "p" }, (s.prompt || "").trim() || h("i", { style: { opacity: 0.6 } }, "без промпта")) : null,
         h("div", { class: "rf" }, wd > 90 ? refs.slice(0, 5).map((a) => h("img", { src: this.assetUrl(a), title: a.name, draggable: "false" })) : null,
-          i > 0 && wd > 70 ? h("span", { class: "lk" }, s.link === "extend" ? "⟶ продл." : "✂ сцена") : null)));
+          i > 0 && wd > 70 ? h("span", { class: "lk" }, it.gap ? "⟷ после промежутка" : s.link === "extend" ? "⟶ продл." : "✂ сцена") : null)));
       {   // per-clip «Сгенерировать» / «Ещё дубль»
         const st = this.segGenState(i);
         const mk = (icon, title, fn, dis) => { const b = h("button", { class: "h3z-cb" + (dis ? " dis" : ""), html: icon, title: dis ? st.why || title : title });
@@ -1284,7 +1294,7 @@ export class H3Editor {
       if (s.freeze) clip.append(h("div", { class: "frz", title: "Зафиксирован: никогда не перегенерируется. Разморозить — в карточке или меню" }, "🔒 зафиксирован"));
       clip.append(h("div", { class: "pg" }, h("i", { style: { width: "0%" } })));
       const hr = h("div", { class: "hr", title: "Тяните, чтобы изменить длину (шаг 17 кадров)" });
-      if (i === its.length - 1) clip.append(hr); // inner boundaries use the seam handle (roll edit)
+      if (i === its.length - 1 || its[i + 1].gap) clip.append(hr); // inner boundaries use the seam handle (roll edit)
       hr.addEventListener("pointerdown", (e) => this.resizeStart(e, i));
       clip.addEventListener("pointerdown", (e) => { if (e.target !== hr) this.clipDown(e, i); });
       clip.addEventListener("contextmenu", (e) => this.clipMenu(e, i));
@@ -1304,7 +1314,9 @@ export class H3Editor {
         ovl.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.sel = i; this.selAudio = null; this.pvMode = "segment"; this.renderAll(); } });
         ovl.addEventListener("contextmenu", (e) => this.clipMenu?.(e, i)); }
     });
+    this.renderGaps(vt, its, ppf);
     for (let i = 0; i + 1 < its.length; i++) {
+      if (its[i + 1].gap) continue;   // a gap: each side has its own length handle
       const seam = h("div", { class: "h3z-seam", style: { left: its[i].end * ppf + "px" }, title: "Тяните шов: длины соседних отрезков меняются вместе (сетка 17 кадров), общая длина не меняется.\nShift — менять только левый отрезок" }, h("span", null, "⟷"));
       seam.addEventListener("pointerdown", (e) => this.rollStart(e, i));
       vt.append(seam);
@@ -1372,6 +1384,8 @@ export class H3Editor {
 
   clipDown(e, i) {
     if (e.button !== 0) return;
+    if (e.ctrlKey || e.metaKey) return this.gapDrag(e, i);   // Ctrl+drag: move apart, a persistent gap
+    if (this.selGap) { this.selGap = null; }
     e.preventDefault();
     const sx = e.clientX, clip = this.$.clips[i];
     let dragging = false, target = i, ins = null;
@@ -1495,7 +1509,8 @@ export class H3Editor {
   deleteSeg(i) {
     if (i < 0 || !this.seg(i)) return;
     this.hideHover?.();
-    this.mutate((p) => { p.segments.splice(i, 1); }, { render: "none" });
+    // the gap before the deleted clip stays (moves to the next clip): gaps are only removed on purpose
+    this.mutate((p) => { const [d] = p.segments.splice(i, 1); if (d?.gap && p.segments[i]) p.segments[i].gap = Math.min(C.MAX_GAP, (p.segments[i].gap || 0) + d.gap); }, { render: "none" });
     this.sel = Math.min(i, this.p.segments.length - 1);
     this.renderAll(); this.toast("Отрезок удалён · Ctrl+Z — вернуть");
   }
@@ -1538,7 +1553,7 @@ export class H3Editor {
     if (ctrl || e.altKey) return;
     const map = {
       Space: () => this.togglePlay(), KeyS: () => (this.selAudio ? this.splitAudio() : this.split()),
-      Delete: () => (this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
+      Delete: () => (this.selectedGapIndex() >= 0 ? this.removeGap(this.selectedGapIndex()) : this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)), Backspace: () => (this.selectedGapIndex() >= 0 ? this.removeGap(this.selectedGapIndex()) : this.selRegion ? this.deleteRegion(this.selRegion) : this.selAudio ? this.deleteAudio() : this.deleteSeg(this.sel)),
       KeyD: () => this.duplicate(), KeyE: () => this.extend(), KeyM: () => this.addMarker(), KeyR: () => this.toggleRegionMode(), KeyF: () => this.toggleMainFullscreen(), Home: () => this.seek(0), End: () => this.seek(this.totalFrames()),
       ArrowLeft: () => this.seek(Math.round(this.playhead) - (e.shiftKey ? 24 : 1)), ArrowRight: () => this.seek(Math.round(this.playhead) + (e.shiftKey ? 24 : 1)),
       BracketLeft: () => this.jumpSeg(-1), BracketRight: () => this.jumpSeg(1),
@@ -1813,4 +1828,5 @@ installViewer(H3Editor, { C, h, ICON });
 installPromptEditor(H3Editor, { C, h, ICON });
 installPresets(H3Editor, { C, h, ICON });
 installModelTab(H3Editor, { C, h, ICON });
+installGaps(H3Editor, { C, h, ICON });
 installTimer(H3Editor, { C, h });

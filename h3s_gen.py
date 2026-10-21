@@ -1445,12 +1445,17 @@ def runs_state():
     return {"now": time.time(), "current": RUNS["current"], "history": run_history(5)}
 
 
-def level_lock_joins(images, parts, items, results, n):
+def level_lock_joins(images, parts, items, results, n, gaps=(), gap_at=()):
     """Level lock at every continuation join of the stitched frames; the seam rating keeps the raw value
-    («до») and shows the one after the correction."""
+    («до») and shows the one after the correction. parts: the clips' stitched frames; gaps/gap_at: lengths and
+    positions (in the full list of parts incl. gaps) of black gap fillers between them."""
     from . import h3s_seams
     at = 0
+    gi = 0
     for k, fr in enumerate(parts):
+        while gi < len(gap_at) and gap_at[gi] <= k + gi:
+            at += gaps[gi]
+            gi += 1
         if k and items[k].get("link") == "extend" and items[k].get("overlap"):
             try:
                 info = h3s_seams.level_lock(images, at, n)
@@ -1980,11 +1985,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     elif any(u is not None for u in seg_up):
         log(f"stitch: mixed canvases -> frames resized to {cw_}x{ch_}; the latent output keeps the base latents ({run_w}x{run_h})")
     out_frames, out_v, out_a = [], [], []
+    gap_parts = []   # (index into out_frames) of the black gap fillers: not clips (level lock / seam rating skip them)
     for i, it in enumerate(run_items):
         ovf = it["overlap"] if i > 0 else 0
         fr_i = seg_frames[i][ovf:]
         if (int(fr_i.shape[2]), int(fr_i.shape[1])) != (cw_, ch_):
             fr_i = _resize(fr_i, cw_, ch_)
+        g_i = int(it.get("gap") or 0) if (i > 0 or not first) else 0
+        if g_i:   # an empty stretch of the timeline: black frames (the sound is silence: stitched by start frame)
+            gap_parts.append(len(out_frames))
+            out_frames.append(torch.zeros((g_i, ch_, cw_, int(fr_i.shape[3])), dtype=fr_i.dtype))
         out_frames.append(fr_i)
         if ovf:
             out_v.append(seg_v[i][:, :, core.latent_t(ovf):])
@@ -1997,7 +2007,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     images = torch.cat(out_frames, dim=0)
     level_n = core.level_lock_frames(proj)
     if level_n:   # «Выравнивание яркости и цвета»: decoded frames only (latents, cache, takes untouched)
-        level_lock_joins(images, out_frames, run_items, results, level_n)
+        level_lock_joins(images, [f for k, f in enumerate(out_frames) if k not in gap_parts], run_items, results, level_n,
+                         gaps=[int(out_frames[k].shape[0]) for k in gap_parts], gap_at=gap_parts)
     lat_v, lat_a = torch.cat(out_v, dim=2), torch.cat(out_a, dim=-1)
     latent = {"samples": comfy.nested_tensor.NestedTensor((lat_v, lat_a))}
     seam = core.audio_seam_params(proj)
@@ -2026,6 +2037,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         except Exception as e:
             vlog(f"audio seam rating failed: {e}")
     reg_results = []
+    images0, audio0 = images, out_audio   # spans over joins encode the stitched result before any region splice
     for rp in reg_plans:
         rg, win = rp["rg"], rp["win"]
         name = rg.get("name") or rg["id"]
@@ -2049,6 +2061,17 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 vlog(f"[{text_bar(step + 1, total)}] region «{name}» step {step + 1}/{total} · {done_steps[0]}/{todo_steps}")
             pcb_r = LivePreview(notify, MC(si)[0], si, settings=s, audio_vae=None, out_dir=d, sub=sub)
             refs_r = [load_asset_image(x) for x in core.region_refs(proj, rg)]
+            if win.get("mode") == "bridge":
+                sv, sa = region.bridge_source(vae, audio_vae, images0, audio0, win, run_w, run_h)
+                rk_ = "full" if kind == "refine" else kind
+                log(f"region «{name}»: span over a join ({win['ws']}-{win['we']}, regenerate {win['a']}-{win['b']}"
+                    + (f", gaps {win['gaps']}" if win.get("gaps") else "") + f") — source encoded from the stitched video" + (" · one final pass" if rk_ != kind else ""))
+                rv, ra = region.sample_region(*MC(si), vae, proj, rg, win, sv, sa, rk_, refs_r, None, audio_z, audio_cov, r_step, pcb_r)
+                torch.save({"v": rv, "a": ra, "win": {k: win[k] for k in ("ws", "a", "b", "we", "to_end")}}, rp["pt"] + ".part")
+                media.replace_file(rp["pt"] + ".part", rp["pt"])
+                log(f"region «{name}»: done in {time.perf_counter() - t_r:.1f}s")
+            cv = ca = None
+        if not hit_r and win.get("mode") != "bridge":
             cv, ca = region.chain_latents(items, base_v, seg_a, win["i0"], max(win["segs"]))
             sv, sa, a0 = region.window_latents(win, cv, ca)
             ha = round(win["head"] / core.FPS * core.AUDIO_LATENT_FPS)

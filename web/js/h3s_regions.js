@@ -80,7 +80,7 @@ export function installRegions(Editor, { C, h, ICON }) {
       const its = this.items();
       const w = C.regionWindow(this.p, { start, end, head: -1, tail: -1 }, its);
       // outside the clips: nothing to regenerate. Crossing a cut is created (shown red) so the edges can be fixed.
-      if (!C.sceneChains(its).some((c) => c[0] <= start && start < c[1])) { this.toast("Выделите участок на отрезках таймлайна", true); this.renderTimeline(); return null; }
+      if (!C.sceneChains(its).some((c) => c[0] <= start && start < c[1]) && !(w.mode === "bridge" && !w.error)) { this.toast("Выделите участок на отрезках таймлайна", true); this.renderTimeline(); return null; }
       if ((this.p.regions || []).length >= C.MAX_REGIONS) { this.toast(`Не больше ${C.MAX_REGIONS} участков`, true); return null; }
       const segI = Math.max(0, w.seg ?? C.markerSegment(its, start)), s = this.seg(segI) || {};
       const rg = { id: C.newId("r"), name: "", start, end, head: -1, tail: -1, prompt: s.prompt || "", refs: [...(s.refs || [])].filter((r) => this.p.assets.find((a) => a.id === r && a.category !== "audio")), seed: rnd(), takes: [], active_take: null };

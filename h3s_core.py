@@ -155,6 +155,7 @@ DEFAULT_SEGMENT = {
     "prompt": "",
     "refs": [],
     "link": "extend",         # "extend": continue previous segment | "cut": new shot, no continuity
+    "gap": 0,                 # empty frames before the clip (black + silence); a gap makes the clip a new shot
     "overlap_blocks": -1,      # per-segment extend overlap (blocks of 17 frames, 17o+5 frames); -1 = global setting
     "overrides": {},           # seed/steps/cfg/denoise/sampler/scheduler/shift_video/shift_audio
     # generated versions: [{id, key, sig, seed, created, snap{prompt,refs,frames,overrides,link}, result}]
@@ -260,6 +261,7 @@ def overlap_frames(o):
 
 
 MAX_OVERLAP_BLOCKS = 8
+MAX_GAP = 24 * 600   # longest empty stretch between clips (frames)
 AUDIO_CONTEXT_MAX = 4.0
 
 
@@ -544,6 +546,10 @@ def normalize_project(p):
         seg["id"] = str(seg["id"] or f"s{i + 1}")
         seg["frames"] = snap_frames(seg.get("frames") or 124)
         seg["link"] = "cut" if seg.get("link") == "cut" else "extend"
+        try:   # empty timeline before the clip (Ctrl+drag apart): black + silence, the clip starts a new shot
+            seg["gap"] = max(0, min(MAX_GAP, int(float(seg.get("gap") or 0))))
+        except (TypeError, ValueError):
+            seg["gap"] = 0
         try:
             seg["overlap_blocks"] = max(-1, min(MAX_OVERLAP_BLOCKS, int(float(seg.get("overlap_blocks", -1)))))
         except (TypeError, ValueError):
@@ -905,7 +911,7 @@ def uses_continuity(project, index):
     if index == 0:
         return False
     seg = project["segments"][index]
-    return seg["link"] == "extend" and not is_footage(seg)
+    return seg["link"] == "extend" and not is_footage(seg) and not seg.get("gap")
 
 
 def compose_prompt(project, index, video=True):
@@ -1086,10 +1092,11 @@ def plan(project):
             while o > 0 and not (overlap_frames(o) < f and overlap_frames(o) < prev):
                 o -= 1
             ov = overlap_frames(o) if o > 0 else 0
-        start = cursor - ov
+        gap = int(seg.get("gap") or 0)
+        start = cursor - ov + gap
         items.append({"index": i, "id": seg["id"], "frames": f, "start": start, "end": start + f,
-                      "overlap": ov, "overlap_blocks": (ov - 5) // 17 if ov else 0,
-                      "latent_t": latent_t(f), "audio_t": audio_len(f), "link": seg["link"] if i else "start"})
+                      "overlap": ov, "overlap_blocks": (ov - 5) // 17 if ov else 0, "gap": gap,
+                      "latent_t": latent_t(f), "audio_t": audio_len(f), "link": ("cut" if gap else seg["link"]) if i else "start"})
         cursor = start + f
     return items
 
@@ -1323,13 +1330,9 @@ def region_window(project, region, items=None):
     out = {"error": "", "warnings": []}
     st, en = int(region["start"]), int(region["end"])
     ch = next((c for c in scene_chains(items) if c[0] <= st < c[1]), None)
-    if ch is None:
-        out["error"] = "участок вне отрезков таймлайна"
-        return out
+    if ch is None or en > ch[1] + 8:   # starts in a gap or crosses a cut / gap: one span over the join
+        return bridge_window(project, region, items)
     cs, ce, i0, i1 = ch
-    if en > ce + 8:
-        out["error"] = "участок пересекает склейку (новая сцена / футаж / продление без перекрытия) — выделите внутри одной сцены"
-        return out
     K = (ce - cs - 5) // 17   # whole blocks of the scene
     a = cs + 17 * min(K, max(0, int(math.floor((st - cs) / 17.0 + 0.5))))
     to_end = en >= ce - 8
@@ -1370,6 +1373,61 @@ def region_window(project, region, items=None):
     return out
 
 
+def bridge_window(project, region, items=None):
+    """A span over a join (cut / gap) — same engine as a region, but its source is the stitched picture and sound
+    of the window, VAE-encoded (the two sides are separate latent chains). Clean head context = the end of the
+    shot before (whole blocks, grid from the span start), clean tail = the start of the shot after; the middle —
+    across the cut or the gap — is generated. Only a head: «продлить» into a gap; only a tail: «пролог» before a
+    shot; neither: a fresh fill. Window frames are 17k+5 from ws; the head never contains a gap, the tail
+    stays inside the next shot."""
+    items = items if items is not None else plan(limited_project(project))
+    out = {"error": "", "warnings": [], "mode": "bridge"}
+    st, en = int(region["start"]), int(region["end"])
+    chains = scene_chains(items)
+    if not items or en <= st:
+        out["error"] = "пустой участок"
+        return out
+    total = items[-1]["end"]
+    chA = next((c for c in chains if c[0] <= st < c[1]), None)
+    chB = next((c for c in chains if c[0] <= en < c[1]), None)
+    if chA is not None and chB is not None and chA == chB:
+        chB = None
+    if chA is not None:
+        a = chA[0] + 17 * max(0, (st - chA[0]) // 17)   # the span covers the whole selection (the join inside)
+        a = min(a, chA[1])
+        oh = min(region_blocks(project, region, "head"), (a - chA[0]) // 17)
+    else:
+        a, oh = max(0, st), 0
+    ws = a - 17 * oh
+    m = max(1, -(-(min(en, total) - a) // 17))
+    b = a + 17 * m
+    ot = 0
+    if chB is not None and b >= chB[0]:
+        ot = max(0, min(region_blocks(project, region, "tail"), (chB[1] - 5 - b) // 17))
+    to_end = ot == 0
+    we = b + 17 * ot + 5
+    if we > total:
+        out["error"] = "участок выходит за конец таймлайна — добавьте промежуток или отрезок после него"
+        return out
+    frames = we - ws
+    segs = [it["index"] for it in items if it["start"] < we and it["end"] > ws]
+    out.update({"chain": [ws, we], "i0": segs[0] if segs else 0, "i1": segs[-1] if segs else 0, "ws": ws, "a": a, "b": b, "we": we,
+                "frames": frames, "head": a - ws, "tail": we - b, "head_blocks": oh, "tail_blocks": ot, "to_end": to_end, "lat0": 0,
+                "latent_t": latent_t(frames), "seg": marker_segment(items, a) if marker_segment(items, a) >= 0 else (segs[0] if segs else 0),
+                "segs": segs, "gaps": [[it["index"], it["gap"]] for it in items if it.get("gap") and ws < it["start"] <= we]})
+    if not segs:
+        out["error"] = "под участком нет отрезков"
+    elif frames > MAX_FRAMES:
+        out["error"] = f"окно {frames} кадров длиннее максимума {MAX_FRAMES} — выделите участок короче"
+    if oh == 0:
+        out["warnings"].append("без контекста до участка (пролог / заполнение)")
+    if to_end:
+        out["warnings"].append("без контекста после участка (продление)")
+    if frames < TRAINED_MIN_FRAMES or frames > TRAINED_MAX_FRAMES:
+        out["warnings"].append(f"окно {frames} кадров ({frames / FPS:.1f} с) вне обучающего диапазона H3 {TRAINED_MIN_FRAMES}–{TRAINED_MAX_FRAMES}")
+    return out
+
+
 def region_prompt(project, region):
     s = project["settings"]
     return "\n".join(t.strip() for t in (s.get("prompt") or "", region.get("prompt") or "") if t and t.strip())
@@ -1393,7 +1451,11 @@ def region_key(project, region, win, seg_keys, ref_sigs=None, env_sig="", kind=N
     kind = kind or run_kind(project["settings"])
     s = project["settings"]
     cs = win["chain"][0]
-    return _h({"v": KEY_VERSION, "region": 1, "env": env_sig, "kind": kind, "wh": list(wh or []),
+    if win.get("mode") == "bridge":   # source = the stitched window (its clips, gaps, level lock), absolute place
+        kind = "full" if kind == "refine" else kind
+        env_sig = env_sig.split("|")[0]
+    extra = {"bridge": [win["ws"], win["a"], win["b"], win["we"], win.get("gaps") or [], level_lock_frames(project)]} if win.get("mode") == "bridge" else {}
+    return _h({"v": KEY_VERSION, "region": 1, **extra, "env": env_sig, "kind": kind, "wh": list(wh or []),
                "src": [seg_keys[i] for i in win["segs"] if i < len(seg_keys)],
                "win": [win["ws"] - cs, win["a"] - cs, win["b"] - cs, win["we"] - cs, win["to_end"]],
                "prompt": region_prompt(project, region), "neg": s.get("negative") or "",

@@ -195,7 +195,7 @@ export function passSteps(s, steps, kind) {
 }
 export const AUDIO_XFADE_RANGE = [0.1, 1.0];
 export const DEFAULT_SEGMENT = {
-  id: "", name: "", color: 0, frames: 124, prompt: "", refs: [], link: "extend", overlap_blocks: -1, overrides: {},
+  id: "", name: "", color: 0, frames: 124, prompt: "", refs: [], link: "extend", gap: 0, overlap_blocks: -1, overrides: {},
   upscale: null, approved: false,
   takes: [], active_take: null, locked: false, freeze: null, model_preset: "",
 };
@@ -226,6 +226,7 @@ export const latentT = (f) => (f <= 5 ? 2 : Math.floor((f - 5) / 17) * 5 + 2);
 export const audioLen = (f) => Math.round(f / FPS * AUDIO_LATENT_FPS);
 export const overlapFrames = (o) => 17 * (o | 0) + 5;
 export const MAX_OVERLAP_BLOCKS = 8;
+export const MAX_GAP = 24 * 600;   // mirror of h3s_core.MAX_GAP
 export const AUDIO_CONTEXT_MAX = 4.0;
 /** Requested overlap blocks of a segment: own override or the global setting. */
 export function wantedOverlap(project, index) {
@@ -385,6 +386,7 @@ export function normalizeProject(p) {
     seg.id = String(seg.id || `s${i + 1}`);
     seg.frames = snapFrames(seg.frames || 124);
     seg.link = seg.link === "cut" ? "cut" : "extend";
+    seg.gap = Math.max(0, Math.min(MAX_GAP, Math.round(Number(seg.gap) || 0)));
     { const o = seg.overlap_blocks == null ? NaN : Math.trunc(Number(seg.overlap_blocks)); seg.overlap_blocks = Number.isFinite(o) ? Math.max(-1, Math.min(MAX_OVERLAP_BLOCKS, o)) : -1; }
     seg.color = Math.max(0, Math.trunc(Number(seg.color)) || 0);
     seg.refs = (seg.refs || []).map(String);
@@ -523,7 +525,7 @@ export function orderedRefs(project, seg) {
   return uniq.slice().sort((x, y) => CATEGORY_ORDER.indexOf(x.category) - CATEGORY_ORDER.indexOf(y.category));
 }
 
-export const usesContinuity = (project, index) => index > 0 && project.segments[index].link === "extend" && !isFootage(project.segments[index]);
+export const usesContinuity = (project, index) => index > 0 && project.segments[index].link === "extend" && !isFootage(project.segments[index]) && !project.segments[index].gap;
 
 export function continuityPicture(project, index) {
   if (!usesContinuity(project, index) || project.settings.continuity_ref === false) return 0;
@@ -638,9 +640,9 @@ export function plan(project) {
       while (o > 0 && !(overlapFrames(o) < f && overlapFrames(o) < prev)) o--;   // shrink to the largest that fits
       ov = o > 0 ? overlapFrames(o) : 0;
     }
-    const start = cursor - ov;
-    items.push({ index: i, id: seg.id, frames: f, start, end: start + f, overlap: ov, overlap_blocks: ov ? (ov - 5) / 17 : 0,
-      latent_t: latentT(f), audio_t: audioLen(f), link: i ? seg.link : "start" });
+    const gap = seg.gap || 0, start = cursor - ov + gap;
+    items.push({ index: i, id: seg.id, frames: f, start, end: start + f, overlap: ov, overlap_blocks: ov ? (ov - 5) / 17 : 0, gap,
+      latent_t: latentT(f), audio_t: audioLen(f), link: i ? (gap ? "cut" : seg.link) : "start" });
     cursor = start + f;
   });
   return items;
@@ -828,9 +830,8 @@ export function regionWindow(project, region, items = null) {
   const out = { error: "", warnings: [] };
   const st = Math.trunc(region.start), en = Math.trunc(region.end);
   const ch = sceneChains(items).find((c) => c[0] <= st && st < c[1]);
-  if (!ch) { out.error = "участок вне отрезков таймлайна"; return out; }
+  if (!ch || en > ch[1] + 8) return bridgeWindow(project, region, items);   // starts in a gap / crosses a join
   const [cs, ce, i0, i1] = ch;
-  if (en > ce + 8) { out.error = "участок пересекает склейку (новая сцена / футаж / продление без перекрытия) — выделите внутри одной сцены"; return out; }
   const K = Math.floor((ce - cs - 5) / 17);
   let a = cs + 17 * Math.min(K, Math.max(0, pyRound((st - cs) / 17)));
   let toEnd = en >= ce - 8, b;
@@ -857,6 +858,45 @@ export function regionWindow(project, region, items = null) {
   return out;
 }
 
+/** Mirror of h3s_core.level_lock_frames (0 = off). */
+export function levelLockFrames(project) {
+  const s = project.settings;
+  if (s.level_lock === false) return 0;
+  return Math.round(Math.min(48, Math.max(2, Number(s.level_lock_frames ?? 12) || 12)));
+}
+
+/** Mirror of h3s_core.bridge_window: a span over a cut / gap (head = end of the shot before, tail = start of the next). */
+export function bridgeWindow(project, region, items = null) {
+  items = items || plan(limitedProject(project));
+  const out = { error: "", warnings: [], mode: "bridge" };
+  const st = Math.trunc(region.start), en = Math.trunc(region.end), chains = sceneChains(items);
+  if (!items.length || en <= st) { out.error = "пустой участок"; return out; }
+  const total = items[items.length - 1].end;
+  const chA = chains.find((c) => c[0] <= st && st < c[1]) || null;
+  let chB = chains.find((c) => c[0] <= en && en < c[1]) || null;
+  if (chA && chB && chA === chB) chB = null;
+  let a, oh;
+  if (chA) { a = Math.min(chA[0] + 17 * Math.max(0, Math.floor((st - chA[0]) / 17)), chA[1]); oh = Math.min(regionBlocks(project, region, "head"), Math.floor((a - chA[0]) / 17)); }
+  else { a = Math.max(0, st); oh = 0; }
+  const ws = a - 17 * oh;
+  const m = Math.max(1, Math.ceil((Math.min(en, total) - a) / 17)), b = a + 17 * m;
+  let ot = 0;
+  if (chB && b >= chB[0]) ot = Math.max(0, Math.min(regionBlocks(project, region, "tail"), Math.floor((chB[1] - 5 - b) / 17)));
+  const toEnd = ot === 0, we = b + 17 * ot + 5;
+  if (we > total) { out.error = "участок выходит за конец таймлайна — добавьте промежуток или отрезок после него"; return out; }
+  const frames = we - ws, segs = items.filter((it) => it.start < we && it.end > ws).map((it) => it.index);
+  const ms = markerSegment(items, a);
+  Object.assign(out, { chain: [ws, we], i0: segs[0] ?? 0, i1: segs[segs.length - 1] ?? 0, ws, a, b, we, frames, head: a - ws, tail: we - b,
+    head_blocks: oh, tail_blocks: ot, to_end: toEnd, lat0: 0, latent_t: latentT(frames), seg: ms >= 0 ? ms : (segs[0] ?? 0), segs,
+    gaps: items.filter((it) => it.gap && ws < it.start && it.start <= we).map((it) => [it.index, it.gap]) });
+  if (!segs.length) out.error = "под участком нет отрезков";
+  else if (frames > MAX_FRAMES) out.error = `окно ${frames} кадров длиннее максимума ${MAX_FRAMES} — выделите участок короче`;
+  if (oh === 0) out.warnings.push("без контекста до участка (пролог / заполнение)");
+  if (toEnd) out.warnings.push("без контекста после участка (продление)");
+  if (frames < TRAINED_MIN_FRAMES || frames > TRAINED_MAX_FRAMES) out.warnings.push(`окно ${frames} кадров (${(frames / FPS).toFixed(1)} с) вне обучающего диапазона H3 ${TRAINED_MIN_FRAMES}–${TRAINED_MAX_FRAMES}`);
+  return out;
+}
+
 export function regionPrompt(project, region) {
   return [project.settings.prompt || "", region.prompt || ""].map((t) => t.trim()).filter(Boolean).join("\n");
 }
@@ -866,9 +906,11 @@ export function regionSig(project, region, kind = null) {
   project = limitedProject(project);
   kind = kind || runKind(project.settings);
   const win = regionWindow(project, region); if (win.error) return "";
-  const sigs = baseSigs(project, kind), cs = win.chain[0];
+  const br = win.mode === "bridge";
+  if (br && kind === "refine") kind = "full";
+  const sigs = baseSigs(project, kind === "full" && br ? runKind(project.settings) : kind), cs = win.chain[0];
   const p = passParams(project, Math.max(0, win.seg), kind); p.seed = region.seed | 0;
-  return fnv(JSON.stringify(["region", kind, win.ws - cs, win.a - cs, win.b - cs, win.we - cs, win.to_end, win.segs.map((i) => sigs[i] || ""),
+  return fnv(JSON.stringify(["region", kind, br ? [win.ws, win.a, win.b, win.we, win.gaps, levelLockFrames(project)] : 0, win.ws - cs, win.a - cs, win.b - cs, win.we - cs, win.to_end, win.segs.map((i) => sigs[i] || ""),
     regionPrompt(project, region), project.settings.negative || "", orderedRefs(project, { refs: region.refs || [] }).map((a) => [a.id, ...assetKf(a)]), p,
     Math.round(Math.min(Number(project.settings.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100, lockClips(project)]));
 }

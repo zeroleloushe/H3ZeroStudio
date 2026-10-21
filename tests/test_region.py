@@ -50,7 +50,8 @@ def test_region_window_snaps_to_the_scene_grid():
     assert w["segs"] == [0, 1] and not w["error"]   # clip 2 overlap starts at 102
     w2 = core.region_window(p, {"start": 100, "end": 160, "head": 2, "tail": 0})   # across the extend seam: fine
     assert w2["segs"] == [0, 1] and w2["head"] == 34 and w2["tail"] == 5
-    assert "склейку" in core.region_window(p, {"start": 200, "end": 260, "head": -1, "tail": -1})["error"]
+    wb = core.region_window(p, {"start": 200, "end": 260, "head": -1, "tail": -1})   # crossing a cut: a bridge (stage 5)
+    assert wb["mode"] == "bridge" and not wb["error"] and wb["a"] <= 200 and wb["b"] >= 260
     w3 = core.region_window(p, {"start": 3, "end": 30, "head": 2, "tail": 1})
     assert w3["ws"] == 0 and w3["head"] == 0 and w3["warnings"]
     w4 = core.region_window(p, {"start": 260, "end": 316, "head": 1, "tail": 1})    # to the scene end: no tail
