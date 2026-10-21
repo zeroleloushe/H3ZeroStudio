@@ -2007,14 +2007,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     vlog(f"[{text_bar(step + 1, total)}] seg {_i + 1} upscale step {step + 1}/{total} · {done_steps[0]}/{todo_steps}")
                 refs_u = [load_asset_image(x) for x in core.ordered_refs(proj, seg_i)]
                 ra_u = ref_audio_latents(audio_vae, proj, seg_i, sources)
-                pcb_u = LivePreview(notify, MC(i)[0], i, settings=s, audio_vae=None, out_dir=d, sub=sub)
                 def up_prog(_i=i, **kw):
                     if kw.get("phase"):
                         notify("phase", seg=_i, phase="up_input", input=kw.get("input"), chunk=kw.get("chunk", 1), chunks=kw.get("chunks", 1))
                         return
                     el = time.perf_counter() - t0
                     notify("uptile", seg=_i, done=done_steps[0], total=todo_steps, elapsed=round(el, 1), **kw)
-                uv, _a, uinfo = upscale.run_upscale(*MC(i), vae, proj, i, items, v, a, frames, prev_up, refs_u, ra_u, up_step, pcb_u, up_prog)
+                uv, _a, uinfo = upscale.run_upscale(None, None, vae, proj, i, items, v, a, frames, prev_up, refs_u, ra_u, up_step, None, up_prog,
+                                                    models=lambda _i=i: MC(_i),   # H3 + LoRAs resolved after the upscaler
+                                                    preview_factory=lambda m, _i=i: LivePreview(notify, m, _i, settings=s, audio_vae=None, out_dir=d, sub=sub))
                 notify("phase", seg=i, phase="upscale")
                 torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
                 media.replace_file(upt + ".part", upt)
@@ -2221,8 +2222,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     notify("step", seg=_si, step=step + 1, steps=total, done=done_steps[0], total=todo_steps, elapsed=round(el, 1),
                            eta=round(el / max(1, done_steps[0]) * (todo_steps - done_steps[0]), 1), region=rg["id"])
                 refs_u = [load_asset_image(x) for x in core.region_refs(proj, rg)]
-                uvr, _ra, rinfo = upscale.run_upscale(*MC(si), vae, proj, si, all_items, rv, ra, None, None, refs_u, None, ru_step, None, None,
-                                                      up=rg["upscale"], holder=rg, prompt=core.region_prompt(proj, rg), label=f"region «{name}»")
+                uvr, _ra, rinfo = upscale.run_upscale(None, None, vae, proj, si, all_items, rv, ra, None, None, refs_u, None, ru_step, None, None,
+                                                      up=rg["upscale"], holder=rg, prompt=core.region_prompt(proj, rg), label=f"region «{name}»",
+                                                      models=lambda _si=si: MC(_si))   # H3 resolved after the upscaler
                 torch.save({"v": uvr, "a": ra, "info": rinfo}, rp["upt"] + ".part")
                 media.replace_file(rp["upt"] + ".part", rp["upt"])
                 log(f"region «{name}»: upscale done in {time.perf_counter() - t_u:.1f}s -> {rinfo['wh'][0]}x{rinfo['wh'][1]} ({rinfo['input']})")

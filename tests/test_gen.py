@@ -1462,3 +1462,114 @@ def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
     assert set(r4["seams"]) == {"head", "tail"} and r4["up"]["key"] == r3["up"]["key"]
     assert float(img4[56:73].abs().max()) > 0, "the gap holds the upscaled bridge"
     assert "mixed canvases" not in log
+
+
+# ---------------------------------------------------------------- VRAM handoff / out-of-memory ladders
+_REAL_LEARNED = upscale.learned_upscale   # module import time: before the autouse stand-in replaces it
+
+
+def _oom_node(limit, calls, err=None):
+    class Node:
+        @classmethod
+        def execute(cls, latent, model_name, mode, align, enable_temporal_chunking, force_unload, device, precision):
+            x = latent["samples"]
+            calls.append(tuple(x.shape))
+            if err is not None:
+                raise err
+            if x.shape[2] * x.shape[3] * x.shape[4] > limit:
+                raise torch.cuda.OutOfMemoryError("Allocation on device ")
+            return ({"samples": torch.nn.functional.interpolate(x, size=(x.shape[2], mode["height"] // 16, mode["width"] // 16), mode="trilinear")},)
+    return Node
+
+
+def test_learned_upscaler_oom_retries_smaller(monkeypatch, capsys):
+    calls, frees = [], []
+    monkeypatch.setattr(upscale, "learned_upscale", _REAL_LEARNED)
+    monkeypatch.setattr(upscale, "free_vram", lambda: frees.append(1))
+    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(2000, calls))
+    t, y, x = torch.meshgrid(torch.linspace(0, 1, 27), torch.linspace(0, 1, 10), torch.linspace(0, 1, 16), indexing="ij")
+    v = (t + y + x).expand(1, 4, 27, 10, 16).contiguous()
+    z = upscale.learned_upscale(v, 512, 320)
+    log = capsys.readouterr().out
+    assert z is not None and z.shape == (1, 4, 27, 20, 32)
+    assert "retry with 2 temporal piece(s)" in log and "retry with 4 temporal piece(s)" in log and "x 2x2 tiles" in log
+    assert len(frees) == 3 and calls[0] == (1, 4, 27, 10, 16) and all(c[2] * c[3] * c[4] <= 2000 for c in calls[-4:])
+    ref = torch.nn.functional.interpolate(v, size=(27, 20, 32), mode="trilinear")
+    assert float((z - ref).abs().mean()) < 0.05, "pieces blend into the whole picture"
+    # a non-OOM error falls back at once; OOM everywhere falls back after the whole ladder
+    calls.clear()
+    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(0, calls, ValueError("bad weights")))
+    assert upscale.learned_upscale(v, 512, 320) is None and len(calls) == 1
+    calls.clear()
+    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(0, calls))
+    assert upscale.learned_upscale(v, 512, 320) is None and "even in small pieces" in capsys.readouterr().out
+
+
+def test_vae_decode_oom_goes_tiled(monkeypatch, capsys):
+    tiled = []
+    monkeypatch.setattr(upscale, "free_vram", lambda: None)
+
+    class V:
+        def decode(self, x):
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+        def decode_tiled(self, x, **kw):
+            tiled.append(kw)
+            if len(tiled) == 1:
+                raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+            return torch.zeros(1, 17, 32, 48, 3)
+    out = upscale.decode_safe(V(), torch.zeros(1, 24, 7, 2, 3))
+    assert out.shape == (17, 32, 48, 3) and len(tiled) == 2 and tiled[1]["tile_x"] < tiled[0]["tile_x"]
+    assert capsys.readouterr().out.count("tiled decode") == 2
+
+
+def test_upscale_vram_handoff_order(patcher, dirs, monkeypatch, capsys):
+    """Each upscale: unload H3 -> upscaler -> unload upscaler -> the refine samples with H3 again (latent, tiles, RTX)."""
+    import sys
+    import types
+    import comfy.sample
+    ev = []
+    monkeypatch.setattr(upscale, "free_vram", lambda: ev.append("free"))
+    fake = upscale.learned_upscale
+    monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h: (ev.append("upscaler"), fake(v, w, h))[1])
+    real_sample = comfy.sample.sample
+    monkeypatch.setattr(comfy.sample, "sample", lambda *a, **k: (ev.append("sample"), real_sample(*a, **k))[1])
+
+    class SR:
+        def __init__(self, q): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def load(self): pass
+        def run(self, x):
+            ev.append("upscaler")
+            return types.SimpleNamespace(image=torch.nn.functional.interpolate(x[None], size=(self.output_height, self.output_width), mode="bilinear")[0])
+    monkeypatch.setitem(sys.modules, "nvvfx", types.SimpleNamespace(VideoSuperRes=SR, effects=types.SimpleNamespace(QualityLevel=types.SimpleNamespace(ULTRA="U"))))
+    monkeypatch.setattr(upscale, "RTX_DEVICE", "cpu")
+    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
+    gen.run_project(patcher, FakeClip(), FakeVAE(), _up_project("vh", [None, None]), FakeAudioVAE(), None)
+    ev.clear()
+    gen.run_project(patcher, FakeClip(), FakeVAE(), _up_project("vh", [{"method": "latent", "scale": 2}, {"method": "rtx", "scale": 2}]), FakeAudioVAE(), None)
+    log = capsys.readouterr().out
+    ups = [k for k, e in enumerate(ev) if e == "upscaler" and (k == 0 or ev[k - 1] != "upscaler")]
+    assert len(ups) == 2, ev
+    for k in ups:
+        j = k
+        while ev[j] == "upscaler":
+            j += 1
+        assert ev[k - 1] == "free" and ev[j] == "free" and ev[j + 1] == "sample", ev   # unload H3 · upscaler · unload · refine
+    assert "VRAM handoff: unload H3 -> upscaler" in log and "VRAM handoff: unload upscaler -> reload H3" in log
+    assert "before the upscale" in log
+
+
+def test_full_cache_hit_touches_no_model(patcher, dirs, monkeypatch, capsys):
+    """Everything cached (segments + upscales): no model / LoRA resolve, no live preview, no VRAM handoff."""
+    from h3s import h3s_models as hm
+    p = lambda: _up_project("hit", [{"method": "latent", "scale": 2}, {"method": "latent", "scale": 2}])
+    gen.run_project(patcher, FakeClip(), FakeVAE(), p(), FakeAudioVAE(), None)
+    seen = []
+    boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("model touched on a full cache hit"))
+    monkeypatch.setattr(hm.Resolver, "models", lambda self, i: (seen.append(i), boom())[1])
+    monkeypatch.setattr(gen, "LivePreview", boom)
+    monkeypatch.setattr(upscale, "free_vram", boom)
+    _, _, _, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p(), FakeAudioVAE(), None)
+    assert not seen and all(r["cached"] for r in info["segments"])

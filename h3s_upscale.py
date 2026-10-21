@@ -28,6 +28,7 @@ crossfades the overlap frames. VRAM is freed between chunks, so the peak is one 
 Audio is kept 1:1 through H3's native audio denoise mask (all rows clean); the overlap with the previous
 upscaled clip is kept the same way on the video side (video denoise mask 0 + x0 lock), so seams match.
 """
+import gc
 import inspect
 import math
 import time
@@ -116,22 +117,155 @@ def env_tag(method):
     return eff or "none"
 
 
+# ---------------------------------------------------------------- VRAM handoff
+def is_oom(e):
+    """CUDA out-of-memory, also ComfyUI's «Allocation on device» message."""
+    oom = getattr(torch.cuda, "OutOfMemoryError", None)
+    if oom is not None and isinstance(e, oom):
+        return True
+    t = str(e).lower()
+    return "out of memory" in t or "allocation on device" in t
+
+
+def vram_free():
+    """Free VRAM of the whole device in GB (None without CUDA)."""
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.mem_get_info()[0] / 2 ** 30
+    except Exception:
+        pass
+    return None
+
+
+def vram_note():
+    f = vram_free()
+    return f"VRAM free {f:.1f} GB" if f is not None else "no CUDA"
+
+
+def free_vram():
+    """Move every model ComfyUI holds on the GPU off it (the H3 model, CLIP, the preset's LoRA-patched clones in
+    h3s_models' cache — they stay in RAM and come back on the next sampling without re-reading or re-patching
+    from disk —, VAEs, a ComfyUI-managed upscaler), then collect garbage and return the cached blocks to the driver."""
+    mm = comfy.model_management
+    try:
+        mm.unload_all_models()
+    except Exception as e:
+        log(f"  VRAM: unload_all_models failed ({e})")
+    gc.collect()
+    try:
+        mm.cleanup_models_gc()
+    except Exception:
+        pass
+    mm.soft_empty_cache()
+
+
+def handoff(step):
+    """One logged step of the H3 <-> upscaler VRAM handoff: «unload H3 -> upscaler», «unload upscaler -> reload H3»."""
+    before = vram_free()
+    free_vram()
+    after = vram_free()
+    log(f"  VRAM handoff: {step}" + (f" · free {before:.1f} -> {after:.1f} GB" if before is not None and after is not None else ""))
+
+
 # ---------------------------------------------------------------- inputs
+def _ramp(n, lo, hi):
+    """Blend weights of one piece along an axis: linear in over `lo` cells, out over `hi` cells, 1 between."""
+    w = torch.ones(n)
+    if lo > 0:
+        w[:lo] = torch.linspace(0, 1, lo + 2)[1:-1]
+    if hi > 0:
+        w[n - hi:] = torch.minimum(w[n - hi:], torch.linspace(1, 0, hi + 2)[1:-1])
+    return w
+
+
+def _temporal_pieces(T, n):
+    """Latent windows [(t0, t1)] for n temporal pieces: H3 shape 5k+2 when possible, >= 1 block overlap."""
+    if n <= 1 or T < 12:
+        return [(0, T)]
+    if (T - 2) % 5 == 0:
+        k = (T - 2) // 5
+        m = max(2, math.ceil(k / n) + 1)
+        return [(5 * st, min(T, 5 * (st + m) + 2)) for st in core.chunk_starts(k, m, 1)]
+    L = math.ceil(T / n) + 4
+    starts = sorted({round(i * (T - L) / (n - 1)) for i in range(n)}) if T > L else [0]
+    return [(a, min(T, a + L)) for a in starts]
+
+
+def _spatial_pieces(n_in, n_out, k):
+    """k overlapping tiles along one axis: [((in0, in1), (out0, out1))] (input cells -> output cells)."""
+    if k <= 1:
+        return [((0, n_in), (0, n_out))]
+    ov = max(2, n_in // (3 * k))
+    size = min(n_in, math.ceil((n_in + (k - 1) * ov) / k))
+    starts = sorted({round(i * (n_in - size) / (k - 1)) for i in range(k)})
+    s = n_out / n_in
+    return [((a, a + size), (round(a * s), n_out if a + size >= n_in else round((a + size) * s))) for a in starts]
+
+
+def _blend_axis(spans):
+    """Per-piece (lo, hi) ramp lengths along an axis from the output spans of the neighbours."""
+    out = []
+    for i, (_, (o0, o1)) in enumerate(spans):
+        lo = max(0, spans[i - 1][1][1] - o0) if i else 0
+        hi = max(0, o1 - spans[i + 1][1][0]) if i + 1 < len(spans) else 0
+        out.append((lo, hi))
+    return out
+
+
+def _pieces_upscale(once, v, w, h, nt, ns):
+    """Upscale v in nt temporal x ns*ns spatial overlapping pieces with `once(x, w, h)` and blend them linearly."""
+    T, Hh, Ww = v.shape[2], v.shape[-2], v.shape[-1]
+    OH, OW = h // 16, w // 16
+    if nt <= 1 and ns <= 1:
+        return once(v, w, h)
+    tp = _temporal_pieces(T, nt)
+    ys, xs = _spatial_pieces(Hh, OH, ns), _spatial_pieces(Ww, OW, ns)
+    tb, yb, xb = _blend_axis([(None, t) for t in tp]), _blend_axis(ys), _blend_axis(xs)
+    acc = wsum = None
+    for ti, (t0, t1) in enumerate(tp):
+        for yi, ((y0, y1), (Y0, Y1)) in enumerate(ys):
+            for xi, ((x0, x1), (X0, X1)) in enumerate(xs):
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                z = once(v[:, :, t0:t1, y0:y1, x0:x1], (X1 - X0) * 16, (Y1 - Y0) * 16)
+                if tuple(z.shape[-2:]) != (Y1 - Y0, X1 - X0):   # the upscaler's 32 px alignment: fit the slot
+                    z = torch.nn.functional.interpolate(z, size=(z.shape[2], Y1 - Y0, X1 - X0), mode="trilinear")
+                if acc is None:
+                    acc = torch.zeros(z.shape[:2] + (T, OH, OW))
+                    wsum = torch.zeros((T, OH, OW))
+                wt = (_ramp(t1 - t0, *tb[ti]).view(-1, 1, 1) * _ramp(Y1 - Y0, *yb[yi]).view(1, -1, 1)
+                      * _ramp(X1 - X0, *xb[xi]).view(1, 1, -1))
+                acc[:, :, t0:t1, Y0:Y1, X0:X1] += z[:, :, :t1 - t0] * wt
+                wsum[t0:t1, Y0:Y1, X0:X1] += wt
+                del z
+    return acc / wsum.clamp_min(1e-6)
+
+
+# OOM ladder of the learned upscaler: (temporal pieces, spatial tiles per side); the first = the node as is
+LEARNED_RETRIES = ((1, 1), (2, 1), (4, 1), (2, 2), (4, 3))
+
+
 def learned_upscale(v, w, h):
-    """Video latent -> w x h canvas with the learned upscaler node; None when unavailable / failed."""
+    """Video latent -> w x h canvas with the learned upscaler node; None when unavailable / failed.
+    Out of VRAM: free memory and retry with more temporal pieces, then spatial tiles (overlap + linear blend);
+    only when the whole ladder fails -> None (the caller falls back)."""
     cls, models = learned_node(), learned_models()
     if cls is None or not models:
         return None
     try:
         fn = getattr(cls, "execute", None) or getattr(cls(), getattr(cls, "FUNCTION", "execute"))
-        kw = {"latent": {"samples": v.float()}, "model_name": models[0],
-              "mode": {"mode": "target dimensions", "width": int(w), "height": int(h)}, "align": 32,
+    except Exception as e:
+        log(f"  learned latent upscaler failed ({e}) -> fallback")
+        return None
+
+    def once(x, ww, hh):
+        kw = {"latent": {"samples": x.float()}, "model_name": models[0],
+              "mode": {"mode": "target dimensions", "width": int(ww), "height": int(hh)}, "align": 32,
               "enable_temporal_chunking": True, "force_unload": True,
               "device": "cuda" if torch.cuda.is_available() else "cpu",
               "precision": "bf16" if torch.cuda.is_available() else "fp32"}
         try:
             names = set(inspect.signature(fn).parameters)
-            kw = {k: x for k, x in kw.items() if k in names} if names - {"cls", "self", "kwargs"} else kw
+            kw = {k: y for k, y in kw.items() if k in names} if names - {"cls", "self", "kwargs"} else kw
         except (TypeError, ValueError):
             pass
         res = fn(**kw)
@@ -139,16 +273,31 @@ def learned_upscale(v, w, h):
         lat = out[0] if isinstance(out, (tuple, list)) else out
         z = lat["samples"] if isinstance(lat, dict) else lat
         z = z.float().cpu()
-        if z.dim() == 4:
-            z = z.unsqueeze(2)
+        return z.unsqueeze(2) if z.dim() == 4 else z
+
+    for k, (nt, ns) in enumerate(LEARNED_RETRIES):
+        try:
+            z = _pieces_upscale(once, v, w, h, nt, ns)
+        except Exception as e:
+            if not is_oom(e):
+                log(f"  learned latent upscaler failed ({e}) -> fallback")
+                return None
+            del e
+            free_vram()
+            if k + 1 < len(LEARNED_RETRIES):
+                n2, s2 = LEARNED_RETRIES[k + 1]
+                log(f"  learned latent upscaler: out of VRAM -> freed ({vram_note()}), retry with {n2} temporal piece(s)"
+                    + (f" x {s2}x{s2} tiles" if s2 > 1 else ""))
+                continue
+            log("  learned latent upscaler: out of VRAM even in small pieces -> fallback")
+            return None
         if tuple(z.shape[-2:]) != (h // 16, w // 16) or z.shape[2] != v.shape[2]:
             log(f"  learned upscaler returned {tuple(z.shape)}, expected {w}x{h} -> fallback")
             return None
-        log(f"  learned latent upscaler ({models[0]}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}")
+        log(f"  learned latent upscaler ({models[0]}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}"
+            + (f" in {nt} temporal piece(s)" + (f" x {ns}x{ns} tiles" if ns > 1 else "") if k else ""))
         return z
-    except Exception as e:
-        log(f"  learned latent upscaler failed ({e}) -> fallback")
-        return None
+    return None
 
 
 def center_crop_to_aspect(frames, w, h):
@@ -208,20 +357,27 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA"):
         if frames is None:
             frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
         return vae.encode(_resize(frames, w, h)).float().cpu(), "resize"
-    for m in (("rtx", "learned") if method == "rtx" else ("learned", "rtx")):
-        if m == "learned":
-            z = learned_upscale(v, w, h)
-            if z is not None:
-                return z, "learned"
-        else:
-            if not rtx_available():
-                continue
-            if frames is None:
-                frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
-            px = rtx_frames(frames, w, h, quality)
-            if px is not None:
-                return vae.encode(px).float().cpu(), "rtx"
-    raise UpscaleUnavailable(UNAVAILABLE)
+    order = [m for m in (("rtx", "learned") if method == "rtx" else ("learned", "rtx")) if m != "rtx" or rtx_available()]
+    if not order or (order == ["learned"] and (learned_node() is None or not learned_models())):
+        raise UpscaleUnavailable(UNAVAILABLE)
+    # VRAM handoff: the H3 model (+ CLIP, LoRA clones) leaves the GPU for the upscaler, the upscaler leaves it
+    # before the refine / the next sampling brings H3 back (lazily, from RAM: ComfyUI loads it on sampling)
+    handoff("unload H3 -> upscaler")
+    try:
+        for m in order:
+            if m == "learned":
+                z = learned_upscale(v, w, h)
+                if z is not None:
+                    return z, "learned"
+            else:
+                if frames is None:
+                    frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
+                px = rtx_frames(frames, w, h, quality)
+                if px is not None:
+                    return vae.encode(px).float().cpu(), "rtx"
+        raise UpscaleUnavailable(UNAVAILABLE)
+    finally:
+        handoff("unload upscaler -> reload H3 (on the next sampling)")
 
 
 # ---------------------------------------------------------------- temporal chunks
@@ -244,17 +400,41 @@ def chunk_plan(settings, T, A, method=None):
     return out
 
 
+# tiled VAE decode on OOM (ComfyUI already tiles once by itself; these are smaller, after freeing every model)
+DECODE_TILES = ((32, 8, 16), (16, 4, 8))   # (tile in latent cells, overlap cells, temporal tile in latent frames)
+
+
+def decode_safe(vae, v):
+    """decode_video; out of VRAM -> free every model and decode tiled, smaller each time (logged)."""
+    from .h3s_gen import decode_video
+    x = v.to(comfy.model_management.intermediate_device())
+    try:
+        return decode_video(vae, x)
+    except Exception as e:
+        if not is_oom(e) or not hasattr(vae, "decode_tiled"):
+            raise
+    for k, (t, o, tt) in enumerate(DECODE_TILES):
+        free_vram()
+        log(f"  VAE decode out of VRAM -> freed ({vram_note()}), tiled decode {t * 16}px tiles, {tt} latent frames")
+        try:
+            img = vae.decode_tiled(x, tile_x=t, tile_y=t, overlap=o, tile_t=tt, overlap_t=1)
+            return img.reshape((-1,) + tuple(img.shape[-3:]))[..., :3].float().cpu()
+        except Exception as e:
+            if not is_oom(e) or k + 1 == len(DECODE_TILES):
+                raise
+
+
 def decode_chunks(vae, v, chunks):
     """Decode an upscaled latent chunk by chunk (VRAM: one chunk at a time) and crossfade the overlap frames
     (the latents there are identical; the fade hides VAE boundary effects)."""
-    from .h3s_gen import decode_video
+    decode_video = decode_safe
     if len(chunks) <= 1:
-        return decode_video(vae, v.to(comfy.model_management.intermediate_device()))
+        return decode_safe(vae, v)
     total = frames_for_latent_t(v.shape[2])
     out, prev_end = None, 0
     for v0, v1, _, _ in chunks:
         comfy.model_management.throw_exception_if_processing_interrupted()
-        fr = decode_video(vae, v[:, :, v0:v1].to(comfy.model_management.intermediate_device()))
+        fr = decode_video(vae, v[:, :, v0:v1])
         p0 = 17 * (v0 // 5)
         if out is None:
             out = torch.zeros((total,) + tuple(fr.shape[1:]), dtype=fr.dtype)
@@ -552,10 +732,13 @@ class TileClock:
 
 # ---------------------------------------------------------------- the pass
 def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, ref_images,
-                ref_audios=None, step_cb=None, preview_cb=None, progress=None, up=None, prompt=None, label=None, holder=None):
+                ref_audios=None, step_cb=None, preview_cb=None, progress=None, up=None, prompt=None, label=None, holder=None,
+                models=None, preview_factory=None):
     """Upscale + refine segment `index` from its finished latents (v video, a audio).
     prev_up: dict(v) of the previous segment's upscaled latent when this one continues it on the same canvas.
     up / prompt / label: a span's upscale («Апскейл участка»: its window latent, its own prompt, no chain).
+    models: () -> (model, clip), resolved only after the first upscaler input (the preset base / LoRA clone is not
+    touched before the upscaler ran); preview_factory(model) builds the live preview then.
     Returns (video latent [1,24,T,H/16,W/16], audio latent unchanged, info dict)."""
     from . import h3s_gen as gen
     s = project["settings"]
@@ -571,6 +754,7 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     chunks = chunk_plan(s, T, A, method)
     nch = len(chunks)
     name = label or f"segment {index + 1}"
+    log(f"{name} upscale: {vram_note()} before the upscale")
     log(f"{name} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
         + (f", {nch} temporal chunks (≈{core.upscale_chunking(s, frames_for_latent_t(T), method)[1]} frames each, processed one by one): "
            + ", ".join(f"{frames_for_latent_t(v0) if v0 else 0}-{frames_for_latent_t(v1)}" for v0, v1, _, _ in chunks) if nch > 1 else ""))
@@ -593,6 +777,11 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
         uv, used = upscale_input(vae, v[:, :, v0:v1], W, H, want, fc, up.get("quality", "ULTRA"))
         used_all.add(used)
         log(f"{tag} upscale input done in {time.perf_counter() - t_in:.1f}s ({used})")
+        if models is not None:
+            model, clip = models()
+            models = None
+            if preview_factory is not None:
+                preview_cb = preview_factory(model)
         Tc, Ac = uv.shape[2], a1 - a0
         lock_v = w_v = None
         vmask = torch.ones([1, 1, Tc, H // 16, W // 16])
