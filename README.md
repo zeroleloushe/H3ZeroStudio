@@ -79,6 +79,16 @@
 
 ## 📦 Установка
 
+**Рекомендуется — через ComfyUI Manager.** Откройте **Manager → Custom Nodes Manager**, найдите **H3ZeroStudio**, нажмите **Install** и перезапустите ComfyUI. Страница в реестре: [registry.comfy.org · h3zerostudio](https://registry.comfy.org/publishers/zeroleloushe/nodes/h3zerostudio).
+
+**Или через comfy-cli:**
+
+```bash
+comfy node install h3zerostudio
+```
+
+**Вручную (git clone):**
+
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
@@ -363,7 +373,11 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 - **Reliable cache & restore.** Every finished take keeps its latent sidecar, recipe, a near-lossless frame master and its sound, so re-runs call neither the model nor the VAE and «Clear cache» no longer loses continuations. Reference files are matched by content (copies / zip imports keep the keys). Stale clips get «↺ Restore» with a per-field "what changed" diff and partial restore; cache misses are logged with their reason.
 - **Also included:** markers, gallery with A/B compare, projects with zip export/import, undo/redo, hotkeys, and a built-in help tab. The UI is plain JS (plus a vendored CodeMirror 6 bundle for the prompt editor), works offline and uses no CDN.
 
-**Install:** `git clone https://github.com/zeroleloushe/H3ZeroStudio.git` into `ComfyUI/custom_nodes`, then restart ComfyUI. No extra pip packages are required.
+**Install (recommended): ComfyUI Manager.** Open **Manager → Custom Nodes Manager**, search for **H3ZeroStudio**, click **Install** and restart ComfyUI. Registry page: [registry.comfy.org · h3zerostudio](https://registry.comfy.org/publishers/zeroleloushe/nodes/h3zerostudio).
+
+**Or with comfy-cli:** `comfy node install h3zerostudio`
+
+**Manually:** `git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio` into `ComfyUI/custom_nodes`, then restart ComfyUI. No extra pip packages are required.
 
 **Optional models:**
 - `minimax_h3_latent_upscaler_3d_bf16.safetensors` in `models/latent_upscale_models`, plus the [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) node;
