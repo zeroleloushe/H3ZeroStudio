@@ -62,6 +62,40 @@ def register():
         b = await request.json()
         return await _json_call(lib.settings_set, b.get("settings") or {}, bool(b.get("replace")))
 
+    # ---- model & LoRA presets
+    @routes.get("/h3zero/models")
+    async def models_get(request):
+        from . import h3s_models as hm
+        refresh = request.query.get("refresh") == "1"
+
+        def go():
+            presets = hm.load_presets()
+            return {"files": hm.list_models(refresh), "presets": presets, "cache": hm.status(),
+                    "missing": {p["id"]: [list(m) for m in hm.preset_status(p)] for p in presets}}
+        return await _json_call(go)
+
+    @routes.post("/h3zero/models/presets")
+    async def models_presets_set(request):
+        from . import h3s_models as hm
+        b = await request.json()
+
+        def go():
+            presets = hm.save_presets(b.get("presets") or [])
+            return {"presets": presets, "missing": {p["id"]: [list(m) for m in hm.preset_status(p)] for p in presets}}
+        return await _json_call(go)
+
+    @routes.post("/h3zero/models/release")
+    async def models_release(request):
+        from . import h3s_models as hm
+        from . import h3s_gen
+
+        def go():
+            if any(st.get("active") for st in list(h3s_gen.STATUS.values())):
+                raise RuntimeError("идёт генерация — модели выгрузятся после неё")
+            hm.release_all()
+            return hm.status()
+        return await _json_call(go)
+
     @routes.get("/h3zero/status")
     async def status(request):
         try:

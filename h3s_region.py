@@ -262,8 +262,9 @@ def plan_regions(proj, all_items, items, first, keys, dkeys, ref_sigs, env, kind
         if first or max(win["segs"]) >= len(items):
             gen.log(f"region «{name}»: skipped — its scene is not part of this run")
             continue
-        key = core.region_key(proj, rg, win, keys, ref_sigs, env + ("|" + up_tag if kind == "refine" else ""), kind, run_wh)
-        dkey = core.region_key(proj, rg, win, dkeys, ref_sigs, env, "draft", draft_wh) if kind == "refine" else None
+        e = env[max(0, win["seg"])] if isinstance(env, (list, tuple)) else env   # model preset of the region's clip
+        key = core.region_key(proj, rg, win, keys, ref_sigs, e + ("|" + up_tag if kind == "refine" else ""), kind, run_wh)
+        dkey = core.region_key(proj, rg, win, dkeys, ref_sigs, e, "draft", draft_wh) if kind == "refine" else None
         if not gen_it and str(act.get("key")) != key:
             gen.log(f"region «{name}»: take {act.get('key')} is out of date (the clips under it changed: now {key}) — "
                     f"not applied; «↻ Пересоздать» makes a new one")

@@ -247,6 +247,20 @@ def model_signature(model, clip, vae, audio_vae):
     return h.hexdigest()[:16]
 
 
+def model_signature_parts(model, clip, vae, audio_vae):
+    """What model_signature hashes, readable (cache-miss reasons / take recipes)."""
+    out = {"wired": True}
+    try:
+        out["model"] = type(model.model).__name__ + "/" + str(getattr(model.model, "model_config", None).__class__.__name__)
+        out["patches"] = sorted(f"{k}:{p[2] if len(p) > 2 else ''}" for k in (getattr(model, "patches", {}) or {}) for p in model.patches[k])[:4000]
+        out["topts"] = sorted(str(k) for k in (model.model_options or {}).get("transformer_options", {}).keys())
+    except Exception:
+        pass
+    for n, o in (("clip", clip), ("vae", vae), ("audio_vae", audio_vae)):
+        out[n] = type(o).__name__ if o is not None else "-"
+    return out
+
+
 def audio_signature(audio):
     if audio is None:
         return ""
@@ -1368,6 +1382,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         proj["settings"]["final_mode"] = rk
     if not proj["segments"]:
         raise ValueError("H3ZeroStudio: на таймлайне нет отрезков. Откройте редактор и добавьте отрезок.")
+    # model & LoRA presets: wired inputs win per part; the preset (project / clip override) gives the rest
+    from . import h3s_models
+    wired_sig = model_signature(model, clip, vae, audio_vae)
+    MR = h3s_models.Resolver(proj, model, clip, vae, audio_vae, wired_sig=wired_sig)
+    MR.check()
+    if MR.any:
+        vae, audio_vae = MR.vae(), MR.audio_vae()
+        log("models: " + "; ".join(f"#{i + 1} «{(core.segment_preset(proj, i) or {}).get('name', 'провод')}»" for i in range(len(proj["segments"]))))
+    MC = MR.models   # (model, clip) of segment i
     est = core.estimate(proj)
     for wmsg in est["warnings"]:
         log("⚠ " + wmsg)
@@ -1406,9 +1429,18 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     if audio_z is None:
         # nothing locked: drop the track from the keys so the segments do not depend on it
         proj["audio"]["clips"] = []
-    env = model_signature(model, clip, vae, audio_vae)
+    env = [MR.env(i) for i in range(len(proj["segments"]))] if MR.any else wired_sig   # per clip with presets
     kind = core.run_kind(s)
     kparts = []
+    wired_parts = model_signature_parts(model, clip, vae, audio_vae)
+    env_parts = [MR.env_parts(i, wired_parts) for i in range(len(proj["segments"]))]
+
+    def _with_env(parts_):
+        for j_, pt_ in enumerate(parts_):
+            for q_ in (pt_, pt_.get("_draft") if isinstance(pt_, dict) else None):
+                if isinstance(q_, dict) and "env" in q_ and j_ < len(env_parts):
+                    q_["_env"] = env_parts[j_]   # not hashed: only explains a changed "env"
+        return parts_
     keys = core.segment_keys(proj, ref_sigs, env, up_env=upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "", parts=kparts)
     use_cache = bool(s.get("cache", True))
     keys = keys[:len(items)]
@@ -1424,6 +1456,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     # final from the draft: every segment's draft (same key as a «Черновик» run) is the start of its refine pass
     dparts = []
     dkeys = core.segment_keys(proj, ref_sigs, env, "draft", parts=dparts)[:len(items)] if kind == "refine" else None
+    _with_env(kparts)
+    _with_env(dparts)
     # take store: latents of finished takes come back from their sidecars when the cache was cleared,
     # and every cache latent becomes a take (sidecar + recipe) — also those of earlier, interrupted runs
     recipes = {}
@@ -1608,7 +1642,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 init_j = (fv, fa)
             notify("phase", seg=j, phase="draft")
             log(f"segment {j + 1}: sampling its draft first ({dw}x{dh})")
-            dv, da = sample_segment(model, clip, vae, proj, j, items, pd, refs_j, audio_z, step_cb, pcb, audio_cov, ra_j, rv_j, init_j, kind="draft")
+            dv, da = sample_segment(*MC(j), vae, proj, j, items, pd, refs_j, audio_z, step_cb, pcb, audio_cov, ra_j, rv_j, init_j, kind="draft")
             if use_cache:
                 torch.save({"v": dv, "a": da}, ptd + ".part")
                 media.replace_file(ptd + ".part", ptd)
@@ -1656,7 +1690,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                         notify("step", seg=_i, step=step + 1, steps=total, done=done_steps[0], total=todo_steps,
                                elapsed=round(el, 1), eta=round(el / max(1, done_steps[0]) * (todo_steps - done_steps[0]), 1))
                     t_ar = time.perf_counter()
-                    v, a = refine_audio(model, clip, vae, proj, i, items, v, a, ar_run, refs_ar, ra_ar, ar_step)
+                    v, a = refine_audio(*MC(i), vae, proj, i, items, v, a, ar_run, refs_ar, ra_ar, ar_step)
                     torch.save({"v": v, "a": a}, apt + ".part")
                     media.replace_file(apt + ".part", apt)
                     log(f"segment {i + 1}: audio refined in {time.perf_counter() - t_ar:.1f}s -> {ak}")
@@ -1697,10 +1731,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                         + f" · ETA seg {fmt_s(seg_eta)} total {fmt_s(rate * (todo_steps - done_steps[0]))} · {done_steps[0]}/{todo_steps}"
                         + (" · " + vram() if vram() else ""))
 
-            pcb = LivePreview(notify, model, i, settings=s, audio_vae=None, out_dir=d, sub=sub)   # no audio in the live preview (sounded awful mid-sampling)
+            pcb = LivePreview(notify, MC(i)[0], i, settings=s, audio_vae=None, out_dir=d, sub=sub)   # no audio in the live preview (sounded awful mid-sampling)
             if preview_factory is not None and not s.get("preview_suppress", True):
                 try:   # ComfyUI's own node preview on top (off by default: the editor shows its own)
-                    pcb.extra = preview_factory(model, steps_i)
+                    pcb.extra = preview_factory(MC(i)[0], steps_i)
                 except Exception:
                     pcb.extra = None
             live_box.append(pcb)
@@ -1717,13 +1751,13 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 log(f"segment {i + 1}: upscale input done in {time.perf_counter() - t_in:.1f}s")
                 notify("phase", seg=i, phase="refine")
                 log(f"segment {i + 1}: final from its draft: {tuple(dr['v'].shape[-2:])} -> {tuple(up.shape[-2:])} latent ({um}), refine")
-                v, a = sample_segment(model, clip, vae, proj, i, items, prev, refs, None, step_cb, pcb, audio_cov, ra, rv, None,
+                v, a = sample_segment(*MC(i), vae, proj, i, items, prev, refs, None, step_cb, pcb, audio_cov, ra, rv, None,
                                       kind="refine", refine=(up, dr["a"]))
             else:
                 if seg_i.get("source"):   # vid2vid from footage
                     fv, fa, _px = footage_latents(vae, audio_vae, by_id[seg_i["source"]["asset"]], seg_i["source"], it["frames"], run_w, run_h, it["audio_t"])
                     init = (fv, fa)
-                v, a = sample_segment(model, clip, vae, proj, i, items, prev, refs, audio_z, step_cb, pcb, audio_cov, ra, rv, init, kind=kind)
+                v, a = sample_segment(*MC(i), vae, proj, i, items, prev, refs, audio_z, step_cb, pcb, audio_cov, ra, rv, init, kind=kind)
             torch.save({"v": v, "a": a}, pt + ".part")
             media.replace_file(pt + ".part", pt)
             el_i = time.perf_counter() - seg_t0
@@ -1754,14 +1788,14 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     vlog(f"[{text_bar(step + 1, total)}] seg {_i + 1} upscale step {step + 1}/{total} · {done_steps[0]}/{todo_steps}")
                 refs_u = [load_asset_image(x) for x in core.ordered_refs(proj, seg_i)]
                 ra_u = ref_audio_latents(audio_vae, proj, seg_i, sources)
-                pcb_u = LivePreview(notify, model, i, settings=s, audio_vae=None, out_dir=d, sub=sub)
+                pcb_u = LivePreview(notify, MC(i)[0], i, settings=s, audio_vae=None, out_dir=d, sub=sub)
                 def up_prog(_i=i, **kw):
                     if kw.get("phase"):
                         notify("phase", seg=_i, phase="up_input", input=kw.get("input"), chunk=kw.get("chunk", 1), chunks=kw.get("chunks", 1))
                         return
                     el = time.perf_counter() - t0
                     notify("uptile", seg=_i, done=done_steps[0], total=todo_steps, elapsed=round(el, 1), **kw)
-                uv, _a, uinfo = upscale.run_upscale(model, clip, vae, proj, i, items, v, a, frames, prev_up, refs_u, ra_u, up_step, pcb_u, up_prog)
+                uv, _a, uinfo = upscale.run_upscale(*MC(i), vae, proj, i, items, v, a, frames, prev_up, refs_u, ra_u, up_step, pcb_u, up_prog)
                 notify("phase", seg=i, phase="upscale")
                 torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
                 media.replace_file(upt + ".part", upt)
@@ -1800,6 +1834,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 vlog(f"seam rating failed: {e}")
         res.update({"index": i, "key": rk, "cached": hit, "frames": int(frames.shape[0]), "kind": kind, "wh": rwh,
                     "seed": core.effective_params(proj, i)["seed"], "created": int(time.time())})
+        if MR.any and not core.is_footage(seg_i):
+            res["models"] = MR.info(i)   # preset / base / LoRAs of this take (gallery, takes)
         if kind == "refine" and dkeys and i < len(dkeys):
             res["draft_key"] = dkeys[i]   # gallery lineage: this final was made from that draft
         if uk:
@@ -1893,7 +1929,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 notify("step", seg=_si, step=step + 1, steps=total, done=done_steps[0], total=todo_steps,
                        elapsed=round(el, 1), eta=round(rate * (todo_steps - done_steps[0]), 1), region=rg["id"])
                 vlog(f"[{text_bar(step + 1, total)}] region «{name}» step {step + 1}/{total} · {done_steps[0]}/{todo_steps}")
-            pcb_r = LivePreview(notify, model, si, settings=s, audio_vae=None, out_dir=d, sub=sub)
+            pcb_r = LivePreview(notify, MC(si)[0], si, settings=s, audio_vae=None, out_dir=d, sub=sub)
             refs_r = [load_asset_image(x) for x in core.region_refs(proj, rg)]
             cv, ca = region.chain_latents(items, base_v, seg_a, win["i0"], max(win["segs"]))
             sv, sa, a0 = region.window_latents(win, cv, ca)
@@ -1913,7 +1949,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     dsv, dsa, da0 = region.window_latents(win, dcv, dca)
                     dctx = (dca[..., da0 - ext:da0 + ha], ext) if ext else None
                     notify("phase", seg=si, phase="region_draft", region=rg["id"])
-                    rdv, rda = region.sample_region(model, clip, vae, proj, rg, win, dsv, dsa, "draft", refs_r, dctx, audio_z, audio_cov, r_step, pcb_r)
+                    rdv, rda = region.sample_region(*MC(si), vae, proj, rg, win, dsv, dsa, "draft", refs_r, dctx, audio_z, audio_cov, r_step, pcb_r)
                     torch.save({"v": rdv, "a": rda}, dpt + ".part")
                     media.replace_file(dpt + ".part", dpt)
                 um = s.get("upscale_method", "learned")
@@ -1921,9 +1957,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 dfr = decode_video(vae, rdv.to(dev0))
                 up = upscale_video_latent(vae, rdv, run_w, run_h, um, frames=dfr)
                 notify("phase", seg=si, phase="region", region=rg["id"])
-                rv, ra = region.sample_region(model, clip, vae, proj, rg, win, sv, sa, "refine", refs_r, None, None, None, r_step, pcb_r, refine=(up, rda))
+                rv, ra = region.sample_region(*MC(si), vae, proj, rg, win, sv, sa, "refine", refs_r, None, None, None, r_step, pcb_r, refine=(up, rda))
             else:
-                rv, ra = region.sample_region(model, clip, vae, proj, rg, win, sv, sa, kind, refs_r, ctx, audio_z, audio_cov, r_step, pcb_r)
+                rv, ra = region.sample_region(*MC(si), vae, proj, rg, win, sv, sa, kind, refs_r, ctx, audio_z, audio_cov, r_step, pcb_r)
             torch.save({"v": rv, "a": ra, "win": {k: win[k] for k in ("ws", "a", "b", "we", "to_end")}}, rp["pt"] + ".part")
             media.replace_file(rp["pt"] + ".part", rp["pt"])
             log(f"region «{name}»: done in {time.perf_counter() - t_r:.1f}s")
@@ -1944,6 +1980,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         rres.update({"region": rg["id"], "key": rp["key"], "cached": hit_r, "frames": int(fr_w.shape[0]), "kind": kind,
                      "ws": win["ws"], "a": win["a"], "b": win["b"], "we": win["we"], "seed": int(rg.get("seed") or 0),
                      "wh": [int(fr_w.shape[2]), int(fr_w.shape[1])], "created": int(time.time()), "generated": rp["gen"]})
+        if MR.any:
+            rres["models"] = MR.info(max(0, win["seg"]))
         reg_results.append(rres)
         try:   # gallery: the region's take, stacked with the segment it was cut from
             from . import h3s_library

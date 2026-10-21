@@ -20,7 +20,7 @@ export const DEFAULT_CONTINUITY = "Continuity: <Picture {n}> is the last frame o
 export const AUDIO_REF_PHRASE = "Use {tags} as the sound reference of this shot.";
 export const VIDEO_REF_PHRASE = "Use {tags} as the motion reference of this shot.";
 export const DEFAULT_SETTINGS = {
-  prompt: "", negative: "", aspect: "16:9", res_mode: "mp", megapixels: 0.5, width: 960, height: 544,
+  model_preset: "", prompt: "", negative: "", aspect: "16:9", res_mode: "mp", megapixels: 0.5, width: 960, height: 544,
   steps: 20, cfg: 1.0, sampler: "res_multistep", scheduler: "simple", shift_video: 12.0, shift_audio: 3.0,
   seed: 0, fps: FPS, denoise: 1.0, overlap_blocks: 1, audio_context_sec: 1.0, lock_overlap: true, continuity_ref: true,
   continuity_phrase: DEFAULT_CONTINUITY, ref_size: "match", cache: true,
@@ -197,7 +197,7 @@ export const AUDIO_XFADE_RANGE = [0.1, 1.0];
 export const DEFAULT_SEGMENT = {
   id: "", name: "", color: 0, frames: 124, prompt: "", refs: [], link: "extend", overlap_blocks: -1, overrides: {},
   upscale: null, approved: false,
-  takes: [], active_take: null, locked: false, freeze: null,
+  takes: [], active_take: null, locked: false, freeze: null, model_preset: "",
 };
 export const MAX_TAKES = 12;
 // «✂ Участок»: regenerate a time range in the middle of the video (mirror of h3s_core.DEFAULT_REGION)
@@ -254,6 +254,37 @@ function merge(defaults, value) {
   return out;
 }
 
+// ------------------------------------------------------------------ model & LoRA presets (mirror of h3s_core.py)
+export const PRESET_DTYPES = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
+export const MAX_PRESET_LORAS = 16, MAX_PRESETS = 64;
+export const presetId = (x) => (typeof x === "string" ? x : "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);
+const r3 = (x) => Math.floor(x * 1000 + 0.5) / 1000;
+/** Clean model preset (null = not one): base "unet" | "checkpoint", model, dtype, clip, vae, audio_vae, loras [{file, on, sm, sc}]. */
+export function normalizePreset(p, pid) {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+  pid = presetId(pid !== undefined && pid !== null ? pid : p.id);
+  if (!pid) return null;
+  const sv = (k) => (typeof p[k] === "string" ? p[k].slice(0, 300) : "");
+  const loras = [];
+  for (const l of (Array.isArray(p.loras) ? p.loras : []).slice(0, MAX_PRESET_LORAS)) {
+    if (!l || typeof l !== "object" || Array.isArray(l) || typeof l.file !== "string" || !l.file) continue;
+    const sm = r3(Math.max(-10, Math.min(10, num(l.sm, 1.0)))), sc = r3(Math.max(-10, Math.min(10, num(l.sc, sm))));
+    loras.push({ file: l.file.slice(0, 300), on: l.on !== false, sm, sc });
+  }
+  return { id: pid, name: (sv("name") || pid).slice(0, 80), base: p.base === "checkpoint" ? "checkpoint" : "unet", model: sv("model"),
+    dtype: PRESET_DTYPES.includes(p.dtype) ? p.dtype : "default", clip: sv("clip"), vae: sv("vae"), audio_vae: sv("audio_vae"), loras, note: sv("note").slice(0, 500) };
+}
+/** Effective preset of segment i (its own if it exists, else the project's); null = wired inputs. */
+export function segmentPreset(project, i) {
+  const pr = project.model_presets || {}, own = project.segments[i]?.model_preset || "";
+  return (own && pr[own]) || pr[project.settings?.model_preset || ""] || null;
+}
+/** What of a preset decides a clip's result (mirror of h3s_core.preset_fingerprint, separators without spaces). */
+export function presetFingerprint(p) {
+  if (!p) return "";
+  return JSON.stringify([p.base, p.model, p.dtype, p.clip, p.loras.filter((l) => l.on && (l.sm || l.sc)).map((l) => [l.file, l.sm, l.sc])]);
+}
+
 export function normalizeProject(p) {
   if (typeof p === "string") { try { p = p.trim() ? JSON.parse(p) : {}; } catch (e) { p = {}; } }
   if (!p || typeof p !== "object" || Array.isArray(p)) p = {};
@@ -274,6 +305,10 @@ export function normalizeProject(p) {
     result: p.result && typeof p.result === "object" && !Array.isArray(p.result) ? clone(p.result) : null,
   };
   if (out.end_mode === "auto") out.end = 0;
+  out.model_presets = {};
+  if (p.model_presets && typeof p.model_presets === "object" && !Array.isArray(p.model_presets))
+    for (const [k, v] of Object.entries(p.model_presets).slice(0, MAX_PRESETS)) { const q = normalizePreset(v, k); if (q) out.model_presets[q.id] = q; }
+  out.settings.model_preset = presetId(out.settings.model_preset);
   { const st = out.settings;
     st.quality = st.quality === "draft" ? "draft" : "final";
     st.final_mode = st.final_mode === "refine" ? "refine" : "full";
@@ -358,6 +393,7 @@ export function normalizeProject(p) {
     seg.source = normalizeSource(seg.source, videoIds);
     seg.upscale = normalizeUpscale(seg.upscale);
     seg.approved = !!seg.approved;
+    seg.model_preset = presetId(seg.model_preset);
     if (seg.freeze) seg.frames = seg.freeze.frames;
     out.segments.push(seg);
   });
@@ -708,7 +744,7 @@ export function baseSigs(project, kind = null) {
     const sig = isFootage(seg) ? fnv(JSON.stringify(["footage", w, h, it.frames, sd])) : fnv(JSON.stringify([w, h, it.frames, it.overlap, composePrompt(project, i), s.negative || "",
       orderedRefs(project, seg).map((a) => [a.id, a.file, a.subfolder]), passParams(project, i, kind), !!s.lock_overlap,
       continuityPicture(project, i), s.ref_size, segmentTrack(project, it), audioRefs(project, seg).map((a) => [a.id, a.file || ""]).slice(0, MAX_REF_AUDIOS),
-      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [])));
+      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [])));
     const fsig = seg.freeze ? (seg.freeze.sig || "F" + seg.freeze.key) : sig;   // frozen: fixed, so what follows stays valid
     out.push(fsig); prev = fsig;
   }

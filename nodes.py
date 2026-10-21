@@ -10,13 +10,14 @@ class ZL_H3ZeroStudio:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("MODEL", {"tooltip": "Модель MiniMax H3 (Ref2VA, можно с turbo LoRA)."}),
-                "clip": ("CLIP", {"tooltip": "Текстовый энкодер H3 (Qwen3-VL): кодирует промпт отрезка вместе с референсами."}),
-                "vae": ("VAE", {"tooltip": "Видео-VAE H3: кодирует референсы, декодирует отрезки."}),
                 "project": ("STRING", {"default": "", "multiline": False,
                                        "tooltip": "Проект H3ZeroStudio (JSON). Редактируется в полноэкранном редакторе, хранится внутри workflow."}),
             },
             "optional": {
+                # optional since the model & LoRA presets: a connected input always wins over the preset's file
+                "model": ("MODEL", {"tooltip": "Модель MiniMax H3 (Ref2VA, можно с turbo LoRA). Необязательно, если выбран пресет моделей; подключённый провод важнее пресета (LoRA пресета ложатся поверх)."}),
+                "clip": ("CLIP", {"tooltip": "Текстовый энкодер H3 (Qwen3-VL): кодирует промпт отрезка вместе с референсами. Необязательно, если энкодер задан в пресете; провод важнее."}),
+                "vae": ("VAE", {"tooltip": "Видео-VAE H3: кодирует референсы, декодирует отрезки. Необязательно, если VAE задан в пресете проекта; провод важнее."}),
                 "audio_vae": ("VAE", {"tooltip": "Аудио-VAE H3 (minimax_h3_audio_vae). Нужен для звука в превью и на выходе AUDIO, и для аудиодорожки."}),
                 "audio": ("AUDIO", {"tooltip": "Аудиодорожка таймлайна: режим «референс» (<Audio 1> в каждом отрезке) или «основная» (звук не меняется, видео под него). Нужен audio_vae."}),
             },
@@ -33,7 +34,7 @@ class ZL_H3ZeroStudio:
     DESCRIPTION = ("H3ZeroStudio: полноэкранный редактор таймлайна для MiniMax H3. Отрезки с промптами и референсами, "
                    "продление с сохранением персонажей, кэш готовых отрезков. Нажмите «Развернуть» на ноде.")
 
-    def run(self, model, clip, vae, project, audio_vae=None, audio=None, unique_id=None):
+    def run(self, project, model=None, clip=None, vae=None, audio_vae=None, audio=None, unique_id=None):
         from . import h3s_gen
         factory = None  # live preview comes from h3s_gen.LivePreview (ComfyUI's own pbar would fight ours)
         images, out_audio, latent, info = h3s_gen.run_project(model, clip, vae, project, audio_vae, audio,

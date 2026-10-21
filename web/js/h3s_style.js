@@ -785,7 +785,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 @media (max-width:1700px) { .h3z-run { min-width:240px; } .h3z-head { gap:8px; } .h3z-head .h3z-chip { padding:5px 8px; } }
 .h3z-rs{margin-top:6px;padding:8px 10px;border-radius:10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
 .h3z-rs-row{display:flex;gap:6px;align-items:baseline;cursor:pointer}.h3z-rs-row em{opacity:.6;font-style:normal;margin-left:auto;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.h3z-rs-row.proj span::after{content:" · проект";opacity:.55}.h3z-rs-warn{color:var(--warn)}.h3z-rs-warn:empty{display:none}.h3z-rs-btns{display:flex;gap:6px;margin-top:4px}
+.h3z-rs-row.proj span::after{content:" · проект";opacity:.55}.h3z-rs-row.lib span::after{content:" · библиотека";opacity:.55}.h3z-rs-warn{color:var(--warn)}.h3z-rs-warn:empty{display:none}.h3z-rs-btns{display:flex;gap:6px;margin-top:4px}
 `;
 
 export function injectStyle() {

@@ -243,7 +243,7 @@ def save_wave(d, key, wave, sr):
 
 
 # ---------------------------------------------------------------- why a key missed
-FIELDS = {"env": "модель / VAE на входах ноды", "wh": "размер кадра", "frames": "длина", "ov": "перекрытие",
+FIELDS = {"env": "модели", "wh": "размер кадра", "frames": "длина", "ov": "перекрытие",
           "prompt": "промпт (общий + отрезка + маркеры)", "neg": "негатив", "refs": "референсы (набор, порядок или файл)",
           "params": "параметры прохода", "lock": "фиксация перекрытия", "cref": "кадр-продолжение <Picture N>",
           "ref_size": "размер референсов", "audio": "звук (дорожка / аудио-референсы)", "prev": "предыдущий отрезок изменился",
@@ -251,10 +251,57 @@ FIELDS = {"env": "модель / VAE на входах ноды", "wh": "раз�
           "refine": "черновик изменился", "rp": "настройки чистовика (σ / апскейл / размер)", "steps": "шаги"}
 
 
+def _fmt_lora(l):
+    return f"{os.path.basename(str(l[0]))} {l[1]:g}/{l[2]:g}"
+
+
+def env_diff(a, b):
+    """Readable difference of two model environments (h3s_models.Resolver.env_parts / gen.model_signature_parts)."""
+    a, b = a or {}, b or {}
+    out = []
+    if ("preset" in a) != ("preset" in b):
+        return [f"модели: {'пресет «' + a['preset'] + '»' if 'preset' in a else 'провода'} → {'пресет «' + b['preset'] + '»' if 'preset' in b else 'провода'}"]
+    if a.get("preset") != b.get("preset"):
+        out.append(f"пресет моделей «{a.get('preset')}» → «{b.get('preset')}»")
+    for k, lbl in (("model", "модель"), ("clip", "текстовый энкодер"), ("vae", "VAE"), ("audio_vae", "аудио-VAE")):
+        if a.get(k) != b.get(k) and not (k in ("vae", "audio_vae") and "preset" not in a):
+            out.append(f"{lbl}: {a.get(k)} → {b.get(k)}")
+        elif a.get(k + "_file") != b.get(k + "_file") and a.get(k + "_file") is not None:
+            out.append(f"файл «{b.get(k)}» изменился (размер / дата)")
+    la, lb = {str(l[0]): l for l in a.get("loras") or []}, {str(l[0]): l for l in b.get("loras") or []}
+    for f in [x for x in lb if x not in la]:
+        out.append(f"LoRA добавлена: {_fmt_lora(lb[f])}")
+    for f in [x for x in la if x not in lb]:
+        out.append(f"LoRA убрана: {_fmt_lora(la[f])}")
+    for f in [x for x in la if x in lb]:
+        if la[f][1:3] != lb[f][1:3]:
+            out.append(f"LoRA {os.path.basename(f)}: сила {la[f][1]:g}/{la[f][2]:g} → {lb[f][1]:g}/{lb[f][2]:g}")
+        elif len(la[f]) > 3 and len(lb[f]) > 3 and la[f][3] != lb[f][3]:
+            out.append(f"файл LoRA {os.path.basename(f)} изменился")
+    if not out and [x[0] for x in a.get("loras") or []] != [x[0] for x in b.get("loras") or []]:
+        out.append("порядок LoRA")
+    wa = a if "preset" not in a else a.get("wired") or {}   # the wired inputs (alone, or under a preset's free parts)
+    wb = b if "preset" not in b else b.get("wired") or {}
+    if wa != wb and not out:
+        for k, lbl in (("model", "модель на входе model"), ("clip", "вход clip"), ("vae", "вход vae"), ("audio_vae", "вход audio_vae")):
+            if (wa or {}).get(k) != (wb or {}).get(k):
+                out.append(f"{lbl}: {(wa or {}).get(k)} → {(wb or {}).get(k)}")
+        if (wa or {}).get("patches") != (wb or {}).get("patches"):
+            out.append("LoRA / патчи на проводе model (LoraLoader и т.п.)")
+        if (wa or {}).get("topts") != (wb or {}).get("topts"):
+            ta, tb = set((wa or {}).get("topts") or []), set((wb or {}).get("topts") or [])
+            out.append("transformer_options на проводе model: " + ", ".join([f"+{x}" for x in sorted(tb - ta)] + [f"−{x}" for x in sorted(ta - tb)]))
+    return out
+
+
 def diff_parts(old, new):
     out = []
     for k in sorted(set(old) | set(new)):
-        if k in ("key", "created", "seg_id", "seg", "kind", "draft", "_draft"):
+        if k in ("key", "created", "seg_id", "seg", "kind", "draft", "_draft", "_env"):
+            continue
+        if k == "env" and old.get(k) != new.get(k) and ("_env" in old or "_env" in new):
+            d = env_diff(old.get("_env"), new.get("_env"))
+            out.append(FIELDS[k] + (": " + "; ".join(d) if d else " (подробности не записаны — дубль старой версии)"))
             continue
         a, b = old.get(k), new.get(k)
         if a == b:

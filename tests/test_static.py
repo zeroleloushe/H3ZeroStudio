@@ -124,7 +124,12 @@ PROJECTS = [
                                        "tiles": {"tile": 512, "chunk": True, "chunk_sec": 99, "chunk_overlap": 7, "steps": 999}}}},
     # legacy flat values only: migrated into the selected method (tiles) profile
     {"settings": {"seg_upscale": {"method": "tiles", "mp": 3, "sigma": 0.45, "tile": 768, "tile_ov": 64}, "upscale_chunk_sec": 6},
-     "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}}]}
+     "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}}]},
+    # model & LoRA presets: project copy, per-clip override, garbage
+    {"model_presets": {"t1": {"name": "Turbo", "model": "h3.safetensors", "dtype": "fp8_e4m3fn", "clip": "te.safetensors",
+                             "loras": [{"file": "turbo.safetensors", "sm": 0.8125}, {"file": "b.safetensors", "on": False, "sm": 2, "sc": 0}]},
+                      "bad": 5, "x y": {"name": 3, "base": "checkpoint", "dtype": "fp16", "loras": [{"file": "a", "sm": "0.5", "sc": None, "on": 0}, {"file": ""}, "z"]}},
+    "settings": {"model_preset": "t1"}, "segments": [{"frames": 124, "model_preset": "x y"}, {"frames": 124, "model_preset": 7}, {"frames": 124, "model_preset": "gone"}]},
 ]
 
 JS_DRIVER = textwrap.dedent("""

@@ -234,6 +234,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const known = this.upKnown(), paths = this.opts.paths || {};
       const taeh3 = (this.opts.tiny_vaes || []).some((x) => /taeh3/i.test(x));
       const row = (ok, name, detail) => h("div", { class: "h3z-modrow" + (ok === null ? "" : ok ? " ok" : " bad") }, h("b", null, ok === null ? "…" : ok ? "✓" : "✕"), h("div", null, h("div", null, name), detail ? h("small", null, detail) : null));
+      const presetsDet = det("Пресеты моделей", this.mpManager());
       const models = det("Модели",
         row(known ? uc.learned : null, "Обученный латентный апскейлер H3", known ? (uc.learned ? uc.learned_models.join(", ") : !uc.learned_node ? "нет ноды MinimaxH3LatentUpscaler3D" : "нет модели minimax_h3_latent_upscaler_3d_bf16.safetensors") : "проверка…"),
         (paths.latent_upscale_models || []).length ? h("div", { class: "h3z-note mono" }, (paths.latent_upscale_models || []).join("\n")) : null,
@@ -244,7 +245,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         num("vram_headroom_gb", "Запас VRAM во время генерации, ГБ", 0.25, 0, 8),
         h("div", { class: "h3z-note" }, "Столько видеопамяти ComfyUI оставляет свободной, пока идёт генерация (штатный резерв --reserve-vram, поднимается только на время запуска и никогда не уменьшается). Помогает, когда открыт браузер / запись: иначе Windows выгружает VRAM в RAM и шаги идут в разы медленнее. 1 ГБ — голый рабочий стол, 2–3 ГБ — с браузером. 0 — выключено."));
       const upS = this.upscaleSection(g, set);
-      const TABS = [["gen", "⚙ Генерация", [stages, st1, st2, upS]], ["ext", "🔗 Продление и звук", [ext]], ["prev", "👁 Превью и кэш", [pv, cache]], ["mod", "📦 Модели", [models]]];
+      const TABS = [["gen", "⚙ Генерация", [stages, st1, st2, upS]], ["ext", "🔗 Продление и звук", [ext]], ["prev", "👁 Превью и кэш", [pv, cache]], ["mod", "📦 Модели", [presetsDet, models]]];
       const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
       if (this._setOpen) { const t = TABS.find(([, , ds]) => ds.some((d) => titleOf(d) === this._setOpen)); if (t) this._setTab = t[0]; }
       const cur = TABS.find((t) => t[0] === this._setTab) || TABS[0];

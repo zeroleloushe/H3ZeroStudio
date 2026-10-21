@@ -103,6 +103,7 @@ export function installProjects(Editor, { C, h, ICON }) {
       this.renderAll();
       if (msg) this.toast(msg);
       this.globSync?.();
+      this.mpSync?.();
     },
     async projOpen(id) {
       if (this.run.active) { this.toast("Идёт генерация — откройте проект после неё", true); return; }

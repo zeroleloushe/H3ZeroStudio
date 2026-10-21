@@ -39,6 +39,7 @@ DEFAULT_CONTINUITY = ("Continuity: <Picture {n}> is the last frame of the previo
                       "continue seamlessly from it and keep characters, faces, clothing, lighting and details consistent with <Picture {n}>.")
 
 DEFAULT_SETTINGS = {
+    "model_preset": "",        # model & LoRA preset of the project (id in project["model_presets"]); "" = wired inputs
     "prompt": "",
     "negative": "",
     "aspect": "16:9",
@@ -343,6 +344,58 @@ def _num(v, d):
         return d
 
 
+# ------------------------------------------------------------------ model & LoRA presets (mirror of h3s_core.js)
+PRESET_DTYPES = ("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
+MAX_PRESET_LORAS = 16
+MAX_PRESETS = 64
+
+
+def _preset_id(x):
+    return re.sub(r"[^A-Za-z0-9_-]", "", x if isinstance(x, str) else "")[:40]
+
+
+def _r3(x):
+    return math.floor(x * 1000 + 0.5) / 1000
+
+
+def normalize_preset(p, pid=None):
+    """Clean model preset; None when it is not one. base "unet" (diffusion_models + weight dtype) | "checkpoint";
+    clip = text encoder (CLIPLoader type minimax); vae / audio_vae; loras = [{file, on, sm, sc}] in order."""
+    if not isinstance(p, dict):
+        return None
+    pid = _preset_id(pid if pid is not None else p.get("id"))
+    if not pid:
+        return None
+    sv = lambda k: str(p.get(k) or "")[:300] if isinstance(p.get(k), str) else ""
+    loras = []
+    for l in (p.get("loras") if isinstance(p.get("loras"), list) else [])[:MAX_PRESET_LORAS]:
+        if not isinstance(l, dict) or not isinstance(l.get("file"), str) or not l["file"]:
+            continue
+        sm = _r3(max(-10.0, min(10.0, _num(l.get("sm"), 1.0))))
+        sc = _r3(max(-10.0, min(10.0, _num(l.get("sc"), sm))))
+        loras.append({"file": l["file"][:300], "on": l.get("on") is not False, "sm": sm, "sc": sc})
+    return {"id": pid, "name": (sv("name") or pid)[:80], "base": p.get("base") if p.get("base") in ("unet", "checkpoint") else "unet",
+            "model": sv("model"), "dtype": p.get("dtype") if p.get("dtype") in PRESET_DTYPES else "default",
+            "clip": sv("clip"), "vae": sv("vae"), "audio_vae": sv("audio_vae"), "loras": loras, "note": sv("note")[:500]}
+
+
+def segment_preset(project, i):
+    """Effective preset of segment i: its own (if that preset exists), else the project's; None = wired inputs."""
+    pr = project.get("model_presets") or {}
+    segs = project.get("segments") or []
+    own = segs[i].get("model_preset") if 0 <= i < len(segs) else ""
+    return pr.get(own) if own in pr else pr.get((project.get("settings") or {}).get("model_preset") or "")
+
+
+def preset_fingerprint(p):
+    """What of a preset decides a clip's result (no name / note / VAE); "" = no preset."""
+    if not p:
+        return ""
+    return json.dumps([p["base"], p["model"], p["dtype"], p["clip"],
+                       [[l["file"], l["sm"], l["sc"]] for l in p["loras"] if l["on"] and (l["sm"] or l["sc"])]],
+                      separators=(",", ":"), ensure_ascii=False)
+
+
 def _merge(defaults, value):
     out = copy.deepcopy(defaults)
     if isinstance(value, dict):
@@ -380,7 +433,14 @@ def normalize_project(p):
     }
     if out["end_mode"] == "auto":
         out["end"] = 0
+    out["model_presets"] = {}
+    if isinstance(p.get("model_presets"), dict):
+        for k, v in list(p["model_presets"].items())[:MAX_PRESETS]:
+            q = normalize_preset(v, k)
+            if q:
+                out["model_presets"][q["id"]] = q
     st = out["settings"]
+    st["model_preset"] = _preset_id(st.get("model_preset"))
     st["quality"] = "draft" if st.get("quality") == "draft" else "final"
     st["final_mode"] = "refine" if st.get("final_mode") == "refine" else "full"
     ds = _num(st.get("draft_scale"), 0.5)
@@ -487,6 +547,7 @@ def normalize_project(p):
         seg["source"] = _normalize_source(seg.get("source"), video_ids)
         seg["upscale"] = normalize_upscale(seg.get("upscale"))
         seg["approved"] = bool(seg.get("approved"))
+        seg["model_preset"] = _preset_id(seg.get("model_preset"))
         if seg["freeze"]:
             seg["frames"] = seg["freeze"]["frames"]
         out["segments"].append(seg)
@@ -1094,8 +1155,9 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
     for it in items:
         i = it["index"]
         seg = project["segments"][i]
+        env_i = env_sig[i] if isinstance(env_sig, (list, tuple)) else env_sig   # per-clip model presets
         data = {
-            "v": KEY_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
+            "v": KEY_VERSION, "env": env_i, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
             "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
             "refs": [[a["id"], a["file"], a["subfolder"], ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
             "params": pass_params(project, i, kind), "lock": bool(s.get("lock_overlap", True)),
@@ -1115,7 +1177,7 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
             a = next((x for x in project["assets"] if x["id"] == src["asset"]), {})
             sd = [a.get("id"), a.get("file"), a.get("subfolder"), ref_sigs.get(src["asset"], ""), src["in"], src["denoise"]]
             if is_footage(seg):   # used as is: only the file range, size and VAE matter
-                data = {"v": KEY_VERSION, "env": env_sig, "wh": [w, h], "frames": it["frames"], "src": sd}
+                data = {"v": KEY_VERSION, "env": env_i, "wh": [w, h], "frames": it["frames"], "src": sd}
             else:
                 data["src"] = sd
         vr = video_refs(project, seg)

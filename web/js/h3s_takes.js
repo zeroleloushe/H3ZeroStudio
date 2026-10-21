@@ -2,7 +2,7 @@
 // A take = one generated result of a segment + the snapshot of the segment fields that produced it.
 // Choosing a take restores that snapshot, so the backend cache key matches again: the take's latent is
 // reused in the final stitch and as the continuity source of the next segment (no re-sampling).
-const SNAP_KEYS = ["prompt", "refs", "frames", "overrides", "link", "upscale"];
+const SNAP_KEYS = ["prompt", "refs", "frames", "overrides", "link", "upscale", "model_preset"];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 export function installTakes(Editor, { C, h, ICON }) {
@@ -18,7 +18,8 @@ export function installTakes(Editor, { C, h, ICON }) {
       if (!t) {
         // + the project inputs and the previous clip's key it was made with («↺ Восстановить» puts them back)
         const k = C.RUN_KINDS.includes(res.kind) ? res.kind : C.runKind(this.p.settings);
-        const psnap = { settings: clone(this.p.settings), prev: i > 0 ? (this.pendingSigs?.[i - 1] ?? C.segmentSigs(this.p, k)[i - 1]) : null };
+        const mp = C.segmentPreset?.(this.p, i);   // the model preset as it was (its LoRA strengths etc.)
+        const psnap = { settings: clone(this.p.settings), mp: mp ? clone(mp) : null, prev: i > 0 ? (this.pendingSigs?.[i - 1] ?? C.segmentSigs(this.p, k)[i - 1]) : null };
         t = { id: C.newId("t"), key: res.key, sig, seed: res.seed, created: res.created || Math.floor(Date.now() / 1000), snap: this.snapOf(s), psnap, result };
         s.takes.push(t);
         if (s.takes.length > C.MAX_TAKES) s.takes.splice(0, s.takes.length - C.MAX_TAKES);
@@ -36,6 +37,7 @@ export function installTakes(Editor, { C, h, ICON }) {
         const seg = p.segments[i];
         Object.assign(seg, clone(t.snap || {}));
         if (!t.snap || !("upscale" in t.snap)) seg.upscale = null;   // takes from before «Апскейл отрезка»
+        if (t.snap && "model_preset" in t.snap) this.mpEmbed?.(p);   // the take's clip preset must travel with the project
         seg.active_take = t.id;
         seg.result = { ...clone(t.result), sig: t.sig };
         this.relinkDownstream(p, i);
@@ -145,7 +147,7 @@ export function installTakes(Editor, { C, h, ICON }) {
       takes.forEach((t, k) => {
         const on = t.id === s.active_take && !!s.result && s.result.key === t.key;
         const when = t.created ? new Date(t.created * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
-        const el = h("div", { class: "h3z-take" + (on ? " on" : ""), title: `Дубль ${k + 1} · сид ${t.seed ?? "?"}${when ? " · " + when : ""}\n${on ? "Используется в ролике" : "Клик — использовать этот дубль"}` },
+        const el = h("div", { class: "h3z-take" + (on ? " on" : ""), title: `Дубль ${k + 1} · сид ${t.seed ?? "?"}${when ? " · " + when : ""}${t.result?.models ? "\n" + this.mpTip(t.result.models) : ""}\n${on ? "Используется в ролике" : "Клик — использовать этот дубль"}` },
           t.result?.poster ? h("img", { src: this.host.url(t.result.poster), draggable: "false" }) : h("div", { class: "ph" }),
           h("span", { class: "k" }, k + 1), h("span", { class: "sd" }, `сид ${t.seed ?? "?"}`));
         el.onclick = () => { if (!on) this.selectTake(i, t.id); else { this.pvMode = "segment"; this.renderPreview(); } };
@@ -172,12 +174,23 @@ export function installTakes(Editor, { C, h, ICON }) {
 }
 
 // ---------------------------------------------------------------- «↺ Восстановить»: what changed since a take
-const SEG_LBL = { prompt: "промпт отрезка", refs: "референсы отрезка", frames: "длина", overrides: "параметры отрезка (сид, шаги…)",
+const SEG_LBL = { model_preset: "пресет моделей отрезка", prompt: "промпт отрезка", refs: "референсы отрезка", frames: "длина", overrides: "параметры отрезка (сид, шаги…)",
   link: "связь (продление / новая сцена)", upscale: "апскейл отрезка" };
-const SET_LBL = { prompt: "общий промпт", negative: "негатив", seed: "общий сид", steps: "шаги", cfg: "cfg", sampler: "сэмплер",
+const SET_LBL = { model_preset: "пресет моделей проекта", prompt: "общий промпт", negative: "негатив", seed: "общий сид", steps: "шаги", cfg: "cfg", sampler: "сэмплер",
   scheduler: "шедулер", shift_video: "shift видео", shift_audio: "shift звука", denoise: "denoise", aspect: "соотношение сторон",
   res_mode: "режим размера", megapixels: "мегапиксели", width: "ширина", height: "высота", overlap_blocks: "перекрытие",
   lock_overlap: "фиксация перекрытия", continuity_ref: "кадр-продолжение", ref_size: "размер референсов", run_kind: "черновик / финал" };
+/** LoRA / file difference of two versions of a model preset, readable. */
+function presetDiff(a, b) {
+  const out = [], nm = (f) => String(f || "").split(/[\\/]/).pop();
+  for (const [k, l] of [["model", "модель"], ["dtype", "dtype"], ["clip", "энкодер"], ["base", "тип"]]) if (a[k] !== b[k]) out.push(`${l} ${nm(b[k])} → ${nm(a[k])}`);
+  const on = (p) => Object.fromEntries(p.loras.filter((l) => l.on && (l.sm || l.sc)).map((l) => [l.file, l]));
+  const la = on(a), lb = on(b);
+  for (const f in la) if (!lb[f]) out.push(`вернуть LoRA ${nm(f)} ${la[f].sm}/${la[f].sc}`);
+  for (const f in lb) if (!la[f]) out.push(`убрать LoRA ${nm(f)}`);
+  for (const f in la) if (lb[f] && (la[f].sm !== lb[f].sm || la[f].sc !== lb[f].sc)) out.push(`LoRA ${nm(f)} ${lb[f].sm}/${lb[f].sc} → ${la[f].sm}/${la[f].sc}`);
+  return out.join(", ") || "порядок LoRA";
+}
 const short = (v) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t === undefined ? "—" : t.length > 48 ? t.slice(0, 46) + "…" : t; };
 
 export function installRestore(Editor, { C, h }) {
@@ -204,13 +217,21 @@ export function installRestore(Editor, { C, h }) {
       for (const key of Object.keys(t.snap)) {
         const cur = this.p.segments[i][key];
         if (JSON.stringify(cur ?? null) !== JSON.stringify(t.snap[key] ?? null))
-          test(SEG_LBL[key] || key, "seg", (p) => { p.segments[i][key] = clone(t.snap[key]); }, t.snap[key], cur);
+          test(SEG_LBL[key] || key, "seg", (p) => { p.segments[i][key] = clone(t.snap[key]); if (key === "model_preset") this.mpEnsure(p, t); }, t.snap[key], cur);
       }
       const ps = t.psnap?.settings;
       if (ps) for (const key of new Set([...Object.keys(ps), ...Object.keys(this.p.settings)])) {
         const was = ps[key], cur = this.p.settings[key];
         if (JSON.stringify(was ?? null) === JSON.stringify(cur ?? null)) continue;
-        test(SET_LBL[key] || `настройка «${key}»`, "proj", (p) => { if (was === undefined) delete p.settings[key]; else p.settings[key] = clone(was); }, was, cur);
+        test(SET_LBL[key] || `настройка «${key}»`, "proj", (p) => { if (was === undefined) delete p.settings[key]; else p.settings[key] = clone(was); if (key === "model_preset") this.mpEnsure(p, t); }, was, cur);
+      }
+      const om = t.psnap?.mp, cm = om && this.p.model_presets?.[om.id];
+      if (om && cm && C.presetFingerprint(om) !== C.presetFingerprint(cm))   // the preset itself was edited (LoRA strengths…)
+      {   // relevant once the clip / project fields above are back (e.g. the clip override is undone first)
+        const apply = (p) => { p.model_presets[om.id] = { ...clone(om), name: cm.name }; };
+        const pa = clone(this.p); for (const it of out) it.apply(pa); this.mpEnsure(pa, t);
+        const pb = clone(pa); apply(pb);
+        if (sigOf(pb) !== sigOf(pa)) out.push({ id: "lib:" + om.id, label: `пресет «${cm.name}»: ${presetDiff(om, cm)}`, scope: "lib", apply });
       }
       if (i > 0 && t.psnap?.prev) {
         const p3 = clone(this.p); for (const it of out) if (it.scope === "proj") it.apply(p3);   // project fields restored first
@@ -225,10 +246,30 @@ export function installRestore(Editor, { C, h }) {
       return { take: t, kind: k, items: out, match: now === t.sig };
     },
 
+    /** A restored preset id needs its copy in the project (library version, else the take's own copy). */
+    mpEnsure(p, t) {
+      p.model_presets = p.model_presets || {};
+      for (const id of [p.settings.model_preset, ...p.segments.map((x) => x.model_preset)].filter(Boolean)) {
+        if (p.model_presets[id]) continue;
+        const q = this.mpGet?.(id) || (t.psnap?.mp?.id === id ? t.psnap.mp : null);
+        if (q) p.model_presets[id] = clone(q);
+      }
+    },
+
     /** Put the checked inputs back (one undo step); the key matches again when everything was restored. */
     applyRestore(i, items) {
       const r = this.restoreTake(i); if (!r || !items.length) return;
-      this.mutate((p) => { for (const it of items) it.apply?.(p); this.relinkDownstream(p, i - (items.some((x) => x.scope === "prev") ? 1 : 0)); }, { render: "none" });
+      const lib = items.filter((x) => x.scope === "lib");
+      this.mutate((p) => {
+        for (const it of items) if (it.scope !== "lib") it.apply?.(p);
+        this.mpEmbed?.(p); this.mpEnsure(p, r.t);
+        for (const it of lib) it.apply(p);   // after the embed: the library copy would win otherwise
+        this.relinkDownstream(p, i - (items.some((x) => x.scope === "prev") ? 1 : 0));
+      }, { render: "none" });
+      for (const it of lib) {   // the library preset gets the old values too (it is shared — next sync would undo it)
+        const om = r.t.psnap.mp;
+        if (this.mpLib?.().some((x) => x.id === om.id)) this.mpEdit(om.id, (q) => { Object.assign(q, { ...clone(om), name: q.name, id: q.id }); }, `Пресет «${om.name}» восстановлен`);
+      }
       const s = this.seg(i);
       if (s.result) s.result = { ...clone(r.t.result), sig: r.t.sig };
       this.renderAll();
@@ -249,12 +290,13 @@ export function installRestore(Editor, { C, h }) {
       const boxes = d.items.map((it) => {
         const cb = h("input", { type: "checkbox" }); cb.checked = !!it.apply; cb.disabled = !it.apply;
         cb.onchange = () => warn();
-        return { it, cb, row: h("label", { class: "h3z-rs-row" + (it.scope === "proj" ? " proj" : "") }, cb, h("span", null, it.label),
+        return { it, cb, row: h("label", { class: "h3z-rs-row" + (it.scope === "proj" || it.scope === "lib" ? " " + it.scope : "") }, cb, h("span", null, it.label),
           it.from !== undefined ? h("em", null, `${it.to} → ${it.from}`) : null) };
       });
       const wn = h("div", { class: "h3z-note h3z-rs-warn" });
-      const warn = () => { wn.textContent = boxes.some((b) => b.cb.checked && b.it.scope === "proj")
-        ? "Поля проекта влияют на все клипы" + (this.globScope?.() ? " и, при общих настройках, на другие проекты" : "") : ""; };
+      const warn = () => { const on = (sc) => boxes.some((b) => b.cb.checked && b.it.scope === sc);
+        wn.textContent = [on("proj") ? "Поля проекта влияют на все клипы" + (this.globScope?.() ? " и, при общих настройках, на другие проекты" : "") : "",
+          on("lib") ? "Пресет моделей общий: он изменится во всех проектах и клипах, где выбран" : ""].filter(Boolean).join(". "); };
       warn();
       host.append(h("div", { class: "h3z-rs h3z-glass" }, h("b", null, "Что изменилось с этого дубля"), ...boxes.map((b) => b.row), wn,
         h("div", { class: "h3z-rs-btns" },

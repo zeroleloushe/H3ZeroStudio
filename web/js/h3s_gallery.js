@@ -115,7 +115,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       const meth = e.kind === "upscale" && e.upscale ? (C.UPSCALE_LABELS?.[e.upscale.method] || e.upscale.method) : "";
       const st = e.kind === "region" ? `✂ ${e.region_name || (e.region_no ? "Участок " + e.region_no : "Участок")}` + (e.region_kind === "draft" ? " · черн." : "") :
         e.kind === "refine" ? "Финал ↑ из черновика" : (KIND[e.kind] || e.kind);
-      return [st, meth, wh, e.kind === "final" && e.count ? `${e.count} отр.` : "", e.seed != null ? `сид ${e.seed}` : "", e.seam && e.seam.verdict !== "ok" ? (e.seam.verdict === "hard" ? "⚠ резкий шов" : "◐ лёгкий скачок на шве") : "", ago(e.created)].filter(Boolean).join(" · ");
+      return [st, meth, wh, e.kind === "final" && e.count ? `${e.count} отр.` : "", e.seed != null ? `сид ${e.seed}` : "", e.seam && e.seam.verdict !== "ok" ? (e.seam.verdict === "hard" ? "⚠ резкий шов" : "◐ лёгкий скачок на шве") : "", this.mpLabel?.(e.models) || "", ago(e.created)].filter(Boolean).join(" · ");
     },
     galOpenGroup(k) { this.galGroup = k; this.galFill(); },
 
@@ -204,7 +204,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       const badge = grp ? h("div", { class: "cnt", title: `${grp.items.length} вариантов — клик открывает стопку` }, `▣ ${grp.items.length}`) : null;
       const line1 = o.variant ? this.galLine(e) : grp ? [grp.label, e.frames ? `${(e.frames / C.FPS).toFixed(1)} с` : "", ago(grp.items[0].created)].filter(Boolean).join(" · ") : [e.seg_index != null ? `Отр. ${e.seg_index + 1}` : e.kind === "final" ? `${e.count || ""} отр.` : "", e.frames ? `${(e.frames / C.FPS).toFixed(1)} с` : "", e.seed != null ? `сид ${e.seed}` : "", ago(e.created)].filter(Boolean).join(" · ");
       const tip = grp ? `${grp.label}: ${grp.items.length} вариантов (${kinds.map(([k, n]) => (KIND[k] || k) + (n > 1 ? " ×" + n : "")).join(", ")})\nОбложка: ${this.galLine(e)}\n\nКлик — открыть стопку · двойной клик — смотреть обложку · Ctrl+клик — выбрать обложку для сравнения`
-        : (e.prompt || "").slice(0, 400) + "\n\nДвойной клик — смотреть · Ctrl+клик — выбрать для сравнения · правый клик — действия";
+        : (e.prompt || "").slice(0, 400) + (e.models ? "\n\n" + this.mpTip(e.models) : "") + "\n\nДвойной клик — смотреть · Ctrl+клик — выбрать для сравнения · правый клик — действия";
       const card = h("div", { class: "h3z-gcard" + (on ? " sel" : "") + (grp ? " stack" : ""), title: tip },
         h("div", { class: "pv" }, img, tags, star, chips, badge),
         h("div", { class: "cap" }, h("div", { class: "l1" }, line1), h("div", { class: "l2" }, (e.prompt || "").replace(/\s+/g, " ").slice(0, 90) || (e.project && (this.galScope === "all") ? e.project : "")),

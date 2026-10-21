@@ -19,6 +19,7 @@ import { installProjects } from "./h3s_projects.js";
 import { installRegions } from "./h3s_regions.js";
 import { installViewer } from "./h3s_viewer.js";
 import { installPromptEditor } from "./h3s_prompted.js";
+import { installPresets } from "./h3s_presets.js";
 
 export const PALETTE = [
   ["#8b5cf6", "#6366f1"], ["#22d3ee", "#0ea5e9"], ["#ec4899", "#f43f5e"], ["#f59e0b", "#f97316"],
@@ -131,6 +132,7 @@ export class H3Editor {
     this.focusSink();
     this.host.options?.().then((o) => { if (o?.samplers?.length) { this.opts = o; if (this.root) { this.renderInspector(); if (this.tool === "settings") this.renderLeft(); } } }).catch(() => {});
     this.globSync?.();
+    this.mpSync?.();
     requestAnimationFrame(() => { if (this.root) { this.renderTimeline(); this.layoutStage(); } });
   }
 
@@ -688,6 +690,7 @@ export class H3Editor {
     this.$.finalBox = h("div", { class: "h3z-final" });
     card.append(h("details", { class: "h3z-det" }, h("summary", null, "Итоговый промпт"), h("div", { class: "in" }, this.$.finalBox)));
     this.renderFinalPrompt();
+    { const mb = this.mpSegBlock(i); if (mb) card.append(mb); }
     card.append(this.overridesBlock(i));
     card.append(this.statusLine(i));
     card.append(this.takesBlock(i));
@@ -761,6 +764,7 @@ export class H3Editor {
     const peG = (key, title, kind, ph) => this.peButton(() => ({ title, value: this.p.settings[key] ?? "", ctx: { kind }, placeholder: ph, apply: (t) => this.mutate((p) => { p.settings[key] = t; }) }));
     card.append(h("div", null, h("div", { class: "h3z-lbl" }, "Общий промпт", h("em", null, "в начале каждого отрезка"), peG("prompt", "Общий промпт (для всех отрезков)", "global", gp.placeholder)), gp),
       h("div", null, h("div", { class: "h3z-lbl" }, "Негатив", h("em", null, Number(g.cfg) === 1 ? "не используется при cfg 1" : ""), peG("negative", "Негатив", "negative", neg.placeholder)), neg));
+    card.append(this.mpProjectBlock());
     // resolution
     const [w, hh] = C.resolution(g);
     const custom = g.res_mode === "custom";
@@ -1782,3 +1786,4 @@ installProjects(H3Editor, { C, h, ICON });
 installRegions(H3Editor, { C, h, ICON });   // after installComp: wraps fullCurrent / compSource
 installViewer(H3Editor, { C, h, ICON });
 installPromptEditor(H3Editor, { C, h, ICON });
+installPresets(H3Editor, { C, h, ICON });
