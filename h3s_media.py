@@ -16,9 +16,17 @@ def replace_file(tmp, path, tries=20, delay=0.05):
                 raise
             time.sleep(delay)
 
-def to_uint8(frames):
-    """IMAGE tensor [F,H,W,3] float 0..1 -> numpy uint8."""
-    return (frames[..., :3].clamp(0, 1) * 255.0 + 0.5).to("cpu").byte().numpy()
+U8_CHUNK = 16   # frames converted at a time: float temporaries stay a few frames, not the whole video
+
+
+def to_uint8(frames, chunk=U8_CHUNK):
+    """IMAGE tensor [F,H,W,3] float 0..1 -> numpy uint8. Converted in chunks: the one-shot
+    `clamp * 255 + 0.5` made 2-3 float32 copies of the WHOLE tensor (tens of GB for a long video)."""
+    f = frames[..., :3]
+    out = np.empty(tuple(f.shape[:-1]) + (int(f.shape[-1]),), dtype=np.uint8)
+    for a in range(0, int(f.shape[0]), max(1, int(chunk))):
+        out[a:a + chunk] = (f[a:a + chunk].clamp(0, 1) * 255.0 + 0.5).to("cpu").byte().numpy()
+    return out
 
 
 # ---------------------------------------------------------------- BT.709 (idea after chanon/comfyui-obvpm-timeline)
@@ -62,15 +70,24 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
     """frames: IMAGE tensor [F,H,W,3]. waveform: tensor [C,L] (float, -1..1) or None."""
     import av
     tmp = path + ".part"
-    arr = to_uint8(frames)
-    h, w = arr.shape[1], arr.shape[2]
+    h, w = int(frames.shape[1]), int(frames.shape[2])
+    nw = nh = 0
     if max_width and w > max_width:
-        from PIL import Image
         nw = int(max_width) // 2 * 2
         nh = int(round(h * nw / w)) // 2 * 2
-        arr = np.stack([np.asarray(Image.fromarray(f).resize((nw, nh), Image.BILINEAR)) for f in arr])
         h, w = nh, nw
     h2, w2 = h // 2 * 2, w // 2 * 2
+
+    def rows():
+        """uint8 RGB frames, converted (and downscaled) a chunk at a time: the full uint8 video is never built."""
+        for a in range(0, int(frames.shape[0]), U8_CHUNK):
+            blk = to_uint8(frames[a:a + U8_CHUNK])
+            if nw:
+                from PIL import Image
+                blk = np.stack([np.asarray(Image.fromarray(f).resize((nw, nh), Image.BILINEAR)) for f in blk])
+            for f in blk:
+                yield f
+
     container = av.open(tmp, mode="w", format="mp4")
     try:
         vs = video_stream(container, w2, h2, int(fps), {"crf": str(crf), "preset": preset, "movflags": "+faststart"}, pix_fmt)
@@ -83,7 +100,7 @@ def write_mp4(path, frames, fps=24, waveform=None, sample_rate=None, crf=20, max
             wf = wf[:2]
             layout = "stereo" if wf.shape[0] == 2 else "mono"
             astream = container.add_stream("aac", rate=int(sample_rate), layout=layout)
-        for f in arr:
+        for f in rows():
             for p in vs.encode(video_frame(f[:h2, :w2], pix_fmt)):
                 container.mux(p)
         for p in vs.encode():
@@ -123,16 +140,16 @@ def write_strip(path, frames, count=STRIP_COUNT, height=72):
     """Horizontal JPEG sprite of `count` evenly spaced frames, each tile in the video aspect.
     The timeline tiles it CapCut-style (as many thumbnails as fit the clip) and uses it for hover scrubbing."""
     from PIL import Image
-    arr = to_uint8(frames)
-    n = arr.shape[0]
+    n = int(frames.shape[0])
     count = max(1, min(int(count), n))
     # tile j shows the middle of the j-th 1/count of the clip
     idx = [min(n - 1, int((j + 0.5) * n / count)) for j in range(count)]
+    arr = to_uint8(frames[idx])   # only the `count` picked frames are converted, not the whole clip
     h, w = arr.shape[1], arr.shape[2]
     tw = max(8, int(round(w * height / h)))
     strip = Image.new("RGB", (tw * count, height))
-    for j, i in enumerate(idx):
-        strip.paste(Image.fromarray(arr[i]).resize((tw, height), Image.BILINEAR), (j * tw, 0))
+    for j in range(count):
+        strip.paste(Image.fromarray(arr[j]).resize((tw, height), Image.BILINEAR), (j * tw, 0))
     tmp = path + ".part.jpg"
     strip.save(tmp, quality=82)
     replace_file(tmp, path)

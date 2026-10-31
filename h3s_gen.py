@@ -58,6 +58,33 @@ def vram():
     return ""
 
 
+def ram():
+    """Resident RAM of the ComfyUI process, for the per-segment log (a growing number = frames piling up)."""
+    try:
+        import psutil
+        return f"RAM {psutil.Process().memory_info().rss / 2 ** 30:.1f} GB"
+    except Exception:
+        return ""
+
+
+def cat_release(parts):
+    """torch.cat along dim 0 that drops every part as soon as it is copied: peak memory is about one copy of the
+    result instead of parts + result (2x). `parts` is emptied in place (entries -> None); returns (tensor, lengths)."""
+    n = sum(int(p.shape[0]) for p in parts)
+    head = parts[0]
+    out = torch.empty((n,) + tuple(head.shape[1:]), dtype=head.dtype, device=head.device)
+    lens, at = [], 0
+    for k in range(len(parts)):
+        p = parts[k]
+        m = int(p.shape[0])
+        out[at:at + m] = p
+        at += m
+        lens.append(m)
+        parts[k] = None
+        del p
+    return out, lens
+
+
 def text_bar(i, n, w=20):
     k = int(round(w * i / max(1, n)))
     return "█" * k + "░" * (w - k)
@@ -1520,16 +1547,16 @@ def level_lock_joins(images, parts, items, results, n, gaps=(), gap_at=()):
                             f"{h3s_seams.VERDICTS[after['verdict']]} (×{after['ratio']})")
             except Exception as e:
                 vlog(f"level lock failed at join {k}: {e}")
-        at += int(fr.shape[0])
+        at += fr if isinstance(fr, int) else int(fr.shape[0])   # a part is a frame tensor or just its length
 
 
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
     rec = _run_begin(project)
     try:
         try:
-            gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 1.0)
+            gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 0.0)
         except Exception:
-            gb = 1.0
+            gb = 0.0
         from . import h3s_chars
         with vram_headroom(gb), h3s_chars.LOCK:   # «Персонажи»: no card is being created while the VAEs are in use
             out = _run_project(model, clip, vae, project, audio_vae, audio, node_id, preview_factory)
@@ -1928,11 +1955,12 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     seg_el = time.perf_counter() - _t0
                     seg_eta = seg_el / max(1, step + 1) * (total - step - 1)
                     sig = dy.get("sigma")
+                    vr_ = vram()   # one CUDA query per step (it was two)
                     log(f"[{text_bar(step + 1, total)}] seg {_i + 1}/{len(items)} step {step + 1}/{total}"
                         + (f" σ={sig:.4f}" if sig is not None else "") + (f" Δ={dy['delta']:.4f}" if dy.get("delta") is not None else "")
                         + (f" {dy['ms']:.0f} ms" if dy.get("ms") is not None else "")
                         + f" · ETA seg {fmt_s(seg_eta)} total {fmt_s(rate * (todo_steps - done_steps[0]))} · {done_steps[0]}/{todo_steps}"
-                        + (" · " + vram() if vram() else ""))
+                        + (" · " + vr_ if vr_ else ""))
 
             pcb = LivePreview(notify, MC(i)[0], i, settings=s, audio_vae=None, out_dir=d, sub=sub)   # no audio in the live preview (sounded awful mid-sampling)
             if preview_factory is not None and not s.get("preview_suppress", True):
@@ -1964,7 +1992,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             torch.save({"v": v, "a": a}, pt + ".part")
             media.replace_file(pt + ".part", pt)
             el_i = time.perf_counter() - seg_t0
-            log(f"segment {i + 1}/{len(items)}: done in {el_i:.1f}s ({el_i / max(1, steps_i):.2f} s/step)" + (" · " + vram() if vram() else ""))
+            log(f"segment {i + 1}/{len(items)}: done in {el_i:.1f}s ({el_i / max(1, steps_i):.2f} s/step)"
+                + "".join(" · " + x_ for x_ in (vram(), ram()) if x_))
         frames = take_frames(k, v, fresh, i)
         prev = {"v": v, "a": a, "last_frame": frames[-1:].clone()}
         seg_v.append(v)
@@ -2092,6 +2121,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         fr_i = seg_frames[i][ovf:]
         if (int(fr_i.shape[2]), int(fr_i.shape[1])) != (cw_, ch_):
             fr_i = _resize(fr_i, cw_, ch_)
+        seg_frames[i] = None   # the view in out_frames is all that is needed now; cat_release frees it part by part
         g_i = int(it.get("gap") or 0) if (i > 0 or not first) else 0
         if g_i:   # an empty stretch of the timeline: black frames (the sound is silence: stitched by start frame)
             gap_parts.append(len(out_frames))
@@ -2105,11 +2135,12 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         else:
             out_v.append(seg_v[i])
             out_a.append(seg_a[i])
-    images = torch.cat(out_frames, dim=0)
+    frames = direct = None   # the last clip's frames from the loop above are no longer needed (they would stay alive to the end)
+    images, out_lens = cat_release(out_frames)   # peak ~1 copy of the video here, not clips + copy
     level_n = core.level_lock_frames(proj)
     if level_n:   # «Выравнивание яркости и цвета»: decoded frames only (latents, cache, takes untouched)
-        level_lock_joins(images, [f for k, f in enumerate(out_frames) if k not in gap_parts], run_items, results, level_n,
-                         gaps=[int(out_frames[k].shape[0]) for k in gap_parts], gap_at=gap_parts)
+        level_lock_joins(images, [n_ for k, n_ in enumerate(out_lens) if k not in gap_parts], run_items, results, level_n,
+                         gaps=[out_lens[k] for k in gap_parts], gap_at=gap_parts)
     lat_v, lat_a = torch.cat(out_v, dim=2), torch.cat(out_a, dim=-1)
     latent = {"samples": comfy.nested_tensor.NestedTensor((lat_v, lat_a))}
     seam = core.audio_seam_params(proj)
@@ -2305,7 +2336,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     n_gen = len(run_items) - sum(cached[first:])
     log(f"finished in {total:.1f}s: {images.shape[0]} frames ({images.shape[0] / fps:.2f}s) · generated {n_gen}, cached {sum(cached[first:])}"
         + (f", untouched {first}" if first else "")
-        + (f" · {total / max(1, todo_steps):.2f} s/step" if todo_steps else "") + (f" · cut at end marker {end}" if 0 < end < sum(x['frames'] for x in items) else ""))
+        + (f" · {total / max(1, todo_steps):.2f} s/step" if todo_steps else "") + (f" · cut at end marker {end}" if 0 < end < sum(x['frames'] for x in items) else "")
+        + (" · " + ram() if ram() else ""))
     if out_audio is None:
         out_audio = {"waveform": torch.zeros(1, 2, int(images.shape[0] / fps * 44100)), "sample_rate": 44100}
     try:

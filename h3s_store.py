@@ -12,7 +12,6 @@ Asset file signatures: the cache keys historically use size:mtime of a reference
 re-save of the same picture changed every key that used it. content_sig() keeps the old string for the same
 CONTENT: the first size:mtime seen for a sha256 is recorded (globally and in the project's asset) and reused —
 existing keys stay valid, identical files keep hitting. (Latent sidecar idea after chanon/comfyui-obvpm-timeline.)"""
-import glob
 import hashlib
 import json
 import os
@@ -314,10 +313,32 @@ def diff_parts(old, new):
     return out
 
 
+MISS_SCAN_MAX = 300   # newest takes looked at to explain a cache miss
+
+
+def _recent_recipes(d, limit=None):
+    """recipe.json paths of the `limit` most recently touched takes (by the take folder's mtime; DirEntry.stat is
+    free on Windows). The old code opened and parsed EVERY recipe of the project on every miss, so each run got
+    slower as takes piled up. The result only feeds a log line, so the newest ones are enough."""
+    dirs = []
+    try:
+        with os.scandir(os.path.join(d, "takes")) as it:
+            for e in it:
+                try:
+                    if e.is_dir():
+                        dirs.append((e.stat().st_mtime, e.path))
+                except OSError:
+                    pass
+    except OSError:
+        return []
+    dirs.sort(reverse=True)
+    return [os.path.join(p, "recipe.json") for _, p in dirs[:int(limit or MISS_SCAN_MAX)]]
+
+
 def miss_reason(d, seg_id, kind, parts):
-    """Compare with the newest take of the same clip and pass kind."""
+    """Compare with the newest take of the same clip and pass kind (among the newest MISS_SCAN_MAX takes)."""
     best = None
-    for rp in glob.glob(os.path.join(d, "takes", "*", "recipe.json")):
+    for rp in _recent_recipes(d):
         try:
             with open(rp, "r", encoding="utf-8") as f:
                 r = json.load(f)

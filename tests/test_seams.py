@@ -80,7 +80,7 @@ def test_vram_headroom_raises_and_restores(monkeypatch):
 
 def test_settings_defaults_and_seam_params():
     p = core.normalize_project({})
-    assert p["settings"]["audio_declick"] is True and p["settings"]["vram_headroom_gb"] == 1.0
+    assert p["settings"]["audio_declick"] is True and p["settings"]["vram_headroom_gb"] == 0.0
     assert core.audio_seam_params(p)["declick"] is True
     assert "audio_declick" in core.GLOBAL_KEYS and "vram_headroom_gb" in core.GLOBAL_KEYS
 

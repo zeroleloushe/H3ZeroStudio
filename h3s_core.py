@@ -73,7 +73,7 @@ DEFAULT_SETTINGS = {
     "level_lock": True,        # match brightness/colour on both sides of continuation joins (decoded frames only)
     "level_lock_frames": 12,   # blend window each side, 2-48 frames
     "magnet": False,           # timeline «🧲 Магнит»: off = a dragged clip leaves a gap; on = clips stick, drag reorders
-    "vram_headroom_gb": 1.0,   # VRAM kept free while sampling / decoding (ComfyUI's reserve, never lowered)
+    "vram_headroom_gb": 0.0,   # VRAM kept free while sampling / decoding (ComfyUI's reserve, never lowered); off by default: a reserve makes ComfyUI load the model partially (up to ~2x slower steps on 12 GB cards)
     # live preview while sampling (do not affect the cache keys)
     "preview_tiny_vae": "auto", "preview_max_res": 512, "preview_quality": 80, "preview_frames": 48,
     "preview_fps": 0, "preview_suppress": True, "preview_audio": True,
