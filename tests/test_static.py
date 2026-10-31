@@ -519,4 +519,5 @@ def test_node_texts_are_english_with_russian_locale():
     for nid in ("ZL_H3ZeroStudio", "ZL_H3Studio"):
         d = ru[nid]
         assert d["display_name"] == "H3ZeroStudio · Таймлайн" and CYR.search(d["description"])
-        assert set(d["inputs"]) == {"project", "model", "clip", "vae", "audio_vae", "audio"} and set(d["outputs"]) == {"0", "1", "2"}
+        assert set(d["inputs"]) == {"project", "model", "clip", "vae", "audio_vae", "audio", "sampler", "sigmas"} and set(d["outputs"]) == {"0", "1", "2"}
+        assert all(CYR.search(d["inputs"][k]["tooltip"]) for k in d["inputs"])   # every input has a Russian tooltip

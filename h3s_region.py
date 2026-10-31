@@ -168,10 +168,10 @@ def sample_region(model, clip, vae, proj, region, win, src_v, src_a, kind, ref_i
     samples = comfy.nested_tensor.NestedTensor((video, audio))
     noise = comfy.sample.prepare_noise(samples, p["seed"])
     sigmas = gen.refine_sigmas(m, p["steps"], p["scheduler"], p["sigma0"]) if refine is not None else None
+    fresh = refine is None   # pure-noise pass: wired SIGMAS apply (a wired SAMPLER applies to every pass)
     if hasattr(preview_cb, "set_sigmas"):
         preview_cb.audio_scale = gen.sampler_audio_scale(m) or 1.0
-        preview_cb.set_sigmas([float(x) for x in sigmas.tolist()] if sigmas is not None else
-                              gen.preview.preview_sigmas(m, p["steps"], p["sampler"], p["scheduler"], p["denoise"]))
+        preview_cb.set_sigmas(gen.preview_sigma_list(m, p, sigmas, fresh))
 
     def cb(step, x0, x, total):
         comfy.model_management.throw_exception_if_processing_interrupted()
@@ -183,9 +183,8 @@ def sample_region(model, clip, vae, proj, region, win, src_v, src_a, kind, ref_i
         if step_cb is not None:
             step_cb(step, total)
 
-    out = comfy.sample.sample(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
-                              denoise=p["denoise"] if refine is None else 1.0, callback=cb, disable_pbar=True,
-                              seed=p["seed"], noise_mask=noise_mask, sigmas=sigmas)
+    out = gen.sample_pass(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
+                          p["denoise"] if refine is None else 1.0, cb, p["seed"], noise_mask=noise_mask, sigmas=sigmas, fresh=fresh)
     ov, oa = out.unbind()
     ov, oa = ov.float().cpu(), oa.float().cpu()
     kv = keep_v > 0.5
