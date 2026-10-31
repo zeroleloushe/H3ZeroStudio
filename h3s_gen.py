@@ -770,6 +770,76 @@ def refine_sigmas(model, steps, scheduler, sigma0):
     return out.contiguous()
 
 
+# ---------------------------------------------------------------- wired SAMPLER / SIGMAS (optional node inputs)
+# A SAMPLER / SIGMAS wired into the node win over the project's sampler / scheduler / steps:
+#   * SIGMAS: every fresh pass (draft / full, region passes) runs exactly these sigmas; the step count is len-1.
+#     Refine passes (final from the draft, upscale refine, audio refine, vid2vid from footage) start from their own
+#     partial schedule, so they keep it.
+#   * SAMPLER: replaces the sampler of every pass (a refine pass then uses its own sigmas with that sampler).
+# Both enter every cache key through settings["_custom"] (see core.pass_params).
+CUSTOM = {"sampler": None, "sigmas": None}
+
+
+def check_sigmas(sigmas):
+    """SIGMAS input -> flat float CPU tensor, or None. At least 2 finite values (n steps = n+1 sigmas)."""
+    if sigmas is None:
+        return None
+    t = torch.as_tensor(sigmas).detach().float().flatten().cpu()
+    if t.numel() < 2 or not bool(torch.isfinite(t).all()):
+        raise ValueError("H3ZeroStudio: вход sigmas: нужно минимум 2 конечных значения (n шагов = n+1 сигма)")
+    return t
+
+
+def sampler_signature(sampler):
+    """Stable short id of a SAMPLER object (its function + options): the cache key must change with it."""
+    f = getattr(sampler, "sampler_function", None)
+    name = f"{getattr(f, '__module__', '')}.{getattr(f, '__qualname__', type(sampler).__name__)}"
+    enc = lambda o: getattr(o, "__qualname__", type(o).__name__)
+    opts = json.dumps([getattr(sampler, "extra_options", None), getattr(sampler, "inpaint_options", None)], sort_keys=True, default=enc)
+    return hashlib.sha1((name + opts).encode()).hexdigest()[:12]
+
+
+def custom_info(sampler, sigmas):
+    """What the wired SAMPLER / SIGMAS add to the project settings ("_custom"): the step count and a signature."""
+    if sampler is None and sigmas is None:
+        return None
+    out = {"steps": 0, "sig": {}}
+    if sigmas is not None:
+        lst = [round(float(x), 6) for x in sigmas.tolist()]
+        out["steps"], out["sig"]["sigmas"] = len(lst) - 1, lst
+    if sampler is not None:
+        out["sig"]["sampler"] = sampler_signature(sampler)
+    return out
+
+
+def sample_pass(m, noise, steps, cfg, sampler, scheduler, pos, neg, samples, denoise, callback, seed,
+                noise_mask=None, sigmas=None, fresh=False):
+    """The one place that calls the sampler. Without wired inputs it is exactly comfy.sample.sample. fresh = the pass
+    starts from pure noise (so wired SIGMAS apply); a wired SAMPLER applies to every pass."""
+    cs, csg = CUSTOM["sampler"], CUSTOM["sigmas"]
+    use_csg = fresh and csg is not None
+    if cs is None and not use_csg:
+        return comfy.sample.sample(m, noise, steps, cfg, sampler, scheduler, pos, neg, samples, denoise=denoise, callback=callback,
+                                   disable_pbar=True, seed=seed, noise_mask=noise_mask, sigmas=sigmas)
+    if use_csg:
+        sigmas = csg
+    if sigmas is None:   # only a SAMPLER is wired: the project's scheduler / steps give the sigmas, as KSampler would
+        sigmas = comfy.samplers.KSampler(m, steps=steps, device=m.load_device, sampler=sampler, scheduler=scheduler,
+                                         denoise=denoise, model_options=m.model_options).sigmas
+    obj = cs if cs is not None else comfy.samplers.sampler_object(sampler)
+    return comfy.sample.sample_custom(m, noise, cfg, obj, sigmas, pos, neg, samples, noise_mask=noise_mask, callback=callback,
+                                      disable_pbar=True, seed=seed)
+
+
+def preview_sigma_list(m, p, refine_sigmas_t=None, fresh=False):
+    """Sigmas the live preview / dynamics panel plots for a pass (the wired ones when they apply)."""
+    if fresh and CUSTOM["sigmas"] is not None:
+        return [float(x) for x in CUSTOM["sigmas"].tolist()]
+    if refine_sigmas_t is not None:
+        return [float(x) for x in refine_sigmas_t.tolist()]
+    return preview.preview_sigmas(m, p["steps"], p["sampler"], p["scheduler"], p["denoise"])
+
+
 def upscale_video_latent(vae, v, w, h, method="learned", frames=None):
     """Video latent [1,24,T,h',w'] -> the w x h canvas: the learned H3 latent upscaler (default) or RTX VSR ->
     VAE encode ("rtx"), each the other's fallback; neither = h3s_upscale.UpscaleUnavailable (clear error).
@@ -911,12 +981,14 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
     samples = comfy.nested_tensor.NestedTensor((video, audio))
     noise = comfy.sample.prepare_noise(samples, p["seed"])
     sigmas = refine_sigmas(m, p["steps"], p["scheduler"], p["sigma0"]) if refine is not None else None
+    fresh = refine is None and init is None   # starts from pure noise: wired SIGMAS apply
     if sigmas is not None:
         vlog(f"  refine schedule: {p['steps']} steps from sigma {float(sigmas[0]):.3f} ({p['scheduler']})")
+    elif fresh and CUSTOM["sigmas"] is not None:
+        vlog(f"  wired sigmas: {p['steps']} steps {[round(float(x), 3) for x in CUSTOM['sigmas'].tolist()]}")
     if hasattr(preview_cb, "set_sigmas"):
         preview_cb.audio_scale = sampler_audio_scale(m) or 1.0
-        preview_cb.set_sigmas([float(x) for x in sigmas.tolist()] if sigmas is not None else
-                              preview.preview_sigmas(m, p["steps"], p["sampler"], p["scheduler"], p["denoise"]))
+        preview_cb.set_sigmas(preview_sigma_list(m, p, sigmas, fresh))
 
     def cb(step, x0, x, total):
         comfy.model_management.throw_exception_if_processing_interrupted()
@@ -928,8 +1000,8 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         if step_cb is not None:
             step_cb(step, total)
 
-    out = comfy.sample.sample(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
-                              denoise=p["denoise"], callback=cb, disable_pbar=True, seed=p["seed"], noise_mask=noise_mask, sigmas=sigmas)
+    out = sample_pass(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples, p["denoise"], cb, p["seed"],
+                      noise_mask=noise_mask, sigmas=sigmas, fresh=fresh)
     ov_, oa_ = out.unbind()
     if noise_mask is not None:
         sel = w_a > 0.999
@@ -978,8 +1050,7 @@ def refine_audio(model, clip, vae, project, index, items, v, a, ar, ref_images, 
         if step_cb is not None:
             step_cb(step, total)
 
-    out = comfy.sample.sample(m, noise, steps, p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
-                              denoise=den, callback=cb, disable_pbar=True, seed=seed, noise_mask=noise_mask)
+    out = sample_pass(m, noise, steps, p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples, den, cb, seed, noise_mask=noise_mask)
     ov_, oa_ = out.unbind()
     if vden <= 0:
         err = float((ov_.float().cpu() - v.float()).abs().max())
@@ -1550,9 +1621,10 @@ def level_lock_joins(images, parts, items, results, n, gaps=(), gap_at=()):
         at += fr if isinstance(fr, int) else int(fr.shape[0])   # a part is a frame tensor or just its length
 
 
-def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
+def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None, sampler=None, sigmas=None):
     rec = _run_begin(project)
     try:
+        CUSTOM["sampler"], CUSTOM["sigmas"] = sampler, check_sigmas(sigmas)   # wired inputs win; always reset below
         try:
             gb = core.normalize_project(project)["settings"].get("vram_headroom_gb", 0.0)
         except Exception:
@@ -1568,10 +1640,19 @@ def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=N
         if st and st.get("active"):
             st["active"], st["error"], st["t"] = False, (str(e) or type(e).__name__)[:300], time.time()
         raise
+    finally:
+        CUSTOM["sampler"] = CUSTOM["sigmas"] = None   # the next run (or a tool outside a run) never sees these
 
 
 def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
     proj = core.limited_project(core.normalize_project(project))
+    cu = custom_info(CUSTOM["sampler"], CUSTOM["sigmas"])   # wired SAMPLER / SIGMAS: steps + cache-key signature
+    if cu:
+        proj["settings"]["_custom"] = cu
+        log("wired " + " + ".join(x for x in (
+            "SAMPLER (" + type(CUSTOM["sampler"]).__name__ + ", " + cu["sig"]["sampler"] + ")" if CUSTOM["sampler"] is not None else "",
+            f"SIGMAS ({cu['steps']} steps: {[round(x, 3) for x in cu['sig']['sigmas']]})" if CUSTOM["sigmas"] is not None else "") if x)
+            + " — they win over the project's sampler / scheduler / steps")
     rk = proj["run"].get("kind")   # per-run override: ✎ draft / ✦ final from the draft of one clip, «✦ Чистовики»
     if rk == "draft":
         proj["settings"]["quality"] = "draft"

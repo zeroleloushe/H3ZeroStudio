@@ -130,6 +130,7 @@ rem опционально, для RTX VSR:
    - Добавьте ноду **«H3ZeroStudio · Timeline»** («Таймлайн» в русском ComfyUI).
    - Подключите `model` (можно с turbo LoRA: 4–8 шагов, CFG 1), `clip`, `vae` и `audio_vae`.
    - Вход `audio` необязателен: свой звук можно загрузить и в ассеты.
+  - Входы `sampler` и `sigmas` необязательны (например, для моделей со своим расписанием, вроде Pika Flex). Если подключены, они главнее сэмплера, планировщика и шагов проекта: `sigmas` задают проходы с нуля (число шагов = длина − 1), `sampler` действует во всех проходах. Проходы доработки и апскейла сохраняют своё частичное расписание. Оба входят в ключ кэша.
 2. Нажмите **«Развернуть»** (или двойной клик по ноде). Редактор откроется на всё окно.
 3. **Загрузите ассеты** — персонажей, локации, аудио — и перетащите их на клипы.
 4. **Напишите промпт** каждому отрезку и выберите связь:
@@ -378,7 +379,7 @@ The interface is available in English and Russian: «Settings» → 🌐 *Interf
 - `pip install nvidia-vfx` for RTX VSR;
 - `taeh3.safetensors` in `models/vae_approx` for the preview.
 
-**Use:** wire `model`, `clip`, `vae` and `audio_vae`. Click **«Развернуть»** (Expand), build the timeline and press **«Сгенерировать»** (`Ctrl+Enter`). Outputs: `images` (24 fps), `audio`, `latent`.
+**Use:** wire `model`, `clip`, `vae` and `audio_vae` (optional `sampler` / `sigmas` inputs, e.g. for models with their own schedule such as Pika Flex, win over the project's sampler / scheduler / steps: `sigmas` drive every pass that starts from noise, `sampler` every pass; refine / upscale passes keep their own partial schedule; both are part of the cache key). Click **«Развернуть»** (Expand), build the timeline and press **«Сгенерировать»** (`Ctrl+Enter`). Outputs: `images` (24 fps), `audio`, `latent`.
 
 ---
 

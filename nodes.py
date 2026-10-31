@@ -20,6 +20,8 @@ class ZL_H3ZeroStudio:
                 "vae": ("VAE", {"tooltip": "H3 video VAE: encodes references, decodes segments. Optional when the project's preset sets a VAE; a wire wins."}),
                 "audio_vae": ("VAE", {"tooltip": "H3 audio VAE (minimax_h3_audio_vae). Needed for sound in the preview and the AUDIO output, and for the audio track."}),
                 "audio": ("AUDIO", {"tooltip": "Timeline audio track: “reference” mode (<Audio 1> in every segment) or “main” (the sound stays as is, video follows it). Needs audio_vae."}),
+                "sampler": ("SAMPLER", {"tooltip": "Custom sampler (e.g. KSamplerSelect). When wired it wins over the project's sampler for every pass."}),
+                "sigmas": ("SIGMAS", {"tooltip": "Custom sigmas (e.g. a model's own schedule). When wired they win over the scheduler / steps for every pass that starts from noise; the step count is len-1. Refine / upscale passes keep their own partial schedule."}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -34,11 +36,11 @@ class ZL_H3ZeroStudio:
     DESCRIPTION = ("H3ZeroStudio: a full-screen timeline editor for MiniMax H3. Segments with their own prompts and references, "
                    "continuation that keeps characters consistent, a cache of finished segments. Click “Expand” on the node.")
 
-    def run(self, project, model=None, clip=None, vae=None, audio_vae=None, audio=None, unique_id=None):
+    def run(self, project, model=None, clip=None, vae=None, audio_vae=None, audio=None, sampler=None, sigmas=None, unique_id=None):
         from . import h3s_gen
         factory = None  # live preview comes from h3s_gen.LivePreview (ComfyUI's own pbar would fight ours)
         images, out_audio, latent, info = h3s_gen.run_project(model, clip, vae, project, audio_vae, audio,
-                                                              unique_id, factory)
+                                                              unique_id, factory, sampler=sampler, sigmas=sigmas)
         return {"ui": {"h3s": [json.dumps(info, ensure_ascii=False)]}, "result": (images, out_audio, latent)}
 
 

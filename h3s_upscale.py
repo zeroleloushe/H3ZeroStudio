@@ -840,8 +840,8 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
             if step_cb is not None:
                 step_cb(step, total)
 
-        out = comfy.sample.sample(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
-                                  denoise=1.0, callback=cb, disable_pbar=True, seed=p["seed"] + ci, noise_mask=noise_mask, sigmas=sigmas)
+        out = gen.sample_pass(m, noise, p["steps"], p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples,
+                              1.0, cb, p["seed"] + ci, noise_mask=noise_mask, sigmas=sigmas)   # a wired SAMPLER applies, the refine sigmas stay
         ov_, oa_ = out.unbind()
         ov_ = ov_.float().cpu()
         err = float((oa_.float().cpu() - ac.cpu()).abs().max())

@@ -897,6 +897,9 @@ def effective_params(project, index):
     p["denoise"] = float(p["denoise"])
     p["shift_video"] = float(p["shift_video"])
     p["shift_audio"] = float(p["shift_audio"])
+    cu = project["settings"].get("_custom") or {}   # wired SIGMAS (set per run by h3s_gen): the step count is theirs
+    if cu.get("steps"):
+        p["steps"] = int(cu["steps"])
     return p
 
 
@@ -907,6 +910,11 @@ def pass_params(project, index, kind=None):
     kind = kind or run_kind(s)
     p = effective_params(project, index)
     p["steps"] = pass_steps(s, p["steps"], kind)
+    cu = s.get("_custom") or {}   # wired SAMPLER / SIGMAS: they win over the settings and are part of every cache key
+    if cu:
+        if cu.get("steps") and kind in ("full", "draft"):   # the refine pass starts from its own sigma: its schedule stays
+            p["steps"] = int(cu["steps"])
+        p["custom"] = cu.get("sig")
     if kind in ("draft", "refine"):   # stage parameters (empty = the main ones)
         if s.get(kind + "_sampler"):
             p["sampler"] = s[kind + "_sampler"]
