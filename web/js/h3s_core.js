@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS = {
   steps: 20, cfg: 1.0, sampler: "res_multistep", scheduler: "simple", shift_video: 12.0, shift_audio: 3.0,
   seed: 0, fps: FPS, denoise: 1.0, overlap_blocks: 1, audio_context_sec: 1.0, lock_overlap: true, continuity_ref: true,
   continuity_phrase: DEFAULT_CONTINUITY, ref_size: "match", cache: true,
-  audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, magnet: false, vram_headroom_gb: 1.0,
+  audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, magnet: false, vram_headroom_gb: 0,
   preview_tiny_vae: "auto", preview_max_res: 512, preview_quality: 80, preview_frames: 48,
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
