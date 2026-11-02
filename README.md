@@ -12,7 +12,9 @@
 [![Plain JS](https://img.shields.io/badge/UI-plain%20JS%20·%20offline-f7df1e.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-78%20passed-2ea44f.svg)](#-тесты)
 
-[Возможности](#-возможности) · [Установка](#-установка) · [Модели](#-модели) · [Как пользоваться](#-как-пользоваться) · [Горячие клавиши](#-горячие-клавиши) · [FAQ](#-faq) · [English](#-english) · [Благодарности](#-благодарности-и-лицензии)
+[Возможности](#-возможности) · [Установка](#-установка) · [Модели](#-модели) · [Как пользоваться](#-как-пользоваться) · [Горячие клавиши](#-горячие-клавиши) · [FAQ](#-faq) · [English](#-english) · [Благодарности](#-благодарности-и-лицензии) · [Поддержать](#-поддержать-проект)
+
+💛 Проект бесплатный и открытый. Если он вам пригодился и хочется поддержать разработку, это можно сделать на [Boosty](https://boosty.to/zeroleloushe). Платных функций и подписок для доступа к ноде нет.
 
 </div>
 
@@ -380,6 +382,18 @@ The interface is available in English and Russian: «Settings» → 🌐 *Interf
 - `taeh3.safetensors` in `models/vae_approx` for the preview.
 
 **Use:** wire `model`, `clip`, `vae` and `audio_vae` (optional `sampler` / `sigmas` inputs, e.g. for models with their own schedule such as Pika Flex, win over the project's sampler / scheduler / steps: `sigmas` drive every pass that starts from noise, `sampler` every pass; refine / upscale passes keep their own partial schedule; both are part of the cache key). Click **«Развернуть»** (Expand), build the timeline and press **«Сгенерировать»** (`Ctrl+Enter`). Outputs: `images` (24 fps), `audio`, `latent`.
+
+**Support:** H3ZeroStudio is free and open source (GPL-3.0). If you find it useful and want to support development, you can do so on [Boosty](https://boosty.to/zeroleloushe). Entirely optional; there are no paid features.
+
+---
+
+## 💛 Поддержать проект
+
+H3ZeroStudio бесплатный, с открытым кодом (GPL-3.0), и таким останется. Все функции доступны без подписок и платных услуг.
+
+Если нода экономит вам время и хочется сказать спасибо, можно поддержать разработку на Boosty. Это полностью добровольно и ни на что не влияет: ни на доступ к коду, ни на поддержку в Issues.
+
+👉 **[boosty.to/zeroleloushe](https://boosty.to/zeroleloushe)**
 
 ---
 
