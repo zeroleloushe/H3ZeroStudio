@@ -16,6 +16,10 @@
 
 💛 Проект бесплатный и открытый. Если он вам пригодился и хочется поддержать разработку, это можно сделать на [Boosty](https://boosty.to/zeroleloushe). Платных функций и подписок для доступа к ноде нет.
 
+<video src="https://github.com/zeroleloushe/H3ZeroStudio/raw/main/docs/promo.mp4" poster="https://github.com/zeroleloushe/H3ZeroStudio/raw/main/docs/images/promo_poster.jpg" controls muted loop playsinline width="100%"></video>
+
+*Ролик на 53 секунды: нода на графе, редактор, продление без швов, референсы, звук, живое превью, апскейл, пересоздание участка и галерея. Если плеер не загрузился, [откройте ролик отдельно](docs/promo.mp4).*
+
 </div>
 
 ![Редактор H3ZeroStudio](docs/images/editor.webp)

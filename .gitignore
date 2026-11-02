@@ -35,6 +35,8 @@ input/
 *.wav
 *.flac
 *.mp3
+# the one exception: the promo video shown at the top of the README
+!docs/promo.mp4
 
 # editors / OS
 .vscode/
