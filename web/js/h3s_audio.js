@@ -68,9 +68,28 @@ export function installAudio(Editor, { C, h, ICON }) {
       return last;
     },
 
+    audioLanes() { return this.audioLane2 || this.p.audio.clips.some((c) => c.lane === 1) ? [0, 1, 2] : [0, 2]; },
+    audioRow(lane) { return Math.max(0, this.audioLanes().indexOf(lane)); },
+    audioLaneAt(y) {
+      const lanes = this.audioLanes();
+      return lanes[Math.max(0, Math.min(lanes.length - 1, Math.floor(y / (LANE_H + LANE_GAP))))];
+    },
+    ensureAudioLane(lane) {
+      if (lane !== 1 || this.audioLane2) return;
+      this.audioLane2 = true;
+      try { localStorage.setItem("h3zs.audioLane2", JSON.stringify(true)); } catch (e) {}
+    },
+    setAudioLane2(show) {
+      if (!show && this.p.audio.clips.some((c) => c.lane === 1)) { this.toast(T("Дорожка 2 содержит клипы — сначала переместите или удалите их"), true); return; }
+      this.audioLane2 = !!show;
+      try { localStorage.setItem("h3zs.audioLane2", JSON.stringify(this.audioLane2)); } catch (e) {}
+      this.renderTimeline();
+    },
+
     addAudioClip(asset, start = 0, lane = 0) {
       const id = C.newId("ac");
       lane = Math.max(0, Math.min(LANES - 1, lane));
+      this.ensureAudioLane(lane);
       this.mutate((p) => { p.audio.clips.push({ id, asset, lane, start: Math.max(0, Math.round(start * C.FPS) / C.FPS), in: 0, length: 0, volume: lane >= MUSIC ? 0.8 : 1, fade_in: 0, fade_out: 0 }); p.audio.clips.sort((a, b) => a.start - b.start || a.lane - b.lane); });
       this.selAudio = id; this.selMarker = null; this.audioPanelRefresh(); this.renderTimeline();
       this.toast(lane >= MUSIC ? T("Музыка: играет поверх звука видео (не фиксируется, не референс) · громкость и фейды — правый клик") : T("Клип на аудиодорожке: звук зафиксирован, видео подстроится под него"));
@@ -107,6 +126,7 @@ export function installAudio(Editor, { C, h, ICON }) {
 
     selectAudio(id) {
       this.selAudio = id; this.selMarker = null;
+      this.ensureAudioLane(this.audioClipById(id)?.lane);
       this.renderInspector(); this.renderTimeline();
     },
 
@@ -119,11 +139,11 @@ export function installAudio(Editor, { C, h, ICON }) {
       this.renderAudioHead();
     },
 
-    /** Audio track header (left column): label, per-track speaker toggles, audio_vae warning. */
+    /** Audio track header (left column): label, optional second lane, speaker toggles. */
     renderAudioHead() {
       const H = this.$.aHead; if (!H) return;
       H.innerHTML = "";
-      const clips = this.p.audio.clips, lock = clips.some((c) => !isMusic(c)), music = clips.some(isMusic);
+      const clips = this.p.audio.clips, lock = clips.some((c) => !isMusic(c)), music = clips.some(isMusic), lanes = this.audioLanes();
       const linked = this.host.inputLinked?.("audio_vae");
       const spk = (kind, on, title) => {
         const b = h("button", { class: "h3z-spk" + (on ? " on" : " off"), title: (on ? T("Звук включён") : T("Звук выключен")) + " — " + title });
@@ -132,16 +152,19 @@ export function installAudio(Editor, { C, h, ICON }) {
         b.onclick = (e) => { e.stopPropagation(); this.setMonitor(kind, !on); };
         return b;
       };
-      const row = (top, ...kids) => h("div", { class: "h3z-arow", style: { top: top + "px", height: LANE_H + "px" } }, ...kids);
+      const row = (lane, ...kids) => h("div", { class: "h3z-arow", style: { top: this.audioRow(lane) * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } }, ...kids);
+      const lane2Title = lanes.includes(1) ? T("Скрыть дорожку 2") : T("Добавить дорожку 2");
+      const lane2 = h("button", { class: "h3z-spk h3z-lane-toggle", title: lane2Title, "aria-label": lane2Title, onclick: (e) => { e.stopPropagation(); this.setAudioLane2(!lanes.includes(1)); } }, lanes.includes(1) ? "− 2" : "+ 2");
+      lane2.addEventListener("pointerdown", (e) => e.stopPropagation());
       const tip = T("Клипы на дорожках 1–2 — основная композиция: звук фиксируется, видео генерируется под него (ритм, липсинк). ") +
         T("Аудио в референсах отрезка — только подсказка <Audio N>. Дорожка «Музыка» не фиксируется: микшируется поверх звука видео при воспроизведении и сохранении.");
       H.title = tip;
       H.append(
         row(0, h("i", { html: ICON.audio }), h("span", { class: "nm" }, T("Аудио")),
           lock && linked === false ? h("span", { class: "h3z-warn", title: T("Не подключён вход audio_vae (minimax_h3_audio_vae): без него звук дорожки не фиксируется в генерации, а просто идёт на выход audio.") }, "⚠") : null,
-          spk("lock", this.audioMonitor !== false, T("слышать дорожку при воспроизведении (звук готового видео при этом приглушается)"))),
-        row(LANE_H + LANE_GAP, h("span", { class: "sub" }, "🔒 2")),
-        row(2 * (LANE_H + LANE_GAP), h("span", { class: "nm music" }, T("♫ Музыка")),
+          spk("lock", this.audioMonitor !== false, T("слышать дорожку при воспроизведении (звук готового видео при этом приглушается)")), lane2),
+        lanes.includes(1) ? row(1, h("span", { class: "sub" }, "🔒 2")) : null,
+        row(MUSIC, h("span", { class: "nm music" }, T("♫ Музыка")),
           spk("music", this.musicMonitor !== false, T("слышать музыку при воспроизведении") + (music ? "" : T(" (дорожка пуста)")))));
     },
 
@@ -166,7 +189,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         h("div", { class: "h3z-afile" }, h("i", { html: ICON.audio }), h("div", null, h("b", null, a?.name || c.asset), h("small", null, `${isMusic(c) ? T("музыка") : T("дорожка ") + (c.lane + 1)} · ${sp.known ? T("файл {0} с", this.assetDuration(c.asset).toFixed(2)) : T("длина файла неизвестна")}`))),
         h("div", { class: "h3z-arows" },
           h("div", { class: "h3z-field" }, h("div", { class: "h3z-lbl" }, T("Дорожка")), h("div", { class: "h3z-pills" },
-            [[0, "🔒 1"], [1, "🔒 2"], [2, T("♫ Музыка")]].map(([l, t]) => h("div", { class: "h3z-pill" + (c.lane === l ? " on" : ""), title: l >= MUSIC ? T("Музыка поверх видео: не фиксируется, только микс при воспроизведении и сохранении") : T("Основная композиция: звук фиксируется в генерации"), onclick: () => this.mutate((p) => { p.audio.clips.find((k) => k.id === c.id).lane = l; }) }, t)))),
+            [[0, "🔒 1"], [1, "🔒 2"], [2, T("♫ Музыка")]].map(([l, t]) => h("div", { class: "h3z-pill" + (c.lane === l ? " on" : ""), title: l >= MUSIC ? T("Музыка поверх видео: не фиксируется, только микс при воспроизведении и сохранении") : T("Основная композиция: звук фиксируется в генерации"), onclick: () => { this.ensureAudioLane(l); this.mutate((p) => { p.audio.clips.find((k) => k.id === c.id).lane = l; }); } }, t)))),
           num(T("Громкость, %"), (c.volume ?? 1) * 100, (x, v) => { x.volume = Math.min(2, v / 100); }, isMusic(c) ? "0–200" : T("меняет фиксируемый звук")),
           num(T("Фейд в начале"), c.fade_in || 0, (x, v) => { x.fade_in = v; }, T("с")),
           num(T("Фейд в конце"), c.fade_out || 0, (x, v) => { x.fade_out = v; }, T("с")),
@@ -220,15 +243,16 @@ export function installAudio(Editor, { C, h, ICON }) {
 
     // ---------------------------------------------------------------- track
     renderAudioTrack(at, ppf) {
-      const pps = ppf * C.FPS, clips = this.p.audio.clips;
+      const pps = ppf * C.FPS, clips = this.p.audio.clips, lanes = this.audioLanes();
+      at.dataset.lanes = lanes.join(",");
       this.renderAudioHead();
-      for (let l = 0; l < LANES; l++) at.append(h("div", { class: "h3z-alane" + (l >= MUSIC ? " music" : ""), style: { top: l * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } }, l >= MUSIC && !clips.some(isMusic) ? h("span", null, T("♫ Музыка — перетащите аудио сюда: играет поверх звука видео, не фиксируется")) : null));
+      for (const l of lanes) at.append(h("div", { class: "h3z-alane" + (l >= MUSIC ? " music" : ""), dataset: { lane: l }, style: { top: this.audioRow(l) * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } }, l >= MUSIC && !clips.some(isMusic) ? h("span", null, T("♫ Музыка — перетащите аудио сюда: играет поверх звука видео, не фиксируется")) : null));
       if (!clips.length) at.append(h("div", { class: "h3z-audio none", style: { left: "1px", width: Math.max(260, this.totalFrames() * ppf - 3) + "px", height: LANE_H + "px" } },
         h("span", null, T("Звук генерирует H3 · перетащите сюда аудио из ассетов — оно станет основной композицией (звук фиксируется)"))));
       for (const c of clips) {
         const sp = this.clipSpan(c), a = this.audioAsset(c.asset);
         const x0 = sp.start * pps, wd = Math.max(16, sp.len * pps - 2);
-        const el = h("div", { class: "h3z-audio clip " + (isMusic(c) ? "music" : "locked") + (c.id === this.selAudio ? " sel" : "") + (sp.known ? "" : " unknown"), style: { left: x0 + 1 + "px", width: wd + "px", top: c.lane * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } });
+        const el = h("div", { class: "h3z-audio clip " + (isMusic(c) ? "music" : "locked") + (c.id === this.selAudio ? " sel" : "") + (sp.known ? "" : " unknown"), dataset: { lane: c.lane }, style: { left: x0 + 1 + "px", width: wd + "px", top: this.audioRow(c.lane) * (LANE_H + LANE_GAP) + "px", height: LANE_H + "px" } });
         const pk = this.peaksFor(this.audioRefOf(c.asset));
         const cw = Math.min(Math.ceil(wd), 16000);
         if (pk?.peaks?.length && pk.duration) {
@@ -253,7 +277,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         const id = e.dataTransfer.getData("application/x-h3s-audio"); if (!id) return;
         e.preventDefault(); e.stopPropagation();
         const r = at.getBoundingClientRect();
-        this.addAudioClip(id, Math.max(0, this.frameAt(e.clientX) / C.FPS), Math.max(0, Math.min(LANES - 1, Math.floor((e.clientY - r.top) / (LANE_H + LANE_GAP)))));
+        this.addAudioClip(id, Math.max(0, this.frameAt(e.clientX) / C.FPS), this.audioLaneAt(e.clientY - r.top));
       });
     },
 
@@ -272,7 +296,8 @@ export function installAudio(Editor, { C, h, ICON }) {
         let st = c0.start, tin = c0.in, len = sp0.len, lane = c0.lane;
         if (kind === "move") {
           st = Math.max(0, snap(c0.start + dt));
-          lane = Math.max(0, Math.min(LANES - 1, c0.lane + Math.round((ev.clientY - sy) / (LANE_H + LANE_GAP))));
+          const lanes = this.audioLanes(), row = Math.max(0, lanes.indexOf(c0.lane));
+          lane = lanes[Math.max(0, Math.min(lanes.length - 1, row + Math.round((ev.clientY - sy) / (LANE_H + LANE_GAP))))];
         } else if (kind === "l") {
           const d = Math.max(-Math.min(c0.in, c0.start), Math.min(dt, sp0.len - 0.2));
           st = snap(c0.start + d); tin = Math.max(0, snap(c0.in + d)); len = sp0.len - (st - c0.start);

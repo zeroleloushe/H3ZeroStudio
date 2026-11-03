@@ -33,7 +33,7 @@ def log(msg):
 
 
 # ------------------------------------------------------------------ presets
-from .h3s_core import normalize_preset, preset_fingerprint, segment_preset, PRESET_DTYPES as DTYPES, MAX_PRESET_LORAS as MAX_LORAS  # noqa: E402
+from .h3s_core import normalize_preset, preset_fingerprint, segment_preset, upscale_gen, upscalable, PRESET_DTYPES as DTYPES, MAX_PRESET_LORAS as MAX_LORAS  # noqa: E402
 
 
 def presets_dir():
@@ -134,6 +134,20 @@ def preset_status(p):
         if l["on"] and not full_path("lora", l["file"]):
             miss.append(("lora", l["file"]))
     return miss
+
+
+def upscale_gen_env(settings):
+    """Cache-key tag of settings.upscale_gen (the refine's own model + LoRAs): "" = the project / clip presets.
+    The files' signatures are in, so a replaced / deleted file invalidates the cached upscale."""
+    ug = upscale_gen(settings)
+    if not ug:
+        return ""
+    parts = [ug["model"], file_sig(full_path("checkpoint", ug["model"]) or full_path("unet", ug["model"]))]
+    for l in ug["loras"]:
+        if not l.get("on", True):
+            continue
+        parts += [l["file"], file_sig(full_path("lora", l["file"])), str(l.get("sm", 1.0)), str(l.get("sc", 1.0))]
+    return "@ug:" + "|".join(parts)
 
 
 # ------------------------------------------------------------------ cache + loading
@@ -326,6 +340,14 @@ class Resolver:
                 errs.append(f"пресет «{pp['name']}»: нет файла {pp[part]}")
         if self.w["vae"] is None and not (pp and (pp["vae"] or pp["base"] == "checkpoint" and pp["model"])):
             errs.append("нет VAE — подключите вход vae или укажите его в пресете проекта")
+        ug = upscale_gen(self.p.get("settings"))
+        if ug and (any(upscalable(sg) for sg in self.p.get("segments") or [])
+                   or any((rg.get("upscale")) for rg in self.p.get("regions") or [])):
+            if not full_path("checkpoint", ug["model"]) and not full_path("unet", ug["model"]):
+                errs.append(f"апскейл: нет модели «{ug['model']}» (папки checkpoints / diffusion_models)")
+            for l in ug.get("loras") or []:
+                if l.get("on", True) and not full_path("lora", l["file"]):
+                    errs.append(f"апскейл: нет LoRA «{l['file']}» (папка loras)")
         if errs:
             raise ValueError("H3ZeroStudio: " + "; ".join(dict.fromkeys(errs)))
 
@@ -376,6 +398,43 @@ class Resolver:
                 if rep:
                     log(f"models: preset «{pr['name']}» LoRAs: " + "; ".join(rep))
             return store[pk]
+
+    def upscale_models(self, ug, i=0):
+        """(model, clip) for an upscale refine with the user's own model + LoRA (settings.upscale_gen,
+        «Настройки → Апскейл»): a checkpoint (its own text encoder) or a diffusion model (the wired / preset
+        text encoder of segment i) + one LoRA. Resolved lazily — the caller asks after the upscaler input ran
+        (the H3 <-> upscaler VRAM handoff)."""
+        name = ug["model"]
+        if full_path("checkpoint", name):
+            bkey, (base_m, base_c_ck, _v) = _load_base({"base": "checkpoint", "model": name, "dtype": "default"})
+            ckey, base_c = ("ckpt",) + tuple(bkey), base_c_ck
+        elif full_path("unet", name):
+            bkey, (base_m, _c0, _v) = _load_base({"base": "unet", "model": name, "dtype": "default"})
+            ckey, base_c = None, None
+        else:
+            raise FileNotFoundError(f"H3ZeroStudio: модель апскейла не найдена: {name} (папки checkpoints / diffusion_models)")
+        if self.w["clip"] is not None:
+            ckey, base_c = ("wired",), self.w["clip"]
+        elif base_c is None:
+            pr = segment_preset(self.p, i) or self.proj_preset or {}
+            if pr.get("clip"):
+                ckey, base_c = _load_clip(pr["clip"])
+        if base_c is None:
+            raise ValueError("H3ZeroStudio: нет текстового энкодера для модели апскейла — подключите вход clip "
+                             "или укажите текстовый энкодер в пресете проекта")
+        loras = [{"file": l["file"], "on": bool(l.get("on", True)), "sm": float(l.get("sm", 1.0) or 0), "sc": float(l.get("sc", 1.0) or 0)}
+                 for l in ug.get("loras") or []]
+        lk = tuple((l["file"], l["sm"], l["sc"]) for l in loras if l["on"] and (l["sm"] or l["sc"]))
+        pk = (bkey, ckey, lk, "ug")   # never a preset's key: the result differs by the LoRA stack
+        store = self.local if ckey[0] == "wired" else CACHE.patched
+        if pk not in store:
+            if len(CACHE.patched) > 8:
+                CACHE.patched.clear()
+            m, c, rep = apply_loras(base_m, base_c, loras)
+            store[pk] = (m, c)
+            if rep:
+                log("models: upscale model LoRAs: " + "; ".join(rep))
+        return store[pk]
 
     def env(self, i):
         """Cache-key environment of segment i: the old wired signature without a preset, else the preset's files."""

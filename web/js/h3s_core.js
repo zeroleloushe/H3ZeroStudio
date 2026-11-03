@@ -32,6 +32,14 @@ export const DEFAULT_SETTINGS = {
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
   quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 4, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
+  // «custom SIGMAS» schedules (with the scheduler of the same level): "1.0, 0.5, 0.0" — the exact list
+  // replaces the model's curve, the step count is len − 1
+  sigmas: "", draft_sigmas: "", refine_sigmas: "",
+  // «Настройки → Апскейл» → «Модель доработки»: the refine after the upscale runs on the project / clip presets
+  // ("project") or on the user's own model + LoRA ("custom"), see upscaleGen
+  upscale_gen: { mode: "project", model: "", loras: [], lora_strength: 1 },
+  // the learned H3 latent upscaler model (models/latent_upscale_models); "" = the first found (auto)
+  upscale_model: "",
 };
 export const DRAFT_SCALES = [0.5, 0.67, 0.75];
 export const REFINE_SIGMA_RANGE = [0.15, 0.8];
@@ -143,6 +151,7 @@ export function normalizeUpscaleProfile(m, p) {
   out.steps = Math.trunc(Math.max(0, Math.min(200, num(p.steps, 0))));
   out.sampler = String(p.sampler || "").slice(0, 64);
   out.scheduler = String(p.scheduler || "").slice(0, 64);
+  out.sigmas = String(p.sigmas || "").slice(0, SIGMAS_TEXT_MAX);
   out.chunk = "chunk" in p ? !!p.chunk : UPSCALE_CHUNK_DEFAULT[m];
   const cs = num(p.chunk_sec, 5.0);
   out.chunk_sec = roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs > 0 ? cs : 5.0)), 1);
@@ -166,11 +175,41 @@ export function normalizeUpscaleProfiles(st) {
 }
 export function upscaleProfile(s, method) { const pr = (s.upscale_profiles || {})[method]; return pr && typeof pr === "object" ? pr : normalizeUpscaleProfile(method, null); }
 export function profileUpscale(s, method) { return normalizeUpscale({ ...pick(upscaleProfile(s, method), UPSCALE_UP_FIELDS), method }); }
+export function normalizeUpscaleGen(ug) {
+  ug = ug && typeof ug === "object" ? ug : {};
+  const raw = Array.isArray(ug.loras) ? ug.loras : ug.lora ? [ug.lora] : [];
+  const st0 = roundHalf(Math.min(10, Math.max(-10, num(ug.lora_strength, 1))), 2);
+  const one = (x) => {
+    if (typeof x === "number") x = String(x);
+    if (typeof x === "string") { const f = x.trim().slice(0, 300); return f ? { file: f, on: true, sm: st0, sc: st0 } : null; }
+    if (x && typeof x === "object") {
+      const f = String(x.file || "").trim().slice(0, 300);
+      if (!f) return null;
+      return { file: f, on: x.on !== false,
+               sm: roundHalf(Math.min(10, Math.max(-10, num(x.sm, st0))), 2),
+               sc: roundHalf(Math.min(10, Math.max(-10, num(x.sc, st0))), 2) };
+    }
+    return null;
+  };
+  return { mode: ug.mode === "custom" ? "custom" : "project",
+           model: String(ug.model || "").slice(0, 300),
+           loras: raw.map(one).filter(Boolean).slice(0, 8) };
+}
+/** The refine's own model + LoRAs (settings.upscale_gen): null = the project / clip presets (mirror of core.upscale_gen). */
+export function upscaleGen(s) {
+  const ug = (s && s.upscale_gen) || {};
+  if (ug.mode !== "custom" || !ug.model) return null;
+  return { model: ug.model, loras: (ug.loras || []).filter((l) => l && l.file) };
+}
 export function upscalePassParams(project, index, method) {
   const p = passParams(project, index, "refine"), pr = upscaleProfile(project.settings, method);
   if (pr.steps) p.steps = pr.steps;
   if (pr.sampler) p.sampler = pr.sampler;
   if (pr.scheduler) p.scheduler = pr.scheduler;
+  if (p.scheduler === SIGMAS_SCHEDULER) {   // the profile's own «custom SIGMAS» win over the refine stage's ones
+    const sg = parseSigmas(pr.sigmas);
+    if (sg) { p.sigmas = sg; p.steps = sg.length - 1; }
+  }
   return p;
 }
 /** The segment's upscale applies: set and not a take frozen after its upscale (freeze.up). Footage as is too:
@@ -183,7 +222,8 @@ export const RUN_KINDS = ["draft", "refine", "full"];
 export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "sigmas", "draft_sigmas", "refine_sigmas",
+               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log"];
@@ -219,9 +259,129 @@ export const BOOST_PHRASE = "Strictly preserve the identity of {pics} exactly as
 export const DEFAULT_AUDIO = { clips: [], video_volume: 1.0, input_ref: null };
 export const DEFAULT_AUDIO_CLIP = { id: "", asset: AUDIO_INPUT_ID, lane: 0, start: 0.0, in: 0.0, length: 0.0, volume: 1.0, fade_in: 0.0, fade_out: 0.0 };
 export const MUSIC_LANE = 2;
-export const OVERRIDE_KEYS = ["seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio"];
+export const OVERRIDE_KEYS = ["seed", "steps", "cfg", "denoise", "sampler", "scheduler", "sigmas", "shift_video", "shift_audio"];
+// «custom SIGMAS» (a scheduler select item): the companion text field holds the exact schedule
+export const SIGMAS_SCHEDULER = "custom";
+export const SIGMAS_TEXT_MAX = 2000;
+/** "1.0, 0.5, 0.0" -> [1.0, 0.5, 0.0] (n steps = n+1 values, any curve); null when empty / unparsable (mirror of core.parse_sigmas). */
+export function parseSigmas(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  let vals;
+  try { vals = text.trim().split(/[,\s]+/).filter(Boolean).map((x) => Math.round(Number(x) * 1e6) / 1e6); }
+  catch (e) { return null; }
+  return vals.length >= 2 && vals.length <= 1000 && vals.every((x) => Number.isFinite(x)) ? vals : null;
+}
 
 const clone = (o) => (o === undefined ? undefined : JSON.parse(JSON.stringify(o)));
+
+// «✨ Ассистент»: chats and API-only prompt-mode presets (mirror of core.normalize_assistant).
+export const MAX_ASSIST_CHATS = 20, MAX_ASSIST_MSGS = 200, MAX_ASSIST_PRESETS = 20;
+export const ASSIST_BUILTIN_PRESETS = new Set(["chat", "t2va", "ref2va", "i2va", "fl2va", "l2va", "lipsync"]);
+function assistSampling(rc, thinking) {
+  const defaults = { temperature: thinking ? 1 : 0.7, top_p: thinking ? 0.95 : 0.8, top_k: 20,
+    min_p: thinking ? 0.05 : 0, presence_penalty: thinking ? 0 : 1.5, repetition_penalty: 1 };
+  const sampling = rc.sampling && typeof rc.sampling === "object" ? rc.sampling : {};
+  const profile = sampling[thinking ? "thinking" : "plain"] || {};
+  const legacy = !Object.keys(sampling).length && (rc.thinking === undefined || (rc.thinking !== false) === thinking);
+  const limits = { temperature: [0, 2], top_p: [0, 1], top_k: [0, 200], min_p: [0, 1], presence_penalty: [-2, 2], repetition_penalty: [0, 2] };
+  const out = {};
+  for (const [key, fallback] of Object.entries(defaults)) {
+    const old = legacy && (key === "temperature" || key === "top_p") ? rc[key] : undefined;
+    const [lo, hi] = limits[key], value = Math.max(lo, Math.min(hi, num(profile[key], num(old, fallback))));
+    out[key] = key === "top_k" ? Math.trunc(value) : roundHalf(value, 3);
+  }
+  return out;
+}
+export function normalizeAssistCfg(rc) {
+  rc = rc && typeof rc === "object" ? rc : {};
+  return { mode: String(rc.mode || "chat").slice(0, 30),
+    temperature: roundHalf(Math.min(2, Math.max(0, num(rc.temperature, 0.7))), 2),
+    top_p: roundHalf(Math.min(1, Math.max(0, num(rc.top_p, 0.9))), 2),
+    thinking: rc.thinking !== false,
+    sampling: { thinking: assistSampling(rc, true), plain: assistSampling(rc, false) },
+    max_tokens: Math.trunc(Math.min(16000, Math.max(16, num(rc.max_tokens, 16000)))),
+    sys: String(rc.sys || "").slice(0, 8000),
+    ctx_refs: rc.ctx_refs !== false,
+    ctx_neighbours: rc.ctx_neighbours === true,
+    styles: Array.isArray(rc.styles) ? [...new Set(rc.styles.filter((x) => String(x).trim()).map((x) => String(x).slice(0, 80)))].slice(0, 156) : [],
+    engine_defaults: rc.engine_defaults === true,
+    show_reasoning: rc.show_reasoning !== false,
+    stream_timeout: Math.trunc(Math.min(3600, Math.max(30, num(rc.stream_timeout, 600)))),
+    unload_on_generate: rc.unload_on_generate === true,
+    unload_endpoint: String(rc.unload_endpoint || "").slice(0, 500),
+    auto_unload: rc.auto_unload === true,
+    auto_unload_delay: Math.trunc(Math.min(86400, Math.max(0, num(rc.auto_unload_delay, 300)))),
+    api_base: String(rc.api_base || "http://127.0.0.1:1234/v1").slice(0, 300),
+    api_key: String(rc.api_key || "").slice(0, 500),
+    api_model: String(rc.api_model || "").slice(0, 200) };
+}
+function normalizeAssistStyleDefs(rows) {
+  const out = [], seen = new Set();
+  for (const style of (Array.isArray(rows) ? rows : [])) {
+    if (!style || typeof style !== "object" || !String(style.name || "").trim()) continue;
+    let sid = String(style.id || "").slice(0, 80) || "style" + (out.length + 1);
+    while (seen.has(sid)) sid += "_2";
+    seen.add(sid);
+    const instructions = Array.isArray(style.instructions) ? style.instructions : String(style.instructions || "").split("\n");
+    out.push({ id: sid, name: String(style.name).trim().slice(0, 100), description: String(style.description || "").slice(0, 500),
+      instructions: instructions.map((x) => String(x).trim()).filter(Boolean).slice(0, 80).map((x) => x.slice(0, 2000)),
+      priority: Math.trunc(Math.min(100, Math.max(0, num(style.priority, 50)))), enabled: style.enabled === true,
+      category: String(style.category || "Custom").slice(0, 80), icon: String(style.icon || "sparkles").slice(0, 30),
+      tone: String(style.tone || "violet").slice(0, 30), custom: style.custom === true });
+    if (out.length >= 100) break;
+  }
+  return out;
+}
+export function normalizeAssistant(a) {
+  a = a && typeof a === "object" ? a : {};
+  const chats = [];
+  for (const c of (Array.isArray(a.chats) ? a.chats : [])) {
+    if (!c || typeof c !== "object") continue;
+    const msgs = [];
+    for (const m of (Array.isArray(c.msgs) ? c.msgs : [])) {
+      if (m && typeof m === "object" && (m.role === "user" || m.role === "assistant")) {
+        const msg = { role: m.role, text: String(m.text || "").slice(0, 20000) };
+        if (m.reasoning) msg.reasoning = String(m.reasoning).slice(0, 40000);
+        if (m.stats && typeof m.stats === "object") msg.stats = {
+          prompt: Math.trunc(Math.min(1000000000, Math.max(0, num(m.stats.prompt, 0)))),
+          completion: Math.trunc(Math.min(1000000000, Math.max(0, num(m.stats.completion, 0)))),
+          tps: roundHalf(Math.min(10000000, Math.max(0, num(m.stats.tps, 0))), 2),
+          elapsed: roundHalf(Math.min(10000000, Math.max(0, num(m.stats.elapsed, 0))), 2),
+          finish: String(m.stats.finish || "").slice(0, 30) };
+        msgs.push(msg);
+      }
+    }
+    if (msgs.length || String(c.id || "") === String(a.active || "")) chats.push({ id: String(c.id || "").slice(0, 40) || "c1", title: String(c.title || "").slice(0, 120),
+      created: Math.max(0, Math.trunc(num(c.created, 0))), msgs: msgs.slice(0, MAX_ASSIST_MSGS) });
+    if (chats.length >= MAX_ASSIST_CHATS) break;
+  }
+  const seen = new Set(), uniq = [];
+  for (const c of chats) {
+    let cid = c.id, n = 2;
+    while (seen.has(cid)) { cid = c.id + "_" + n; n++; }
+    seen.add(cid); c.id = cid; uniq.push(c);
+  }
+  let active = String(a.active || "").slice(0, 40);
+  if (active && !seen.has(active)) active = "";
+  const presets = [];
+  for (const pr of (Array.isArray(a.presets) ? a.presets : [])) {
+    if (!pr || typeof pr !== "object" || !String(pr.name || "").trim()) continue;
+    presets.push({ id: String(pr.id || "").slice(0, 40) || "p" + (presets.length + 1),
+      name: String(pr.name || "").trim().slice(0, 80),
+      cfg: normalizeAssistCfg(pr.cfg) });
+    if (presets.length >= MAX_ASSIST_PRESETS) break;
+  }
+  const pseen = new Set(), puniq = [];
+  for (const pr of presets) {
+    let pid = pr.id, n = 2;
+    while (pseen.has(pid)) { pid = pr.id + "_" + n; n++; }
+    pseen.add(pid); pr.id = pid; puniq.push(pr);
+  }
+  let preset = String(a.preset || "").slice(0, 40);
+  if (preset && !pseen.has(preset) && !ASSIST_BUILTIN_PRESETS.has(preset)) preset = "";
+  const styleDeleted = Array.isArray(a.style_deleted) ? [...new Set(a.style_deleted.filter((x) => String(x).trim()).map((x) => String(x).slice(0, 80)))].slice(0, 56) : [];
+  return { chats: uniq, active, presets: puniq, preset, style_defs: normalizeAssistStyleDefs(a.style_defs), style_deleted: styleDeleted, cfg: normalizeAssistCfg(a.cfg) };
+}
 
 export function snapFrames(n, mode = "nearest") {
   n = Number(n);
@@ -315,6 +475,7 @@ export function normalizeProject(p) {
     regions: [],
     stats: p.stats && typeof p.stats === "object" && !Array.isArray(p.stats) ? clone(p.stats) : null,
     result: p.result && typeof p.result === "object" && !Array.isArray(p.result) ? clone(p.result) : null,
+    assistant: normalizeAssistant(p.assistant),
   };
   if (out.end_mode === "auto") out.end = 0;
   out.cards = normalizeCardSnaps(p.cards);
@@ -336,6 +497,8 @@ export function normalizeProject(p) {
     { const cs = num(st.upscale_chunk_sec, 5.0); st.upscale_chunk_sec = cs <= 0 ? 0 : roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1);
       st.upscale_chunk_overlap = Math.trunc(Math.min(UPSCALE_CHUNK_OVERLAP_RANGE[1], Math.max(UPSCALE_CHUNK_OVERLAP_RANGE[0], num(st.upscale_chunk_overlap, 1)))); }
     normalizeUpscaleProfiles(st);
+    st.upscale_gen = normalizeUpscaleGen(st.upscale_gen);
+    st.upscale_model = String(st.upscale_model || "").slice(0, 300);
     if (oldRev < 4) {   // rev 4: tiles default σ 0.35 -> 0.60; a profile still at the old default follows (picked values stay)
       const tp = st.upscale_profiles.tiles;
       if (Math.abs(tp.sigma - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6) { tp.sigma = SEG_UPSCALE_SIGMA.tiles; st.seg_upscale = profileUpscale(st, st.seg_upscale.method); }
@@ -345,6 +508,7 @@ export function normalizeProject(p) {
       st[k + "_scheduler"] = String(st[k + "_scheduler"] || "").slice(0, 64);
       st[k + "_cfg"] = Math.round(Math.max(0, Math.min(30, num(st[k + "_cfg"], 0))) * 100) / 100;
     }
+    for (const k of ["sigmas", "draft_sigmas", "refine_sigmas"]) st[k] = String(st[k] || "").slice(0, SIGMAS_TEXT_MAX);
     st.settings_scope = st.settings_scope === "global" ? "global" : "project"; }   // older "vae" / "latent" (nearest-exact) → "learned"
   { const u = Math.trunc(num(p.run?.upto, -1)); out.run.upto = u; out.run.only = Math.trunc(num(p.run?.only, -1)); out.run.kind = RUN_KINDS.includes(p.run?.kind) ? p.run.kind : "";
     out.run.region = typeof p.run?.region === "string" ? p.run.region : "";
@@ -456,6 +620,14 @@ export function passParams(project, index, kind = null) {
     if (Number(s[kind + "_cfg"] || 0) > 0) p.cfg = Number(s[kind + "_cfg"]);
   }
   if (kind === "refine") { p.denoise = 1.0; p.sigma0 = Number(s.refine_sigma || 0.4); }
+  if (p.scheduler === SIGMAS_SCHEDULER) {   // «custom SIGMAS»: the exact list replaces the curve, steps = len − 1
+    const ov = project.segments[index].overrides || {};
+    const src = ov.scheduler === SIGMAS_SCHEDULER ? ov.sigmas
+      : (kind === "draft" || kind === "refine") && s[kind + "_scheduler"] === SIGMAS_SCHEDULER ? s[kind + "_sigmas"]
+      : s.scheduler === SIGMAS_SCHEDULER ? s.sigmas : null;
+    const sg = parseSigmas(src);
+    if (sg) { p.sigmas = sg; p.steps = sg.length - 1; }
+  }
   return p;
 }
 export function segSteps(project, index) {
@@ -868,7 +1040,9 @@ export function upscaleSigList(project, base, kind) {
     const chain = prev && cont && prev[1] === whs ? prev[0] : "";
     const [nch, cf, co] = upscaleChunking(project.settings, it.frames, up.method);
     const pr = upscaleProfile(project.settings, up.method), smp = [pr.sampler || "", pr.scheduler || ""];
-    const sig = fnv(JSON.stringify(["up", base[j], upscaleKeyForm(up, w, h), wh, upscalePassParams(project, it.index, up.method).steps, chain].concat(refineExtra(project.settings), nch > 1 ? [["ch", cf, co]] : [], smp.some(Boolean) ? [["smp", ...smp]] : [])));
+    const ug = upscaleGen(project.settings), upm = project.settings.upscale_model || "";
+    const sig = fnv(JSON.stringify(["up", base[j], upscaleKeyForm(up, w, h), wh, upscalePassParams(project, it.index, up.method).steps, chain]
+      .concat(refineExtra(project.settings), ug ? [["ug", ug.model, ug.loras.map((l) => [l.file, l.on === false ? 0 : 1, l.sm, l.sc])]] : [], upm ? [["upm", upm]] : [], nch > 1 ? [["ch", cf, co]] : [], smp.some(Boolean) ? [["smp", ...smp]] : [])));
     out.push(sig); prev = [sig, whs];
   });
   return out;
@@ -879,7 +1053,9 @@ export function regionUpSig(project, region, items = null) {
   const [w, h] = workResolution(project.settings), win = regionWindow(project, region, items || plan(project));
   const [, cf, co] = upscaleChunking(project.settings, 17, up.method), pr = upscaleProfile(project.settings, up.method);
   const smp = [pr.sampler || "", pr.scheduler || ""];
-  return fnv(JSON.stringify(["rup", upscaleKeyForm(up, w, h), upscaleCanvas(w, h, up), upscalePassParams(project, Math.max(0, win.seg ?? 0), up.method).steps, cf, co].concat(refineExtra(project.settings), smp.some(Boolean) ? [["smp", ...smp]] : [])));
+  const ug = upscaleGen(project.settings), upm = project.settings.upscale_model || "";
+  return fnv(JSON.stringify(["rup", upscaleKeyForm(up, w, h), upscaleCanvas(w, h, up), upscalePassParams(project, Math.max(0, win.seg ?? 0), up.method).steps, cf, co]
+    .concat(refineExtra(project.settings), ug ? [["ug", ug.model, ug.loras.map((l) => [l.file, l.on === false ? 0 : 1, l.sm, l.sc])]] : [], upm ? [["upm", upm]] : [], smp.some(Boolean) ? [["smp", ...smp]] : [])));
 }
 function upscaleSigs(project, base, kind) {
   const up = upscaleSigList(project, base, kind);

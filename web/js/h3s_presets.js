@@ -12,6 +12,7 @@ const base = (f) => String(f || "").split(/[\\/]/).pop();
 const PART = { model: T("модель"), clip: T("текстовый энкодер"), vae: "VAE", audio_vae: T("аудио VAE"), lora: "LoRA" };
 
 export const MP_CSS = `
+.h3z-mp-ed{display:flex;flex-direction:column;gap:12px}
 .h3z-mp-list{display:flex;flex-direction:column;gap:4px;margin:6px 0 10px}
 .h3z-mp-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:9px;cursor:pointer;border:1px solid transparent;background:rgba(255,255,255,.03)}
 .h3z-mp-item:hover{background:rgba(255,255,255,.06)}
@@ -138,6 +139,25 @@ export function installPresets(Editor, { C, h, ICON }) {
           onclick: () => { this._mpSel = own; this.tool = "models"; this.renderTools(); this.renderLeft(); } }, "✎") : null),
         miss.length ? h("div", { class: "h3z-note err" }, T("Нет файлов: ") + miss.map((m) => base(m[1])).join(", ")) : null,
         own ? h("div", { class: "h3z-note" }, T("Свой пресет меняет модель, LoRA и текстовый энкодер этого клипа; VAE и аудио VAE — всегда проекта.")) : null);
+    },
+    /** «LATENT-АПСКЕЙЛЕР H3» under the preset editor: which learned upscaler model upscales the clips
+     *  (project setting upscale_model, "" = the first found; the choice is in the upscale cache keys). */
+    mpUpscalerBlock() {
+      const models = this.opts?.upscale?.learned_models || [];
+      const cur = this.p.settings.upscale_model || "";
+      const miss = cur && !models.includes(cur);
+      const known = this.upKnown ? this.upKnown() : false, caps = this.upCaps ? this.upCaps() : null;
+      const sel = h("select", { class: "h3z-sel" + (miss ? " miss" : ""), title: T("Модель обученного латентного апскейлера H3 (models/latent_upscale_models). «Авто» — первая найденная. Выбор влияет на «Апскейл отрезка» и чистовик из черновика.") },
+        h("option", { value: "", selected: !cur }, T("авто (первая модель)")),
+        models.map((m) => h("option", { value: m, selected: m === cur }, m)),
+        miss ? h("option", { value: cur, selected: true }, T("⚠ нет файла: {0}", cur)) : null);
+      sel.onchange = () => this.setOnce("upscale_model", sel.value);
+      sel.addEventListener("keydown", (e) => e.stopPropagation());
+      return h("div", { class: "h3z-mp-ed", style: "margin-top:12px" },
+        h("div", { class: "h3z-lbl" }, "LATENT-" + T("АПСКЕЙЛЕР") + " H3",
+          h("em", null, known ? (caps?.learned ? T("нода и модели на месте") : T("ноды или модели нет")) : T("проверка…"))),
+        sel,
+        models.length ? null : h("div", { class: "h3z-note warn" }, T("В models/latent_upscale_models нет моделей — положите файл и нажмите «⟳ Обновить списки».")));
     },
     /** Gallery / takes label of a result's models record. */
     mpLabel(m) {
@@ -277,11 +297,12 @@ export function installPresets(Editor, { C, h, ICON }) {
       const miss = new Set(this.mpMissing(sel).map((m) => m[1]));
       const left = h("div", { class: "h3z-mt-col" }, h("div", { class: "h3z-lbl" }, "LoRA", h("em", null, T("до {0} · выключенные не входят в ключ кэша", C.MAX_PRESET_LORAS))), this.mpLoraStack(sel, ed, miss));
       const c = mp.cache || {};
-      const right = h("div", { class: "h3z-mt-col" }, this.mpEditor(sel),
-        h("div", { class: "h3z-lbl", style: "margin-top:12px" }, T("Загружено пресетами"), h("em", null, T("кэш между запусками"))),
-        h("div", { class: "h3z-mp-cache" }, [T("модель: {0}", (c.base || []).map(base).join(", ") || "—"), T("энкодер: {0}", (c.clip || []).map(base).join(", ") || "—"), `VAE: ${(c.vae || []).map(base).join(", ") || "—"}`, T("LoRA в памяти: {0} ({1} МБ)", c.loras || 0, c.lora_mb || 0)].map((x) => h("div", null, x))),
-        h("div", { class: "h3z-mp-btns" }, btn(T("⏏ Выгрузить модели пресетов"), T("Освободить VRAM и RAM: выгрузить модели, загруженные пресетами (модели с проводов ноды не трогает)"), () => this.mpRelease())),
-        h("div", { class: "h3z-note" }, T("Смена только LoRA не перезагружает базовую модель: LoRA накладываются патчами на её копию.")));
+      const cacheDet = h("details", { class: "h3z-det", style: "margin-top:12px" }, h("summary", { style: "white-space:nowrap" }, T("Загружено пресетами"), h("em", { style: "font-style:normal;text-transform:none;letter-spacing:0;color:var(--mut2);font-weight:500;overflow:hidden;text-overflow:ellipsis" }, T("кэш между запусками"))),
+        h("div", { class: "in" },
+          h("div", { class: "h3z-mp-cache" }, [T("модель: {0}", (c.base || []).map(base).join(", ") || "—"), T("энкодер: {0}", (c.clip || []).map(base).join(", ") || "—"), `VAE: ${(c.vae || []).map(base).join(", ") || "—"}`, T("LoRA в памяти: {0} ({1} МБ)", c.loras || 0, c.lora_mb || 0)].map((x) => h("div", null, x))),
+          h("div", { class: "h3z-mp-btns" }, btn(T("⏏ Выгрузить модели пресетов"), T("Освободить VRAM и RAM: выгрузить модели, загруженные пресетами (модели с проводов ноды не трогает)"), () => this.mpRelease())),
+          h("div", { class: "h3z-note" }, T("Смена только LoRA не перезагружает базовую модель: LoRA накладываются патчами на её копию."))));
+      const right = h("div", { class: "h3z-mt-col" }, this.mpEditor(sel), this.mpUpscalerBlock(), cacheDet);
       box.append(h("div", { class: "h3z-mt-cols" }, left, right));
       return box;
     },

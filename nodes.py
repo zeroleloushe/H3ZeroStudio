@@ -32,6 +32,7 @@ class ZL_H3ZeroStudio:
                        "The video's sound (from the audio VAE, else the input audio, else silence).",
                        "H3 AV latent of the assembled video (video + audio). With hard cuts (no extension) the length is not 5k+2.")
     FUNCTION = "run"
+    OUTPUT_NODE = True
     CATEGORY = "MiniMax H3/H3ZeroStudio"
     DESCRIPTION = ("H3ZeroStudio: a full-screen timeline editor for MiniMax H3. Segments with their own prompts and references, "
                    "continuation that keeps characters consistent, a cache of finished segments. Click “Expand” on the node.")

@@ -157,7 +157,7 @@ export function installMenus(Editor, { C, h, ICON }) {
         this.menuSlider(T("Фейд out"), c.fade_out || 0, 0, Math.min(10, sp.len), 0.1, (v) => v.toFixed(1) + T(" с"), (v) => { set((x) => { x.fade_out = v; }, "afo" + id); relayout(); }),
         !music ? { why: T("Громкость и фейды на дорожках 1–2 меняют фиксируемый звук (отрезки под клипом перегенерируются)") } : null,
         "sep",
-        { label: T("Дорожка"), sub: [[0, T("🔒 Дорожка 1 (фиксация)")], [1, T("🔒 Дорожка 2 (фиксация)")], [2, T("♫ Музыка (поверх видео)")]].map(([l, lb]) => ({ label: lb, on: c.lane === l, fn: () => { this.mutate((p) => { p.audio.clips.find((k) => k.id === id).lane = l; }); } })) },
+        { label: T("Дорожка"), sub: [[0, T("🔒 Дорожка 1 (фиксация)")], [1, T("🔒 Дорожка 2 (фиксация)")], [2, T("♫ Музыка (поверх видео)")]].map(([l, lb]) => ({ label: lb, on: c.lane === l, fn: () => { this.ensureAudioLane(l); this.mutate((p) => { p.audio.clips.find((k) => k.id === id).lane = l; }); } })) },
         { icon: ICON.cut, label: T("Разрезать здесь"), hint: "S", fn: () => { this.playhead = Math.round(t * C.FPS); this.selAudio = id; this.splitAudio(); } },
         { icon: ICON.copy, label: T("Дублировать"), fn: () => { const nid = C.newId("ac"); this.mutate((p) => { p.audio.clips.push({ ...JSON.parse(JSON.stringify(c)), id: nid, start: Math.round((sp.end) * 1000) / 1000 }); p.audio.clips.sort((x, y) => x.start - y.start || x.lane - y.lane); }); this.selAudio = nid; } },
         { label: T("✎ Посмотреть / изменить файл…"), fn: () => this.openAssetEditor(c.asset), dis: c.asset === C.AUDIO_INPUT_ID },

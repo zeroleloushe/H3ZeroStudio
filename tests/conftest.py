@@ -34,7 +34,7 @@ def fake_learned_upscaler(monkeypatch):
     import torch
     import h3s.h3s_upscale as up
 
-    def fake(v, w, h):
+    def fake(v, w, h, model=None):
         return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact").cpu()
     monkeypatch.setattr(up, "learned_upscale", fake)
     monkeypatch.setattr(up, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])

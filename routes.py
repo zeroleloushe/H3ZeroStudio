@@ -96,6 +96,72 @@ def register():
             return hm.status()
         return await _json_call(go)
 
+    # ---- LLM assistant: OpenAI-compatible remote API only
+    @routes.post("/h3zero/llm/connect")
+    async def llm_connect(request):
+        from . import h3s_llm
+        b = await request.json()
+        return await _json_call(h3s_llm.connect, str(b.get("api_base") or ""), str(b.get("api_key") or ""))
+
+    @routes.post("/h3zero/llm/unload")
+    async def llm_unload(request):
+        from . import h3s_llm
+        b = await request.json()
+        return await _json_call(h3s_llm.unload, str(b.get("api_base") or ""), str(b.get("api_key") or ""),
+                                str(b.get("api_model") or ""), str(b.get("unload_endpoint") or ""))
+
+    @routes.post("/h3zero/llm/chat")
+    async def llm_chat(request):
+        import asyncio
+        from . import h3s_llm
+        b = await request.json()
+        messages = b.get("messages") if isinstance(b.get("messages"), list) else []
+
+        def number(key, default):
+            try:
+                return float(b.get(key)) if b.get(key) is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, h3s_llm.release_comfy_models)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=409)
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = "text/event-stream; charset=utf-8"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"
+        await resp.prepare(request)
+        gen = None
+        try:
+            try:
+                max_tokens = int(b.get("max_tokens") or 16000)
+            except (TypeError, ValueError):
+                max_tokens = 16000
+            attachments = b.get("attachments") if isinstance(b.get("attachments"), list) else []
+            sampling = b.get("sampling") if isinstance(b.get("sampling"), dict) else None
+            gen = h3s_llm.stream_chat(messages, number("temperature", 0.7), number("top_p", 0.9),
+                                      max_tokens, str(b.get("api_base") or ""), str(b.get("api_key") or ""),
+                                      str(b.get("api_model") or ""), attachments, bool(b.get("engine_defaults")),
+                                      sampling=sampling, thinking=b.get("thinking") is not False,
+                                      stream_timeout=number("stream_timeout", 600))
+            while True:
+                kind, text = await loop.run_in_executor(None, next, gen, (None, None))
+                if kind is None:
+                    break
+                await resp.write(h3s_llm.sse_payload(kind, text))
+            await resp.write(b"data: {\"kind\": \"end\"}\n\n")
+        except Exception as e:
+            try:
+                await resp.write(h3s_llm.sse_payload("error", str(e)))
+            except Exception:
+                pass
+        finally:
+            if gen is not None:
+                gen.close()
+        return resp
+
     @routes.get("/h3zero/runs")
     async def runs(request):
         from . import h3s_gen
@@ -108,6 +174,11 @@ def register():
             return web.json_response({"status": h3s_gen.run_status(request.query.get("node", ""))})
         except Exception as e:
             return web.json_response({"status": None, "error": str(e)})
+
+    @routes.get("/h3zero/monitor")
+    async def monitor(request):
+        from . import h3s_monitor
+        return await _json_call(h3s_monitor.payload, request.query.get("after", "0"))
 
     @routes.post("/h3zero/clear_cache")
     async def clear_cache(request):
@@ -475,7 +546,6 @@ _PS_SCRIPT = (
     "$f=New-Object System.Windows.Forms.FolderBrowserDialog;$f.Description=$env:H3_TITLE;$f.ShowNewFolderButton=$true;"
     "if($env:H3_INIT){$f.SelectedPath=$env:H3_INIT};"
     "if($f.ShowDialog($o) -eq 'OK'){[Console]::Out.Write($f.SelectedPath)};$o.Close()")
-
 
 def _pick_folder(initial, title=""):
     """tkinter (child process) -> on Windows PowerShell's folder dialog (portable ComfyUI's Python has no tkinter)

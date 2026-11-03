@@ -24,6 +24,8 @@ import { installModelTab } from "./h3s_modeltab.js";
 import { installGaps } from "./h3s_gaps.js";
 import { installTimer } from "./h3s_timer.js";
 import { installChars } from "./h3s_chars.js";
+import { installAssist } from "./h3s_assist.js";
+import { installMonitor } from "./h3s_monitor.js";
 import { T, plural, tServer } from "./h3s_i18n.js";
 
 export const PALETTE = [
@@ -117,6 +119,7 @@ export class H3Editor {
     this.selAudio = null;
     this.audioMonitor = loadLS("h3zs.monitor2", true);
     this.musicMonitor = loadLS("h3zs.musicMon", true);
+    this.audioLane2 = loadLS("h3zs.audioLane2", false);
     this.vol = loadLS("h3zs.volume", { v: 1, muted: false });
     this.regenDownstream = false;
     this.root = null;
@@ -141,6 +144,7 @@ export class H3Editor {
     this.mpSync?.();
     this.filesSync?.();
     this.timerSync?.();
+    this.monitorStart?.();
     requestAnimationFrame(() => { if (this.root) { this.renderTimeline(); this.layoutStage(); } });
   }
 
@@ -148,6 +152,7 @@ export class H3Editor {
     if (!this.root) return;
     this.flushSave();
     this.stopPlayback();
+    this.monitorStop?.();
     this.unbindGlobal();
     this.root.remove();
     this.root = null;
@@ -162,6 +167,7 @@ export class H3Editor {
     if (this.pe?.el) { if (!this.pe.el.contains(document.activeElement)) this.pe.view?.focus(); return; }   // the prompt editor keeps its focus
     const a = document.activeElement;
     if (a?.closest?.(".h3z-lp")) return;   // the LoRA picker (a popover on <body>) keeps its search field
+    if (a?.closest?.(".h3z-monpop,.h3z-sysmon")) return;
     if (a && a !== this.$.sink && this.root.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
     this.$.sink.focus({ preventScroll: true });
   }
@@ -262,7 +268,9 @@ export class H3Editor {
     $.splitL = h("div", { class: "h3z-split v sl", title: T("Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию") });
     $.splitR = h("div", { class: "h3z-split v sr", title: T("Тяните, чтобы изменить ширину панели · двойной клик — по умолчанию") });
     $.splitT = h("div", { class: "h3z-split hz", title: T("Тяните, чтобы изменить высоту таймлайна · двойной клик — по умолчанию") });
-    $.body = h("div", { class: "h3z-body" }, $.tools, $.left, $.splitL, $.center, $.splitR, $.insp);
+    const edge = (side) => h("div", { class: "h3z-edge " + (side === "left" ? "l" : "r") }, h("button", { class: "h3z-edge-btn", type: "button", onclick: () => this.togglePanel(side) }));
+    $.edgeL = edge("left"); $.edgeR = edge("right");
+    $.body = h("div", { class: "h3z-body" }, $.tools, $.left, $.edgeL, $.splitL, $.center, $.splitR, $.insp, $.edgeR);
     $.tl = h("div", { class: "h3z-tl h3z-glass" });
     this.applyLayout();
     this.splitter($.splitL, "lw", 1); this.splitter($.splitR, "rw", -1); this.splitter($.splitT, "th", -1);
@@ -271,8 +279,8 @@ export class H3Editor {
     // It ignores keys while an <input> has focus, so the editor keeps focus on this hidden read-only input.
     $.sink = h("input", { class: "h3z-sink", readonly: true, tabindex: "-1", "aria-hidden": "true", autocomplete: "off" });
     this.root.append($.sink, $.head, $.body, $.splitT, $.tl);
-    this.root.addEventListener("focusout", () => setTimeout(() => this.focusSink(), 0));
-    this.root.addEventListener("pointerup", () => setTimeout(() => this.focusSink(), 0));
+    this.root.addEventListener("focusout", () => setTimeout(() => { if (!this._ast) this.focusSink(); }, 0));
+    this.root.addEventListener("pointerup", () => setTimeout(() => { if (!this._ast) this.focusSink(); }, 0));
     this.buildCenter();
     this.buildTimeline();
     // drag&drop / paste must never reach ComfyUI (it would load a workflow / paste nodes)
@@ -281,19 +289,38 @@ export class H3Editor {
     this.root.addEventListener("contextmenu", (e) => { if (!isTyping(e)) e.preventDefault(); e.stopPropagation(); });
   }
 
-  /** Panel sizes: defaults scale with the window (ultrawide gets wider side panels), user sizes persist. */
+  /** Panel sizes and visibility persist; automatic collapsing stops after the first manual choice. */
   layoutDefaults() {
     const W = window.innerWidth || 1600, H = window.innerHeight || 900;
     return { lw: clamp(Math.round(W * 0.15), 240, 560), rw: clamp(Math.round(W * 0.2), 340, 680), th: clamp(Math.round(H * 0.3), 230, 520) };
   }
   layoutSizes() {
     const d = this.layoutDefaults(), u = loadLS(LAYOUT_KEY, {}), W = window.innerWidth || 1600, H = window.innerHeight || 900;
-    return { lw: clamp(u.lw || d.lw, 200, Math.max(220, W * 0.4)), rw: clamp(u.rw || d.rw, 300, Math.max(320, W * 0.45)), th: clamp(u.th || d.th, 190, Math.max(200, H * 0.7)) };
+    return {
+      lw: clamp(u.lw || d.lw, 200, Math.max(220, W * 0.4)), rw: clamp(u.rw || d.rw, 300, Math.max(320, W * 0.45)),
+      th: clamp(u.th || d.th, 190, Math.max(200, H * 0.7)),
+      lc: typeof u.lc === "boolean" ? u.lc : W < 1080, rc: typeof u.rc === "boolean" ? u.rc : W < 1280,
+    };
   }
   applyLayout() {
     if (!this.root) return;
     const L = this.layoutSizes();
     this.root.style.setProperty("--lw", L.lw + "px"); this.root.style.setProperty("--rw", L.rw + "px"); this.root.style.setProperty("--th", L.th + "px");
+    this.root.classList.toggle("h3z-left-collapsed", L.lc); this.root.classList.toggle("h3z-right-collapsed", L.rc);
+    if (this.$.left) { this.$.left.hidden = L.lc; this.$.left.setAttribute("aria-hidden", String(L.lc)); }
+    if (this.$.insp) { this.$.insp.hidden = L.rc; this.$.insp.setAttribute("aria-hidden", String(L.rc)); }
+    if (this.$.splitL) this.$.splitL.hidden = L.lc;
+    if (this.$.splitR) this.$.splitR.hidden = L.rc;
+    for (const [el, collapsed, left] of [[this.$.edgeL, L.lc, true], [this.$.edgeR, L.rc, false]]) {
+      if (!el) continue;
+      const b = el.firstChild, t = collapsed ? (left ? T("Показать левую панель") : T("Показать правую панель")) : (left ? T("Скрыть левую панель") : T("Скрыть правую панель"));
+      b.title = t; b.setAttribute("aria-label", t); b.textContent = (left !== collapsed) ? "‹" : "›";
+    }
+  }
+  togglePanel(side) {
+    const key = side === "left" ? "lc" : "rc", u = loadLS(LAYOUT_KEY, {});
+    u[key] = !this.layoutSizes()[key]; saveLS(LAYOUT_KEY, u);
+    this.applyLayout(); this.renderTimeline(); this.layoutStage();
   }
   splitter(el, key, dir) {
     el.addEventListener("dblclick", () => { const u = loadLS(LAYOUT_KEY, {}); delete u[key]; saveLS(LAYOUT_KEY, u); this.applyLayout(); this._resize?.(); });
@@ -350,16 +377,22 @@ export class H3Editor {
     const name = h("input", { class: "h3z-pname", value: this.p.name, spellcheck: "false", title: T("Название проекта") });
     name.addEventListener("input", () => this.mutate((p) => { p.name = name.value; }, { coalesce: "pname", render: "none" }));
     const chips = h("div", { class: "h3z-chips" },
-      h("span", { class: "h3z-chip" }, h("b", null, est.segments), plural(est.segments, T("отрезок"), T("отрезка"), T("отрезков"))),
-      h("span", { class: "h3z-chip" }, h("b", null, C.fmtTime(est.seconds)), T("{0} кадр.", est.frames)),
-      h("span", { class: "h3z-chip" }, h("b", null, `${est.width}×${est.height}`), "24 fps"),
-      h("span", { class: "h3z-chip", title: T("Сумма шагов по всем отрезкам (кэшированные отрезки не пересчитываются)") }, h("b", null, est.steps_total), T("шагов")),
+      h("span", { class: "h3z-chip c-seg" }, h("b", null, est.segments), plural(est.segments, T("отрезок"), T("отрезка"), T("отрезков"))),
+      h("span", { class: "h3z-chip c-frames" }, h("b", null, C.fmtTime(est.seconds)), T("{0} кадр.", est.frames)),
+      h("span", { class: "h3z-chip c-res" }, h("b", null, `${est.width}×${est.height}`), "24 fps"),
+      h("span", { class: "h3z-chip c-steps", title: T("Сумма шагов по всем отрезкам (кэшированные отрезки не пересчитываются)") }, h("b", null, est.steps_total), T("шагов")),
       this.timeEstimateChip(est));
     if (est.warnings.length) {
       const w = h("span", { class: "h3z-chip warn", title: T("Предупреждения перед запуском — нажмите, чтобы посмотреть") }, `⚠ ${est.warnings.length}`);
-      w.onclick = () => this.toggleWarnings(est.warnings);
+      w.onclick = (e) => this.toggleWarnings(est.warnings, e);
       chips.append(w);
     }
+    const L = this.layoutSizes();
+    const panelButton = (side, collapsed) => {
+      const left = side === "left";
+      const title = collapsed ? (left ? T("Показать левую панель") : T("Показать правую панель")) : (left ? T("Скрыть левую панель") : T("Скрыть правую панель"));
+      return h("button", { class: "h3z-btn icon h3z-panel-toggle" + (collapsed ? "" : " on"), title, "aria-label": title, "aria-pressed": String(!collapsed), onclick: () => this.togglePanel(side) }, left ? "◧" : "◨");
+    };
     const undo = h("button", { class: "h3z-btn icon", title: T("Отменить (Ctrl+Z)"), html: ICON.undo, disabled: !this.undoStack.length, onclick: () => this.undo() });
     const redo = h("button", { class: "h3z-btn icon", title: T("Повторить (Ctrl+Shift+Z)"), html: ICON.redo, disabled: !this.redoStack.length, onclick: () => this.redo() });
     let action;
@@ -374,12 +407,15 @@ export class H3Editor {
         h("button", { class: "h3z-btn primary", html: ICON.spark + T("<span>Сгенерировать</span>") + (kind === "draft" ? T("<small class='q'>черновик</small>") : kind === "refine" ? T("<small class='q'>финал ↑</small>") : ""),
           title: T("Поставить в очередь ComfyUI (Ctrl+Enter). Готовые неизменённые отрезки берутся из кэша") + (kind === "draft" ? T("\nЧерновик: маленький размер, быстро — для подбора промптов и дублей") : kind === "refine" ? T("\nФинал из черновика: каждый черновик увеличивается и дорабатывается (звук черновика сохраняется 1:1)") : ""), onclick: () => this.generate() })];
     }
-    $.head.append(
-      h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
-      name, chips, this.timerEl(), undo, redo,
+    const history = h("div", { class: "h3z-head-group" }, undo, redo);
+    const actions = h("div", { class: "h3z-head-group h3z-head-actions" },
       h("button", { class: "h3z-btn", html: ICON.broom + T("<span>Очистить память</span>"), title: T("Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)"), onclick: (e) => this.freeMemory(e.currentTarget) }),
+      h("button", { class: "h3z-btn", html: "✨ " + T("<span>Ассистент</span>"), title: T("LLM-ассистент: чаты и пресеты промптов MiniMax H3 через API"), onclick: () => this.openAssist() }),
       ...action.filter(Boolean),
       h("button", { class: "h3z-btn icon", title: T("Свернуть (Esc)"), html: ICON.close, onclick: () => this.close() }));
+    $.head.append(
+        h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
+        name, chips, h("div", { class: "grow" }), history, this.timerEl(), this.monitorEl(), actions);
     this.updateRunUI();
   }
 
@@ -389,15 +425,23 @@ export class H3Editor {
     const its = this.items(), sigs = this.sigs();
     let units = 0;
     its.forEach((it, i) => { const s = this.p.segments[i]; if (!(s.result && s.result.sig === sigs[i])) units += C.effectiveParams(this.p, i).steps * it.frames * est.width * est.height / 1e6; });
-    return h("span", { class: "h3z-chip", title: T("Оценка по скорости прошлого запуска; готовые неизменённые отрезки берутся из кэша") }, "≈", h("b", null, units ? C.fmtDur(units * rate) : T("из кэша")));
+    return h("span", { class: "h3z-chip c-time", title: T("Оценка по скорости прошлого запуска; готовые неизменённые отрезки берутся из кэша") }, "≈", h("b", null, units ? C.fmtDur(units * rate) : T("из кэша")));
   }
 
-  toggleWarnings(list) {
+  toggleWarnings(list, ev) {
     if (this.$.pop) { this.$.pop.remove(); this.$.pop = null; return; }
     if (!list) return;
     this.$.pop = h("div", { class: "h3z-pop h3z-glass" }, list.map((w) => h("div", null, w)));
     this.$.pop.onclick = () => { this.$.pop.remove(); this.$.pop = null; };
     this.root.append(this.$.pop);
+    // under the ⚠ chip that opened it (the header is centered, not at the right edge)
+    const a = ev?.currentTarget?.getBoundingClientRect?.() || ev?.target?.getBoundingClientRect?.();
+    if (a) {
+      const rr = this.root.getBoundingClientRect();
+      const x = Math.max(8, Math.min(a.left - rr.left + a.width / 2 - 220, rr.width - 448));
+      this.$.pop.style.left = x + "px";
+      this.$.pop.style.right = "auto";
+    }
   }
 
   // ------------------------------------------------------------------ tools + left panel
@@ -415,7 +459,7 @@ export class H3Editor {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
     const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
-    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персонажи")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }), tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
+    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }), tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
 
   renderLeft() {
@@ -567,8 +611,9 @@ export class H3Editor {
     e.stopPropagation();
     // «Персонажи» create form open: pasted images become its photos (even while a field of the form has focus)
     if (this.cf && !this.cf.edit && this.tool === "chars") { const fs = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/")); if (fs.length) { e.preventDefault(); this.charAddFiles(fs, "photo"); return; } }
-    if (isTyping(e)) return;
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+    if (this._ast && files.length) { e.preventDefault(); this.astAddImages(files); return; }
+    if (isTyping(e)) return;
     if (files.length) { e.preventDefault(); this.uploadFiles(files); }
   }
 
@@ -616,6 +661,29 @@ export class H3Editor {
   }
 
   field(label, input, cls = "") { return h("div", { class: "h3z-field " + cls }, h("div", { class: "h3z-lbl" }, label), input); }
+
+  /** «Расписание» select with a «custom SIGMAS» item; when it is chosen, the sigmas list field appears below
+   *  (numbers separated by commas / spaces, steps = count − 1). value/emptyLabel mirror the plain selects. */
+  schedSel(value, list, onch, sig = null, emptyLabel = "") {
+    const unknown = value && value !== C.SIGMAS_SCHEDULER && !list.includes(value);
+    const s = h("select", { class: "h3z-sel" },
+      emptyLabel ? h("option", { value: "", selected: !value }, emptyLabel) : null,
+      list.map((x) => h("option", { value: x, selected: x === value }, x)),
+      unknown ? h("option", { value, selected: true }, value) : null,
+      h("option", { value: C.SIGMAS_SCHEDULER, selected: value === C.SIGMAS_SCHEDULER }, T("custom SIGMAS")));
+    s.onchange = () => onch(s.value);
+    s.addEventListener("keydown", (e) => e.stopPropagation());
+    const box = h("div", null, s);
+    if (sig && value === C.SIGMAS_SCHEDULER) {
+      const bad = (sig.value || "").trim() && !C.parseSigmas(sig.value);
+      const ta = h("textarea", { class: "h3z-ta sm" + (bad ? " bad" : ""), placeholder: T("1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0 — шагов = сигм − 1"), spellcheck: "false" });
+      ta.value = sig.value || "";
+      ta.oninput = () => sig.onch(ta.value);
+      ta.addEventListener("keydown", (e) => e.stopPropagation());
+      box.append(ta, bad ? h("div", { class: "h3z-note err" }, T("Не разобрать список: нужно минимум 2 числа через запятую.")) : null);
+    }
+    return box;
+  }
 
   toggle(label, on, cb, title) {
     const t = h("div", { class: "h3z-tog" + (on ? " on" : ""), title }, h("span", null, label), h("i"));
@@ -670,13 +738,15 @@ export class H3Editor {
     const quick = h("div", { class: "h3z-qs" }, [3, 5, 8, 10, 12, 15].map((sec) => { const f = Math.max(C.snapFrames(sec * 24), 17 * kMin + 5); return h("span", { class: "h3z-q" + (f === s.frames ? " on" : ""), onclick: () => this.mutate((p) => { p.segments[i].frames = f; }), title: T("{0} кадров", f) }, sec + T(" с")); }));
     const rangeWarn = s.frames < C.TRAINED_MIN_FRAMES || s.frames > C.TRAINED_MAX_FRAMES;
     card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Длительность"), h("em", { style: rangeWarn ? { color: "var(--warn)" } : null }, rangeWarn ? T("⚠ вне 124–362 кадров") : T("сетка H3: 17k+5"))), h("div", { class: "h3z-row" }, rng, val), h("div", { style: { marginTop: "8px" } }, quick)));
+    // the project canvas + base seed next to the duration (resolution moved up from the «Ролик» card)
+    card.append(this.resolutionBlock(), this.seedBlock());
     // prompt
-    const ta = h("textarea", { class: "h3z-ta", placeholder: T("Что происходит в этом отрезке: действие, камера, звук…  Ссылки на референсы — <Picture N> (клик по чипу вставит)."), spellcheck: "false" });
+    const ta = h("textarea", { class: "h3z-ta lg", placeholder: T("Что происходит в этом отрезке: действие, камера, звук…  Ссылки на референсы — <Picture N> (клик по чипу вставит)."), spellcheck: "false" });
     ta.value = s.prompt;
     ta.oninput = () => this.mutate((p) => { p.segments[i].prompt = ta.value; }, { coalesce: "prompt" + s.id, render: "light" });
     this.$.segPrompt = ta;
     const segId = s.id;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Промпт отрезка"), h("em", null, T("добавляется к общему")),
+    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Промпт отрезка"),
       this.peButton(() => { const k = this.p.segments.findIndex((x) => x.id === segId), sg = this.p.segments[k];
         return { title: T("Промпт отрезка {0}", k + 1) + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
           apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }; })), ta));
@@ -714,15 +784,13 @@ export class H3Editor {
     const nRefs = refs.length + (cp ? 1 : 0);
     card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Референсы"), h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, T("{0} / {1} карт.", nRefs, C.MAX_REF_IMAGES) + (nVid ? T(" · {0} / {1} видео", nVid, C.MAX_REF_VIDEOS) : "") + (arefs.length ? T(" · {0} / {1} аудио", arefs.length, C.MAX_REF_AUDIOS) : "") + T(" · порядок: персонажи, локации, другое"))), box));
     { const cb = this.charChips({ seg: i }); if (cb) card.append(cb); }
-    this.$.finalBox = h("div", { class: "h3z-final" });
-    card.append(h("details", { class: "h3z-det" }, h("summary", null, T("Итоговый промпт")), h("div", { class: "in" }, this.$.finalBox)));
-    this.renderFinalPrompt();
-    { const mb = this.mpSegBlock(i); if (mb) card.append(mb); }
-    card.append(this.overridesBlock(i));
     card.append(this.statusLine(i));
     card.append(this.takesBlock(i));
     { const fb = this.finalBlock(i); if (fb) card.append(fb); }
     card.append(this.upscaleBlock(i));
+    // everything rarely touched — under one shutter at the bottom
+    card.append(h("details", { class: "h3z-det" }, h("summary", null, T("Дополнительные настройки")),
+      h("div", { class: "in" }, ...[this.mpSegBlock(i), this.overridesBlock(i)].filter(Boolean))));
     return card;
   }
 
@@ -762,7 +830,11 @@ export class H3Editor {
       h("div", { class: "in" },
         h("div", { class: "h3z-grid3" }, num("seed", 1, T("авто {0}", Number(g.seed) + i)), num("steps", 1, g.steps), num("cfg", 0.1, g.cfg)),
         h("div", { class: "h3z-grid3" }, num("denoise", 0.01, g.denoise), num("shift_video", 0.1, g.shift_video), num("shift_audio", 0.1, g.shift_audio)),
-        h("div", { class: "h3z-grid2" }, sel("sampler", this.opts.samplers), sel("scheduler", this.opts.schedulers)),
+        h("div", { class: "h3z-grid2" }, sel("sampler", this.opts.samplers),
+          this.field(label.scheduler, this.schedSel(ov.scheduler || "", this.opts.schedulers,
+            (v) => this.mutate((p) => { const o = p.segments[i].overrides; if (!v) delete o.scheduler; else o.scheduler = v; }),
+            { value: ov.sigmas || "", onch: (t) => this.mutate((p) => { const o = p.segments[i].overrides; if (!t.trim()) delete o.sigmas; else o.sigmas = t; }, { coalesce: "ovsig" + s.id, render: "none" }) },
+            T("— {0} —", g.scheduler)), "scheduler" in ov ? "ov" : "")),
         n ? h("button", { class: "h3z-btn sm", onclick: () => this.mutate((p) => { p.segments[i].overrides = {}; }) }, T("Сбросить к общим"))
           : h("div", { class: "h3z-note" }, T("Пустое поле — берётся общее значение. Сид по умолчанию: общий + номер отрезка − 1."))));
   }
@@ -794,16 +866,29 @@ export class H3Editor {
   globalCard() {
     const g = this.p.settings;
     const card = h("div", { class: "h3z-card h3z-glass" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Ролик")), h("em", { class: "h3z-note" }, this.globScope() ? T("настройки: для всех проектов") : T("настройки: свои у проекта"))));
-    const set = (k, v, opt) => this.mutate((p) => { p.settings[k] = v; }, opt);
-    const gp = h("textarea", { class: "h3z-ta", placeholder: T("Общий промпт для всех отрезков: стиль, персонажи, мир, качество…"), spellcheck: "false" }); gp.value = g.prompt;
-    gp.oninput = () => set("prompt", gp.value, { coalesce: "gprompt", render: "light" });
-    const neg = h("textarea", { class: "h3z-ta sm", placeholder: T("Негатив (работает при cfg > 1)"), spellcheck: "false" }); neg.value = g.negative;
-    neg.oninput = () => set("negative", neg.value, { coalesce: "gneg", render: "light" });
     const peG = (key, title, kind, ph) => this.peButton(() => ({ title, value: this.p.settings[key] ?? "", ctx: { kind }, placeholder: ph, apply: (t) => this.mutate((p) => { p.settings[key] = t; }) }));
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Общий промпт"), h("em", null, T("в начале каждого отрезка")), peG("prompt", T("Общий промпт (для всех отрезков)"), "global", gp.placeholder)), gp),
-      h("div", null, h("div", { class: "h3z-lbl" }, T("Негатив"), h("em", null, Number(g.cfg) === 1 ? T("не используется при cfg 1") : ""), peG("negative", T("Негатив"), "negative", neg.placeholder)), neg));
-    card.append(this.mpProjectBlock());
-    // resolution
+    // negative: a cfg-1 run never reads it — the field appears only when the effective cfg is above 1
+    const cfgEff = this.sel >= 0 && this.seg() ? C.passParams(this.p, this.sel, C.runKind(g)).cfg : g.cfg;
+    if (Number(cfgEff) > 1) {
+      const neg = h("textarea", { class: "h3z-ta sm", placeholder: T("Негатив (работает при cfg > 1)"), spellcheck: "false" }); neg.value = g.negative;
+      neg.oninput = () => this.mutate((p) => { p.settings.negative = neg.value; }, { coalesce: "gneg", render: "light" });
+      card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Негатив"), h("em", null, T("cfg {0}", cfgEff)), peG("negative", T("Негатив"), "negative", neg.placeholder)), neg));
+    }
+    // with a selected clip its card shows the canvas and the seed right under «Длительность»; without one — here
+    if (this.sel < 0 || !this.seg()) card.append(this.resolutionBlock(), this.seedBlock());
+    // everything rarely touched — under one shutter at the bottom (the set-once settings live in «Настройки»)
+    const [dw, dh] = C.workResolution(g, "draft"), [w, hh] = C.resolution(g);
+    card.append(h("details", { class: "h3z-det" }, h("summary", null, T("Дополнительные настройки")), h("div", { class: "in" },
+      this.mpProjectBlock(),
+      h("button", { class: "h3z-btn sm h3z-setlink", title: T("Этапы генерации, сэмплер, шаги, cfg, апскейл, продление и звук, кэш, превью, модели — в «Настройках» (слева)"),
+        html: ICON.settings + T("<span>{0} · {1} шаг. · cfg {2} · {3}</span>", g.final_mode === "refine" ? T("2 этапа · {0}×{1} → {2}×{3}", dw, dh, w, hh) : T("1 этап · {0}×{1}", w, hh), g.steps, g.cfg, g.sampler), onclick: () => this.openSettings(T("Генерация")) }))));
+    return card;
+  }
+
+  /** «Разрешение»: the project canvas (aspect / megapixels / own W×H, multiple of 32). */
+  resolutionBlock() {
+    const g = this.p.settings;
+    const set = (k, v, opt) => this.mutate((p) => { p.settings[k] = v; }, opt);
     const [w, hh] = C.resolution(g);
     const custom = g.res_mode === "custom";
     const asp = h("div", { class: "h3z-pills" }, Object.keys(C.ASPECTS).map((a) => h("div", { class: "h3z-pill" + (!custom && g.aspect === a ? " on" : "") + (custom ? " dis" : ""), onclick: () => set("aspect", a) }, a)));
@@ -822,16 +907,17 @@ export class H3Editor {
       const presets = h("div", { class: "h3z-qs" }, [[0.3, "~416p"], [0.5, "~544p"], [0.7, "~640p"], [0.98, T("768p (офиц.)")]].map(([m, l]) => h("span", { class: "h3z-q" + (Math.abs(g.megapixels - m) < 0.005 ? " on" : ""), onclick: () => set("megapixels", m) }, l)));
       resRow = h("div", null, h("div", { class: "h3z-row" }, r, v), h("div", { style: { marginTop: "8px" } }, presets));
     }
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Разрешение"), h("em", null, T("{0}×{1} · кратно 32", w, hh))), h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, asp, mode, resRow)));
-    // seed; the set-once settings (stages, sampling, upscale, seams, cache, preview, models) live in «Настройки»
+    return h("div", null, h("div", { class: "h3z-lbl" }, T("Разрешение"), h("em", null, T("{0}×{1} · кратно 32", w, hh))), h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, asp, mode, resRow));
+  }
+
+  /** «Сид»: the project's base seed — clip N gets seed + N − 1 (its own field is in «Свои параметры отрезка»). */
+  seedBlock() {
+    const g = this.p.settings;
+    const set = (k, v, opt) => this.mutate((p) => { p.settings[k] = v; }, opt);
     const seedIn = h("input", { class: "h3z-in", type: "number", step: 1, min: 0, value: g.seed });
     seedIn.onchange = () => set("seed", Math.max(0, Math.trunc(Number(seedIn.value) || 0)));
     const dice = h("button", { class: "h3z-btn sm icon", title: T("Случайный сид"), html: ICON.dice, onclick: () => set("seed", Math.floor(Math.random() * 2 ** 40)) });
-    const [dw, dh] = C.workResolution(g, "draft");
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Сид"), h("em", null, T("отрезок N получает сид + N − 1"))), h("div", { class: "h3z-row" }, seedIn, dice)),
-      h("button", { class: "h3z-btn sm h3z-setlink", title: T("Этапы генерации, сэмплер, шаги, cfg, апскейл, продление и звук, кэш, превью, модели — в «Настройках» (слева)"),
-        html: ICON.settings + T("<span>{0} · {1} шаг. · cfg {2} · {3}</span>", g.final_mode === "refine" ? T("2 этапа · {0}×{1} → {2}×{3}", dw, dh, w, hh) : T("1 этап · {0}×{1}", w, hh), g.steps, g.cfg, g.sampler), onclick: () => this.openSettings(T("Генерация")) }));
-    return card;
+    return h("div", null, h("div", { class: "h3z-lbl" }, T("Сид"), h("em", null, T("отрезок N получает сид + N − 1"))), h("div", { class: "h3z-row" }, seedIn, dice));
   }
 
   // ------------------------------------------------------------------ preview
@@ -1106,9 +1192,10 @@ export class H3Editor {
       h("div", { class: "sep" }), $.tlInfo, h("div", { class: "grow" }),
       h("div", { class: "h3z-zoom" }, B(ICON.minus || "−", "", T("Отдалить (−)"), () => this.setZoomBy(0.7)), $.zoomR, B(ICON.plus, "", T("Приблизить (+)"), () => this.setZoomBy(1.4)),
         B(ICON.fit, "", T("Вписать весь ролик"), () => this.fitZoom()))));
-    $.heads = h("div", { class: "h3z-heads" },
+    $.headsInner = h("div", { class: "h3z-heads-inner" },
       h("div", { class: "h3z-thead v", html: ICON.film + T("<span>Видео</span>") }),
       $.aHead = h("div", { class: "h3z-thead a" }));
+    $.heads = h("div", { class: "h3z-heads" }, $.headsInner);
     $.tscroll = h("div", { class: "h3z-tscroll" });
     $.tinner = h("div", { class: "h3z-tinner" });
     $.tscroll.append($.tinner);
@@ -1117,7 +1204,7 @@ export class H3Editor {
     $.tscroll.addEventListener("pointerleave", () => this.hideHover?.());
     $.tscroll.addEventListener("wheel", (e) => {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.setZoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX); }
-      else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { $.tscroll.scrollLeft += e.deltaY; e.preventDefault(); }
+      else if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && $.tscroll.scrollHeight <= $.tscroll.clientHeight + 1) { $.tscroll.scrollLeft += e.deltaY; e.preventDefault(); }
     }, { passive: false });
     // any drag on the timeline (end flag, playhead, markers, clips, edges, seams, audio clips, region): the scale is
     // frozen while the pointer is down — a drag that changes the content length must not rescale the view (the
@@ -1126,7 +1213,10 @@ export class H3Editor {
     $.tscroll.addEventListener("pointerdown", (e) => { if (e.button === 0) this.tlDragBegin(e); }, true);
     // «✂ Участок» mode: a drag on the video track selects a range (normal drags are untouched outside the mode)
     $.tinner.addEventListener("pointerdown", (e) => this.regionPointer(e), true);
-    $.tscroll.addEventListener("scroll", () => { if ($.regPop) this.placeRegionPopover(this.region() ? this.regionWin(this.region()) : null); });
+    $.tscroll.addEventListener("scroll", () => {
+      $.headsInner.style.transform = `translateY(${-$.tscroll.scrollTop}px)`;
+      if ($.regPop) this.placeRegionPopover(this.region() ? this.regionWin(this.region()) : null);
+    });
   }
 
   /** Timeline drag helpers: frozen scale + gentle edge auto-scroll (re-sends the last pointer position so the
@@ -1228,9 +1318,21 @@ export class H3Editor {
 
   get ppf() { return this._ppf || 1; }
 
+  syncTimelineMetrics() {
+    const $ = this.$, lanes = this.audioLanes?.() || [0, 1, 2];
+    const audioH = lanes.length * 34 + Math.max(0, lanes.length - 1) * 4;
+    const available = Math.max(0, $.tscroll.clientHeight || 180);
+    const videoH = clamp(available - 36 - 8 - audioH - 8, 64, 110), audioTop = 36 + videoH + 8;
+    this.timelineVideoHeight = videoH;
+    $.tl.style.setProperty("--video-h", videoH + "px"); $.tl.style.setProperty("--audio-h", audioH + "px");
+    $.tl.style.setProperty("--audio-top", audioTop + "px"); $.tl.style.setProperty("--timeline-min", audioTop + audioH + 8 + "px");
+    $.tl.classList.toggle("compact-video", videoH < 88);
+  }
+
   renderTimeline() {
     this.$.magBtn?._paint?.(); // undo / settings may have flipped «🧲 Магнит»
     const $ = this.$; if (!$.tinner) return;
+    this.syncTimelineMetrics();
     queueMicrotask(() => { if (this._hoverT && !this._hoverT.isConnected) this.hideHover?.(); });   // its clip was re-built / removed
     const its = this.items(), sigs = this.sigs(), nGen = sigs.length;
     const vEnd = this.totalFrames(), hasEnd = this.p.end > 0;
@@ -1561,6 +1663,20 @@ export class H3Editor {
     if (this.ae) return;
     if (this.cropM) { this.cropKey(e); return; }   // «Персонажи» crop window
     if (this.viewer) { this.viewerKey(e); return; }   // «Удобный просмотр» owns the keyboard
+    if (this.$?.monitorPop) {
+      if (e.key === "Escape") { e.preventDefault(); this.monitorClose(); }
+      return;
+    }
+    if (this._ast) {
+      if (e.target?.matches?.(".h3z-ast-inputbox textarea") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        this.astSend();
+      } else if (e.key === "Escape" && !isTyping(e)) {
+        e.preventDefault();
+        if (this._ast.setOpen) { this._ast.setOpen = false; this.renderAssistSettings(); } else this.closeAssist();
+      }
+      return;
+    }   // window capture stops events before the assistant's own listeners, so route composer keys here
     if (this.$.saveModal) { if (e.key === "Escape" && !isTyping(e)) { e.preventDefault(); this.closeSaveDialog(); } return; }
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
     if (k === "Escape") { e.preventDefault(); if (isTyping(e)) { e.target.blur(); this.focusSink(); } else if (this.$.menu) this.closeMenu(); else if (this.$.pop) this.toggleWarnings(); else if (this.regionMode) this.toggleRegionMode(false); else if (this.selRegion) { this.selRegion = null; this.renderTimeline(); } else if (this.selMarker) { this.selMarker = null; this.renderInspector(); this.renderTimeline(); } else if (this.selAudio) { this.selAudio = null; this.renderTimeline(); this.renderLeft(); } else this.close(); return; }
@@ -1812,6 +1928,7 @@ export class H3Editor {
       const bar = c.querySelector(".pg i");
       if (bar) bar.style.width = running && r.steps ? (r.step / r.steps * 100) + "%" : "0%";
     });
+    this.monitorRun?.();
   }
 
   // ------------------------------------------------------------------ misc
@@ -1850,3 +1967,5 @@ installModelTab(H3Editor, { C, h, ICON });
 installGaps(H3Editor, { C, h, ICON });
 installTimer(H3Editor, { C, h });
 installChars(H3Editor, { C, h, ICON });
+installAssist(H3Editor, { C, h, ICON });
+installMonitor(H3Editor, { C, h });

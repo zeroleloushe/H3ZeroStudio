@@ -43,6 +43,16 @@ def project(**kw):
     return p
 
 
+def test_llm_unloads_before_video_generation(patcher, dirs, monkeypatch):
+    from h3s import h3s_llm
+    calls = []
+    monkeypatch.setattr(h3s_llm, "unload", lambda base, key, model, endpoint: calls.append((base, key, model, endpoint)) or {"backend": "test"})
+    p = project(assistant={"cfg": {"unload_on_generate": True, "api_base": "http://127.0.0.1:1234/v1",
+                                   "api_key": "secret", "api_model": "vision-model", "unload_endpoint": "/custom/unload"}})
+    gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE())
+    assert calls == [("http://127.0.0.1:1234/v1", "secret", "vision-model", "/custom/unload")]
+
+
 def test_two_segments_extend_and_cache(patcher, dirs):
     out, _ = dirs
     clip, vae = FakeClip(), FakeVAE()
@@ -1038,7 +1048,7 @@ def test_segment_upscale_learned_rtx_mixed(patcher, dirs, monkeypatch, capsys):
     import types
     calls = []
 
-    def fake_learned(v, w, h):
+    def fake_learned(v, w, h, model=None):
         calls.append(("learned", w, h))
         return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact")
     monkeypatch.setattr(upscale, "learned_upscale", fake_learned)
@@ -1125,7 +1135,7 @@ def test_upscale_unavailable_is_a_clear_error(patcher, dirs, monkeypatch):
     message (no silent nearest-exact / Lanczos result)."""
     monkeypatch.setattr(upscale, "learned_models", lambda: [])
     monkeypatch.setattr(upscale, "learned_node", lambda: None)
-    monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h: None)
+    monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h, model=None: None)
     monkeypatch.setattr(upscale, "rtx_available", lambda: False)
     p = project(id="noup")
     p["settings"].update({"quality": "final", "final_mode": "refine"})
@@ -1395,7 +1405,7 @@ def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
     va = _clip_file(inp)                                   # 128x72 file
     calls = []
 
-    def fake_learned(v, w, h):
+    def fake_learned(v, w, h, model=None):
         calls.append(("learned", w, h))
         return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact")
     monkeypatch.setattr(upscale, "learned_upscale", fake_learned)
@@ -1531,7 +1541,7 @@ def test_upscale_vram_handoff_order(patcher, dirs, monkeypatch, capsys):
     ev = []
     monkeypatch.setattr(upscale, "free_vram", lambda: ev.append("free"))
     fake = upscale.learned_upscale
-    monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h: (ev.append("upscaler"), fake(v, w, h))[1])
+    monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h, model=None: (ev.append("upscaler"), fake(v, w, h, model))[1])
     real_sample = comfy.sample.sample
     monkeypatch.setattr(comfy.sample, "sample", lambda *a, **k: (ev.append("sample"), real_sample(*a, **k))[1])
 

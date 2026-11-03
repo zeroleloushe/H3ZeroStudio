@@ -25,6 +25,7 @@ import node_helpers
 
 from . import h3s_core as core
 from . import h3s_media as media
+from . import h3s_monitor as monitor
 from . import h3s_preview as preview
 from . import h3s_upscale as upscale
 
@@ -33,6 +34,10 @@ LOG = "[H3ZS]"
 
 def log(msg):
     line = f"{LOG} {msg}"
+    try:
+        monitor.record_log(line)
+    except Exception:
+        pass
     try:
         print(line, flush=True)
     except UnicodeEncodeError:   # legacy console code page: keep the line, lose the glyphs
@@ -770,6 +775,22 @@ def refine_sigmas(model, steps, scheduler, sigma0):
     return out.contiguous()
 
 
+def pass_sigmas(m, p, refine):
+    """Sigma schedule of a pass: «custom SIGMAS» (p["sigmas"]) replace the computed curve (steps = len − 1);
+    a refine pass otherwise gets its own partial schedule from sigma0; a fresh pass gets None (the sampler makes
+    the project's schedule)."""
+    if p.get("sigmas") is not None:
+        return torch.tensor(p["sigmas"], dtype=torch.float32)
+    return refine_sigmas(m, p["steps"], p["scheduler"], p["sigma0"]) if refine else None
+
+
+def check_custom_sigmas(p):
+    """A clear run error when «custom SIGMAS» is chosen but the list is empty / unparsable."""
+    if p.get("sigmas") is None and p.get("scheduler") == core.SIGMAS_SCHEDULER:
+        raise ValueError("H3ZeroStudio: расписание «custom SIGMAS», но список сигм пуст или не разобрался. "
+                         "Нужно минимум 2 числа через запятую, например «1.0, 0.5, 0.0».")
+
+
 # ---------------------------------------------------------------- wired SAMPLER / SIGMAS (optional node inputs)
 # A SAMPLER / SIGMAS wired into the node win over the project's sampler / scheduler / steps:
 #   * SIGMAS: every fresh pass (draft / full, region passes) runs exactly these sigmas; the step count is len-1.
@@ -837,17 +858,20 @@ def preview_sigma_list(m, p, refine_sigmas_t=None, fresh=False):
         return [float(x) for x in CUSTOM["sigmas"].tolist()]
     if refine_sigmas_t is not None:
         return [float(x) for x in refine_sigmas_t.tolist()]
-    return preview.preview_sigmas(m, p["steps"], p["sampler"], p["scheduler"], p["denoise"])
+    try:
+        return preview.preview_sigmas(m, p["steps"], p["sampler"], p["scheduler"], p["denoise"])
+    except Exception:
+        return []   # «custom SIGMAS» without a parsed list (a clear run error elsewhere): nothing to plot
 
 
-def upscale_video_latent(vae, v, w, h, method="learned", frames=None):
+def upscale_video_latent(vae, v, w, h, method="learned", frames=None, model=None):
     """Video latent [1,24,T,h',w'] -> the w x h canvas: the learned H3 latent upscaler (default) or RTX VSR ->
     VAE encode ("rtx"), each the other's fallback; neither = h3s_upscale.UpscaleUnavailable (clear error).
-    Audio is never touched."""
+    model: which learned upscaler file (settings.upscale_model, "" = the first). Audio is never touched."""
     if tuple(v.shape[-2:]) == (h // 16, w // 16):
         return v
     from . import h3s_upscale
-    return h3s_upscale.upscale_input(vae, v, w, h, "rtx" if method == "rtx" else "learned", frames)[0]
+    return h3s_upscale.upscale_input(vae, v, w, h, "rtx" if method == "rtx" else "learned", frames, model=model)[0]
 
 
 # ---------------------------------------------------------------- one segment
@@ -980,9 +1004,12 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         m.set_model_unet_function_wrapper(LockWrapper(lock_v, w_v, None, None, probe=int((w_a > 0.5).sum()) if noise_mask is not None else None))
     samples = comfy.nested_tensor.NestedTensor((video, audio))
     noise = comfy.sample.prepare_noise(samples, p["seed"])
-    sigmas = refine_sigmas(m, p["steps"], p["scheduler"], p["sigma0"]) if refine is not None else None
+    check_custom_sigmas(p)
+    sigmas = pass_sigmas(m, p, refine is not None)
     fresh = refine is None and init is None   # starts from pure noise: wired SIGMAS apply
-    if sigmas is not None:
+    if p.get("sigmas") is not None:
+        vlog(f"  custom sigmas: {p['steps']} steps {[round(float(x), 3) for x in sigmas.tolist()]}")
+    elif sigmas is not None:
         vlog(f"  refine schedule: {p['steps']} steps from sigma {float(sigmas[0]):.3f} ({p['scheduler']})")
     elif fresh and CUSTOM["sigmas"] is not None:
         vlog(f"  wired sigmas: {p['steps']} steps {[round(float(x), 3) for x in CUSTOM['sigmas'].tolist()]}")
@@ -1050,7 +1077,9 @@ def refine_audio(model, clip, vae, project, index, items, v, a, ar, ref_images, 
         if step_cb is not None:
             step_cb(step, total)
 
-    out = sample_pass(m, noise, steps, p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples, den, cb, seed, noise_mask=noise_mask)
+    check_custom_sigmas(p)
+    sig = pass_sigmas(m, p, False)   # «custom SIGMAS»: the exact list (the denoise fraction gives way to it)
+    out = sample_pass(m, noise, steps, p["cfg"], p["sampler"], p["scheduler"], pos, neg, samples, den, cb, seed, noise_mask=noise_mask, sigmas=sig)
     ov_, oa_ = out.unbind()
     if vden <= 0:
         err = float((ov_.float().cpu() - v.float()).abs().max())
@@ -1622,6 +1651,15 @@ def level_lock_joins(images, parts, items, results, n, gaps=(), gap_at=()):
 
 
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None, sampler=None, sigmas=None):
+    assistant = core.normalize_project(project).get("assistant", {}).get("cfg", {})
+    if assistant.get("unload_on_generate") and assistant.get("api_model"):
+        try:
+            from . import h3s_llm
+            result = h3s_llm.unload(assistant.get("api_base"), assistant.get("api_key"), assistant.get("api_model"),
+                                    assistant.get("unload_endpoint"))
+            log(f"LLM unloaded before video generation ({result['backend']}: {assistant['api_model']})")
+        except Exception as e:
+            log(f"WARNING: LLM unload before video generation failed: {e}")
     rec = _run_begin(project)
     try:
         CUSTOM["sampler"], CUSTOM["sigmas"] = sampler, check_sigmas(sigmas)   # wired inputs win; always reset below
@@ -1700,6 +1738,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     items = core.run_items(proj, all_items)
     s = proj["settings"]
     VERBOSE[0] = bool(s.get("verbose_log", True))
+    UG = core.upscale_gen(s)   # «Настройки → Апскейл»: the refine's own model + LoRA (None = the presets)
+
+    def MC_UP(i):
+        return MR.upscale_models(UG, i) if UG else MC(i)
     notify = Notifier(node_id)
     by_id = {a["id"]: a for a in proj["assets"]}
     ref_sigs, fsigs = {}, {}
@@ -1740,12 +1782,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 if isinstance(q_, dict) and "env" in q_ and j_ < len(env_parts):
                     q_["_env"] = env_parts[j_]   # not hashed: only explains a changed "env"
         return parts_
-    keys = core.segment_keys(proj, ref_sigs, env, up_env=upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "", parts=kparts)
+    keys = core.segment_keys(proj, ref_sigs, env, up_env=upscale.env_tag(s.get("upscale_method", "learned"), s.get("upscale_model") or None) if kind == "refine" else "", parts=kparts)
     use_cache = bool(s.get("cache", True))
     keys = keys[:len(items)]
     # «Апскейл отрезка»: key of each segment's upscale (None = none); the base latents stay the generation chain
-    up_env = {m: upscale.env_tag("rtx" if m == "rtx" else "learned") for m in core.SEG_UPSCALE_METHODS
+    up_env = {m: upscale.env_tag("rtx" if m == "rtx" else "learned", s.get("upscale_model") or None) for m in core.SEG_UPSCALE_METHODS
               if any((sg.get("upscale") or {}).get("method") == m for sg in proj["segments"] + (proj.get("regions") or []))}
+    ug_env = h3s_models.upscale_gen_env(s)
+    if ug_env:
+        up_env = {m: e + ug_env for m, e in up_env.items()}   # a custom refine model / LoRA invalidates the cached upscales
     ukeys = core.upscale_keys(proj, keys, kind, up_env)[:len(items)]
     if any(ukeys):
         caps = upscale.capabilities()
@@ -1834,7 +1879,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     # «✂ Участок»: regions generated (run.region) or applied (their chosen take) in this run
     from . import h3s_region as region
     reg_plans = region.plan_regions(proj, all_items, items, first, keys, dkeys or keys, ref_sigs, env, kind, (run_w, run_h),
-                                    core.work_resolution(s, "draft"), upscale.env_tag(s.get("upscale_method", "learned")) if kind == "refine" else "",
+                                    core.work_resolution(s, "draft"), upscale.env_tag(s.get("upscale_method", "learned"), s.get("upscale_model") or None) if kind == "refine" else "",
                                     d, use_cache) if proj.get("regions") else []
     todo_steps += sum(rp["steps"] for rp in reg_plans)
     for rp in reg_plans:   # «Апскейл участка»: the take's window latent upscaled + refined (cached like a clip upscale)
@@ -1925,7 +1970,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         """A latent of another canvas (a clip frozen in another mode) is resized to the run's canvas."""
         if tuple(v.shape[-2:]) != (h_ // 16, w_ // 16):
             log(f"{what}: latent {tuple(v.shape[-2:])} resized to {w_}x{h_} ({s.get('upscale_method')})")
-            return upscale_video_latent(vae, v, w_, h_, s.get("upscale_method", "learned"))
+            return upscale_video_latent(vae, v, w_, h_, s.get("upscale_method", "learned"), model=s.get("upscale_model") or None)
         return v
 
     def get_draft(j, step_cb=None, pcb=None):
@@ -2059,7 +2104,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 notify("phase", seg=i, phase="up_input", input=upscale.effective_input(um) or um)
                 t_in = time.perf_counter()
                 log(f"segment {i + 1}: final from its draft — upscale input {upscale.effective_input(um) or um} {tuple(dr['v'].shape[-2:])} latent -> {run_w}x{run_h} …")
-                up = upscale_video_latent(vae, dr["v"], run_w, run_h, um, frames=dr["frames"])
+                up = upscale_video_latent(vae, dr["v"], run_w, run_h, um, frames=dr["frames"], model=s.get("upscale_model") or None)
                 log(f"segment {i + 1}: upscale input done in {time.perf_counter() - t_in:.1f}s")
                 notify("phase", seg=i, phase="refine")
                 log(f"segment {i + 1}: final from its draft: {tuple(dr['v'].shape[-2:])} -> {tuple(up.shape[-2:])} latent ({um}), refine")
@@ -2124,7 +2169,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     el = time.perf_counter() - t0
                     notify("uptile", seg=_i, done=done_steps[0], total=todo_steps, elapsed=round(el, 1), **kw)
                 uv, _a, uinfo = upscale.run_upscale(None, None, vae, proj, i, items, v, a, frames, prev_up, refs_u, ra_u, up_step, None, up_prog,
-                                                    models=lambda _i=i: MC(_i),   # H3 + LoRAs resolved after the upscaler
+                                                    models=lambda _i=i: MC_UP(_i),   # H3 (+ LoRAs / the upscale's own model) resolved after the upscaler
                                                     preview_factory=lambda m, _i=i: LivePreview(notify, m, _i, settings=s, audio_vae=None, out_dir=d, sub=sub))
                 notify("phase", seg=i, phase="upscale")
                 torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
@@ -2309,7 +2354,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 um = s.get("upscale_method", "learned")
                 notify("phase", seg=si, phase="up_input", input=upscale.effective_input(um) or um, region=rg["id"])
                 dfr = decode_video(vae, rdv.to(dev0))
-                up = upscale_video_latent(vae, rdv, run_w, run_h, um, frames=dfr)
+                up = upscale_video_latent(vae, rdv, run_w, run_h, um, frames=dfr, model=s.get("upscale_model") or None)
                 notify("phase", seg=si, phase="region", region=rg["id"])
                 rv, ra = region.sample_region(*MC(si), vae, proj, rg, win, sv, sa, "refine", refs_r, None, None, None, r_step, pcb_r, refine=(up, rda))
             else:
@@ -2336,7 +2381,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 refs_u = [load_asset_image(x) for x in core.region_refs(proj, rg)]
                 uvr, _ra, rinfo = upscale.run_upscale(None, None, vae, proj, si, all_items, rv, ra, None, None, refs_u, None, ru_step, None, None,
                                                       up=rg["upscale"], holder=rg, prompt=core.region_prompt(proj, rg), label=f"region «{name}»",
-                                                      models=lambda _si=si: MC(_si))   # H3 resolved after the upscaler
+                                                      models=lambda _si=si: MC_UP(_si))   # H3 resolved after the upscaler
                 torch.save({"v": uvr, "a": ra, "info": rinfo}, rp["upt"] + ".part")
                 media.replace_file(rp["upt"] + ".part", rp["upt"])
                 log(f"region «{name}»: upscale done in {time.perf_counter() - t_u:.1f}s -> {rinfo['wh'][0]}x{rinfo['wh'][1]} ({rinfo['input']})")

@@ -132,7 +132,7 @@ export function installGallery(Editor, { C, h, ICON }) {
     },
 
     renderGallery(L) {
-      const view = h("div", { class: "h3z-pills gmode" }, [[false, T("▣ Стопками"), T("Варианты одного видео (черновик, финал, апскейлы, участки, дубли) — одной карточкой")], [true, T("☰ Списком"), T("Каждый вариант отдельной карточкой")]].map(([k, l, t]) =>
+      const view = h("div", { class: "h3z-pills gmode" }, [[false, T("📁 Папками"), T("Варианты одного видео (черновик, финал, апскейлы, участки, дубли) — одной карточкой")], [true, T("☰ Списком"), T("Каждый вариант отдельной карточкой")]].map(([k, l, t]) =>
         h("div", { class: "h3z-pill" + (!!this.galFlat === k ? " on" : ""), title: t, onclick: () => { this.galFlat = k; this.renderLeft(); } }, l)));
       const head = h("div", { class: "h3z-ghead" }, h("b", null, T("Галерея")), h("span", { class: "h3z-note gcount" }, ""), h("i", { class: "grow" }), view,
         h("button", { class: "h3z-btn sm icon", title: T("Обновить"), html: "↻", onclick: () => { this.galLoad(true).then(() => this.galFill()); } }));
@@ -176,7 +176,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       const bar = this.$.galBar; bar.innerHTML = "";
       const sel = this.galSel.map((id) => g.items.find((e) => e.id + e.pid === id)).filter(Boolean);
       if (sel.length === 2) bar.append(h("button", { class: "h3z-btn sm primary", onclick: () => this.galView(sel) }, T("⇄ Сравнить выбранные")), h("button", { class: "h3z-btn sm", onclick: () => { this.galSel = []; this.galFill(); } }, T("Снять выбор")));
-      else if (sel.length === 1) bar.append(h("span", { class: "h3z-note" }, open || this.galFlat ? T("Ctrl+клик по второму — сравнить") : T("Ctrl+клик по второму — сравнить (варианты — внутри стопки)")), h("button", { class: "h3z-btn sm", onclick: () => { this.galSel = []; this.galFill(); } }, "✕"));
+      else if (sel.length === 1) bar.append(h("span", { class: "h3z-note" }, open || this.galFlat ? T("Ctrl+клик по второму — сравнить") : T("Ctrl+клик по второму — сравнить (варианты — внутри папки)")), h("button", { class: "h3z-btn sm", onclick: () => { this.galSel = []; this.galFill(); } }, "✕"));
       grid.innerHTML = ""; grid._filled = false; grid._view = view;
       if (g.err) grid.append(h("div", { class: "h3z-note err" }, T("Не удалось загрузить галерею: ") + g.err));
       if (!list.length) {
@@ -202,13 +202,15 @@ export function installGallery(Editor, { C, h, ICON }) {
         e.kind === "final" && e.current ? h("span", { class: "k on" }, T("итог")) : null);
       const kinds = grp ? Object.entries(grp.items.reduce((m, x) => ((m[x.kind] = (m[x.kind] || 0) + 1), m), {})).sort((a, b) => (RANK[b[0]] || 0) - (RANK[a[0]] || 0)) : [];
       const chips = grp ? h("div", { class: "chips" }, kinds.map(([k, n]) => h("span", { class: "k " + k }, CHIP[k] + (n > 1 ? "×" + n : "")))) : null;
-      const badge = grp ? h("div", { class: "cnt", title: T("{0} вариантов — клик открывает стопку", grp.items.length) }, `▣ ${grp.items.length}`) : null;
+      const badge = grp ? h("div", { class: "cnt", title: T("{0} вариантов — клик открывает папку", grp.items.length) }, `📁 ${grp.items.length}`) : null;
       const line1 = o.variant ? this.galLine(e) : grp ? [grp.label, e.frames ? T("{0} с", (e.frames / C.FPS).toFixed(1)) : "", ago(grp.items[0].created)].filter(Boolean).join(" · ") : [e.seg_index != null ? T("Отр. {0}", e.seg_index + 1) : e.kind === "final" ? T("{0} отр.", e.count || "") : "", e.frames ? T("{0} с", (e.frames / C.FPS).toFixed(1)) : "", e.seed != null ? T("сид {0}", e.seed) : "", ago(e.created)].filter(Boolean).join(" · ");
-      const tip = grp ? T("{0}: {1} вариантов ({2})\nОбложка: {3}\n\nКлик — открыть стопку · двойной клик — смотреть обложку · Ctrl+клик — выбрать обложку для сравнения", grp.label, grp.items.length, kinds.map(([k, n]) => (KIND[k] || k) + (n > 1 ? " ×" + n : "")).join(", "), this.galLine(e))
+      const tip = grp ? T("{0}: {1} вариантов ({2})\nОбложка: {3}\n\nКлик — открыть папку · двойной клик — смотреть обложку · Ctrl+клик — выбрать обложку для сравнения", grp.label, grp.items.length, kinds.map(([k, n]) => (KIND[k] || k) + (n > 1 ? " ×" + n : "")).join(", "), this.galLine(e))
         : (e.prompt || "").slice(0, 400) + (e.models ? "\n\n" + this.mpTip(e.models) : "") + T("\n\nДвойной клик — смотреть · Ctrl+клик — выбрать для сравнения · правый клик — действия");
+      const typeLine = grp ? T("Папка · {0} видео", grp.items.length) : T("Видео · {0}", KIND[e.kind] || T("Ролик"));
       const card = h("div", { class: "h3z-gcard" + (on ? " sel" : "") + (grp ? " stack" : ""), title: tip },
+        grp ? h("div", { class: "ftab" }, "📁 " + T("Папка")) : null,
         h("div", { class: "pv" }, img, tags, star, chips, badge),
-        h("div", { class: "cap" }, h("div", { class: "l1" }, line1), h("div", { class: "l2" }, (e.prompt || "").replace(/\s+/g, " ").slice(0, 90) || (e.project && (this.galScope === "all") ? e.project : "")),
+        h("div", { class: "cap" }, h("div", { class: "gtype" }, grp ? typeLine : "▶ " + typeLine), h("div", { class: "l1" }, line1), h("div", { class: "l2" }, (e.prompt || "").replace(/\s+/g, " ").slice(0, 90) || (e.project && (this.galScope === "all") ? e.project : "")),
           this.galScope === "all" && e.project ? h("div", { class: "l3" }, e.project) : null));
       const pv = card.querySelector(".pv");
       card.addEventListener("pointerenter", () => {   // muted hover preview (not playback of the project)
@@ -235,7 +237,7 @@ export function installGallery(Editor, { C, h, ICON }) {
       const seg = this.seg(), why = this.galInUse(e);
       const isSeg = e.kind !== "final";
       this.openMenu(ev, (KIND[e.kind] || T("Видео")) + (e.seg_index != null ? T(" · отрезок {0}", e.seg_index + 1) : ""), [
-        grp ? { label: T("▣ Открыть стопку ({0} вар.)", grp.items.length), hint: T("клик"), fn: () => this.galOpenGroup(grp.key) } : null,
+        grp ? { label: T("📁 Открыть папку ({0} вар.)", grp.items.length), hint: T("клик"), fn: () => this.galOpenGroup(grp.key) } : null,
         grp && grp.items.length >= 2 ? { label: T("⇄ Сравнить два последних варианта"), fn: () => this.galView([grp.cover, grp.items.find((x) => x !== grp.cover)]) } : null,
         { label: grp ? T("▶ Смотреть обложку") : T("▶ Смотреть"), hint: T("2×клик"), fn: () => this.galView([e]) },
         { icon: this.constructor.VIEWER_ICONS?.view || "", label: T("Удобный просмотр"), title: T("Во весь экран: масштаб до ×4, покадрово, скорость, петля"), fn: () => this.galViewer(e), dis: !e.video },
@@ -326,7 +328,7 @@ export function installGallery(Editor, { C, h, ICON }) {
         if (!two) return null;
         const g = this.galGroups(this._gal?.items || list).find((x) => x.items.some((y) => y.id + y.pid === list[k].id + list[k].pid));
         if (!g || g.items.length < 2) return null;
-        const s = h("select", { class: "h3z-in sm", title: T("Другой вариант этой стопки") }, g.items.map((x, j) => h("option", { value: j, selected: x.id + x.pid === list[k].id + list[k].pid }, this.galLine(x))));
+        const s = h("select", { class: "h3z-in sm", title: T("Другой вариант этой папки") }, g.items.map((x, j) => h("option", { value: j, selected: x.id + x.pid === list[k].id + list[k].pid }, this.galLine(x))));
         s.addEventListener("change", () => { const nl = [...list]; nl[k] = g.items[+s.value]; this.galView(nl); });
         s.addEventListener("keydown", (x) => x.stopPropagation());
         return s;

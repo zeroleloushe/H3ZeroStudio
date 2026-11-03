@@ -130,6 +130,36 @@ PROJECTS = [
      "segments": [{"frames": 124, "upscale": {"method": "tiles", "mp": 2, "sigma": 0.35}}, {"frames": 124, "upscale": {"method": "latent", "mp": 2, "sigma": 3}}]},
     {"settings": {"upscale_rev": 3, "upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.85}}}, "segments": [{"frames": 124}]},
     {"settings": {"upscale_rev": 4, "upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.35}}}, "segments": [{"frames": 124}]},
+    # «Настройки → Апскейл» → «Модель доработки»: the refine's own model + LoRA (custom / garbage)
+    {"settings": {"upscale_gen": {"mode": "custom", "model": "detail.safetensors", "lora": "sharp.safetensors", "lora_strength": 0.7}},
+     "segments": [{"frames": 124, "upscale": {"method": "latent"}}]},
+    {"settings": {"upscale_gen": {"mode": "weird", "model": 5, "lora": None, "lora_strength": "x"}},
+     "segments": [{"frames": 124}]},
+    {"settings": {"upscale_gen": "bad"}, "segments": [{"frames": 124}]},
+    # the learned upscaler model choice (settings.upscale_model): a name / garbage
+    {"settings": {"upscale_model": "minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors"},
+     "segments": [{"frames": 124, "upscale": {"method": "latent"}}]},
+    {"settings": {"upscale_model": 7}, "segments": [{"frames": 124}]},
+    # «custom SIGMAS» schedules (main / stages / upscale profile / clip override)
+    {"settings": {"scheduler": "custom", "sigmas": "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"},
+     "segments": [{"frames": 124}, {"frames": 124, "overrides": {"scheduler": "custom", "sigmas": "1,0.9,0"}}]},
+    {"settings": {"final_mode": "refine", "draft_scheduler": "custom", "draft_sigmas": "1,0.9,0.7,0",
+                  "refine_scheduler": "custom", "refine_sigmas": "abc",   # unparsable: the raw string stays, no sigmas apply
+                  "upscale_profiles": {"latent": {"scheduler": "custom", "sigmas": "1,0.9,0.8,0.7,0"}}},
+     "segments": [{"frames": 124, "upscale": {"method": "latent"}}]},
+    # «✨ Ассистент»: chats live in the project (normalization, id collisions, garbage)
+    {"assistant": {"chats": [{"id": "c1", "title": "Сцена 1", "created": 1700000000,
+                              "msgs": [{"role": "user", "text": "привет"}, {"role": "assistant", "text": "ответ", "reasoning": "анализ",
+                                       "stats": {"prompt": 3, "completion": 2, "tps": 7.5, "elapsed": 0.27, "finish": "stop"}}, {"role": "bot", "text": "x"}, "bad"]},
+                             {"id": "c1", "msgs": []}],
+                   "active": "c1", "style_deleted": ["cinema", "cinema"],
+                   "style_defs": [{"id": "custom", "name": " Custom ", "instructions": "one\ntwo", "priority": 120, "enabled": True, "custom": True},
+                                  {"id": "custom", "name": "Duplicate", "instructions": [" three ", ""], "category": None}, {"name": " "}],
+                   "cfg": {"model": "m.gguf", "temperature": 5, "max_tokens": 0, "n_ctx": 100, "ctx_refs": False,
+                           "styles": ["custom", "cinema", "cinema"], "stream_timeout": 900, "auto_unload": True,
+                           "auto_unload_delay": 30, "unload_endpoint": "/unload", "show_reasoning": False}},
+     "segments": [{"frames": 124}]},
+    {"assistant": "bad", "segments": [{"frames": 124}]},
     # model & LoRA presets: project copy, per-clip override, garbage
     {"model_presets": {"t1": {"name": "Turbo", "model": "h3.safetensors", "dtype": "fp8_e4m3fn", "clip": "te.safetensors",
                              "loras": [{"file": "turbo.safetensors", "sm": 0.8125}, {"file": "b.safetensors", "on": False, "sm": 2, "sc": 0}]},
@@ -220,11 +250,93 @@ def test_core_parity(h3s, tmp_path):
 
 def test_tooltips(h3s):
     cls = h3s.nodes.ZL_H3ZeroStudio
+    assert cls.OUTPUT_NODE is True and h3s.nodes.ZL_H3StudioLegacy.OUTPUT_NODE is True
     spec = cls.INPUT_TYPES()
     for group in ("required", "optional"):
         for name, val in spec.get(group, {}).items():
             assert len(val) > 1 and val[1].get("tooltip"), f"нет подсказки у входа {name}"
     assert len(cls.OUTPUT_TOOLTIPS) == len(cls.RETURN_TYPES)
+
+
+def test_standalone_node_is_valid_output(h3s, monkeypatch):
+    import asyncio
+    import execution
+    import nodes as comfy_nodes
+
+    monkeypatch.setitem(comfy_nodes.NODE_CLASS_MAPPINGS, h3s.nodes.NODE_ID, h3s.nodes.ZL_H3ZeroStudio)
+    prompt = {"1": {"class_type": h3s.nodes.NODE_ID, "inputs": {"project": ""}}}
+    valid, error, _, node_errors = asyncio.run(execution.validate_prompt("standalone", prompt, None))
+    assert valid, (error, node_errors)
+
+
+@need_node
+def test_interface_themes(tmp_path):
+    driver = tmp_path / "themes.mjs"
+    driver.write_text(textwrap.dedent(f"""
+        const storage = new Map();
+        globalThis.localStorage = {{ getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) }};
+        globalThis.document = {{ documentElement: {{ dataset: {{}}, style: {{}} }} }};
+        const {{ UI_THEMES, themeSetting, applyTheme }} = await import({json.dumps(pathlib.Path(JS, "h3s_theme.js").as_uri())});
+        const applied = UI_THEMES.map((theme) => applyTheme(theme.id));
+        const schemes = UI_THEMES.map((theme) => {{ applyTheme(theme.id); return document.documentElement.style.colorScheme; }});
+        applyTheme("ocean", true);
+        const stored = themeSetting();
+        applyTheme();
+        const restored = document.documentElement.dataset.h3zTheme;
+        const invalid = applyTheme("missing");
+        console.log(JSON.stringify({{ ids: UI_THEMES.map((t) => t.id), applied, schemes, stored, restored, invalid }}));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["ids"] == ["neon", "graphite", "ocean", "porcelain", "sunset"]
+    assert out["applied"] == out["ids"] and out["schemes"] == ["dark", "dark", "dark", "light", "dark"]
+    assert out["stored"] == out["restored"] == "ocean" and out["invalid"] == "neon"
+    settings = pathlib.Path(JS, "h3s_settings.js").read_text(encoding="utf-8")
+    css = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
+    assert "langRow, themeRow, scope" in settings and "applyTheme(theme.id, true)" in settings
+    assert all(f':root[data-h3z-theme="{theme}"]' in css for theme in out["ids"][1:])
+
+
+@need_node
+def test_monitor_frontend_polling_and_history(tmp_path):
+    driver = tmp_path / "monitor.mjs"
+    driver.write_text(textwrap.dedent(f"""
+        const {{ installMonitor, formatBytes, sparkPath }} = await import({json.dumps(pathlib.Path(JS, "h3s_monitor.js").as_uri())});
+        class Editor {{}}
+        installMonitor(Editor, {{ C: {{ fmtDur: String }}, h: null }});
+        const ed = new Editor();
+        ed.root = {{}}; ed.$ = {{}}; ed.run = {{ active: false }};
+        let calls = [], paints = 0, timer = null, cleared = 0;
+        globalThis.setInterval = (fn, ms) => {{ timer = {{ fn, ms }}; return 17; }};
+        globalThis.clearInterval = () => cleared++;
+        ed.host = {{ get: async (path, params) => {{
+          calls.push({{ path, params }});
+          return {{ seq: 2, metrics: {{ cpu: {{ percent: 12 }}, ram: {{ percent: 34 }}, gpu: {{ percent: 56, vram_percent: 67 }} }},
+            logs: [{{ seq: 1, t: 1, text: "one" }}, {{ seq: 2, t: 2, text: "two" }}] }};
+        }} }};
+        ed.monitorPaint = () => paints++; ed.monitorPaintPop = () => {{}};
+        ed.monitorStart();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const state = {{ seq: ed._mon.seq, logs: ed._mon.logs.length, history: ed._mon.history, active: ed._mon.active,
+          path: calls[0].path, after: calls[0].params.after, interval: timer.ms, paints }};
+        ed.monitorStop();
+        state.stopped = !ed._mon.active && cleared > 0;
+        state.bytes = formatBytes(2 * 1024 ** 3);
+        state.path0 = sparkPath([0, 50, 100]);
+        console.log(JSON.stringify(state));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["seq"] == 2 and out["logs"] == 2 and out["after"] == 0
+    assert out["history"] == [{"cpu": 12, "ram": 34, "gpu": 56, "vram": 67, "temp": None}]
+    assert out["active"] and out["stopped"] and out["interval"] == 2000 and out["paints"] == 1
+    assert out["path"] == "/h3zero/monitor" and out["bytes"] == "2.0 ГБ"
+    assert out["path0"] == "M0.0,100.0 L320.0,50.0 L640.0,0.0"
+    src = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
+    assert 'class: "h3z-head-meta"' in src and "this.timerEl(), this.monitorEl()" in src
+    assert "this.monitorStop?.();" in src and "this.monitorRun?.();" in src
 
 
 def test_editor_keeps_keyboard_sink_focused():
@@ -233,6 +345,7 @@ def test_editor_keeps_keyboard_sink_focused():
     src = pathlib.Path(ROOT, "web", "js", "h3s_editor.js").read_text(encoding="utf-8")
     assert 'class: "h3z-sink", readonly: true' in src
     assert "focusSink()" in src and 'classList?.contains("h3z-sink")' in src
+    assert 'setTimeout(() => { if (!this._ast) this.focusSink(); }, 0)' in src
 
 
 def test_end_marker_and_audio_clips(h3s):
@@ -252,6 +365,215 @@ def test_end_marker_and_audio_clips(h3s):
     assert old["audio"]["clips"] == [{"id": "a1", "asset": "input", "lane": 0, "start": 1.5, "in": 2.0, "length": 7.25, "volume": 1.0, "fade_in": 0.0, "fade_out": 0.0}]
     assert core.audio_seam_params(core.normalize_project({"settings": {"audio_xfade_sec": 5}})) == {"xfade": 1.0, "match": True, "declick": True}
     assert core.audio_seam_params(core.normalize_project({"settings": {"audio_xfade": False}}))["xfade"] == 0.0
+
+
+def test_assist_methods_defined(h3s):
+    """Every this.method() used inside h3s_assist.js must exist on the editor: a missing one
+    failed with a silent TypeError on every settings change (model pick, API fields, pills)."""
+    import re
+    src = pathlib.Path(JS, "h3s_assist.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"this\.(\w+)\(", src)) - {"constructor"}
+    defined = set(_proto_methods())
+    missing = sorted(m for m in used if m not in defined and not m.startswith("$"))
+    assert not missing, "h3s_assist.js calls editor methods that do not exist: " + ", ".join(missing)
+
+
+def test_upscale_gen_normalization(h3s):
+    """«Настройки → Апскейл» → «Модель доработки»: normalization, the custom model + LoRA extractor, global settings."""
+    core = h3s.h3s_core
+    assert core.upscale_gen({}) is None
+    assert core.upscale_gen({"upscale_gen": {"mode": "project", "model": "x"}}) is None
+    assert core.upscale_gen({"upscale_gen": {"mode": "custom", "model": ""}}) is None
+    p = core.normalize_project({"settings": {"upscale_gen": {"mode": "custom", "model": "m.safetensors",
+                                                             "lora": "l.safetensors", "lora_strength": 99}}})
+    assert p["settings"]["upscale_gen"] == {"mode": "custom", "model": "m.safetensors",
+                                            "loras": [{"file": "l.safetensors", "on": True, "sm": 10.0, "sc": 10.0}]}
+    assert core.upscale_gen(p["settings"]) == {"model": "m.safetensors", "loras": [{"file": "l.safetensors", "on": True, "sm": 10.0, "sc": 10.0}]}
+    g = core.global_settings({"upscale_gen": {"mode": "custom", "model": "m", "lora_strength": 0.75}})
+    assert g["upscale_gen"] == {"mode": "custom", "model": "m", "loras": []}
+    assert "upscale_gen" in core.GLOBAL_KEYS
+    # the learned upscaler model choice: a file name or "", global settings carry it
+    assert core.normalize_project({})["settings"]["upscale_model"] == ""
+    assert core.normalize_project({"settings": {"upscale_model": 7}})["settings"]["upscale_model"] == "7"
+    assert "upscale_model" in core.GLOBAL_KEYS
+    assert core.global_settings({"upscale_model": "m.safetensors"})["upscale_model"] == "m.safetensors"
+    # several LoRAs with their own strengths (a legacy string takes the legacy strength)
+    q = core.normalize_project({"settings": {"upscale_gen": {"mode": "custom", "model": "m", "lora": "old.safetensors"}}})
+    assert q["settings"]["upscale_gen"]["loras"] == [{"file": "old.safetensors", "on": True, "sm": 1.0, "sc": 1.0}]
+    q2 = core.normalize_project({"settings": {"upscale_gen": {"mode": "custom", "model": "m",
+                                                              "loras": ["a", {"file": "b.safetensors", "sm": 0.8}, 5, ""]}}})
+    assert q2["settings"]["upscale_gen"]["loras"] == [{"file": "a", "on": True, "sm": 1.0, "sc": 1.0},
+                                                      {"file": "b.safetensors", "on": True, "sm": 0.8, "sc": 1.0},
+                                                      {"file": "5", "on": True, "sm": 1.0, "sc": 1.0}]
+    assert core.upscale_gen(q2["settings"])["loras"][1] == {"file": "b.safetensors", "on": True, "sm": 0.8, "sc": 1.0}
+
+
+def test_custom_sigmas(h3s):
+    """«custom SIGMAS»: parse, pass_params (main / stage / clip override), the upscale profile's list wins."""
+    core = h3s.h3s_core
+    assert core.parse_sigmas("1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0") == \
+        [1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0]
+    assert core.parse_sigmas("1 0.5 0") == [1.0, 0.5, 0.0]
+    assert core.parse_sigmas("") is None and core.parse_sigmas("abc") is None and core.parse_sigmas("1") is None
+    p = core.normalize_project({"settings": {"scheduler": "custom", "sigmas": "1, 0.5, 0"}, "segments": [{"frames": 124}]})
+    pp = core.pass_params(p, 0)
+    assert pp["scheduler"] == "custom" and pp["sigmas"] == [1.0, 0.5, 0.0] and pp["steps"] == 2
+    p2 = core.normalize_project({"settings": {"final_mode": "refine", "refine_scheduler": "custom", "refine_sigmas": "1,0.8,0.6,0"},
+                                 "segments": [{"frames": 124}]})
+    assert core.pass_params(p2, 0, "refine")["sigmas"] == [1.0, 0.8, 0.6, 0.0]
+    assert "sigmas" not in core.pass_params(p2, 0, "draft")   # the draft scheduler is not custom
+    p3 = core.normalize_project({"settings": {"final_mode": "refine", "refine_scheduler": "custom", "refine_sigmas": "1,0.8,0.6,0"},
+                                 "segments": [{"frames": 124, "overrides": {"scheduler": "custom", "sigmas": "1,0.9,0.8,0"}}]})
+    assert core.pass_params(p3, 0, "refine")["sigmas"] == [1.0, 0.9, 0.8, 0.0]   # a clip override wins
+    p4 = core.normalize_project({"settings": {"final_mode": "refine", "refine_scheduler": "custom", "refine_sigmas": "1,0.8,0.6,0",
+                                              "upscale_profiles": {"latent": {"scheduler": "custom", "sigmas": "1,0.9,0.7,0.5,0"}}},
+                                 "segments": [{"frames": 124, "upscale": {"method": "latent"}}]})
+    up = core.upscale_pass_params(p4, 0, "latent")
+    assert up["sigmas"] == [1.0, 0.9, 0.7, 0.5, 0.0] and up["steps"] == 4   # the profile's list wins over the refine stage
+    assert "sigmas" in core.GLOBAL_KEYS
+
+
+def test_assistant_llm(h3s):
+    """«✨ Ассистент»: API-only project normalization and prompt-mode presets."""
+    core = h3s.h3s_core
+    a = core.normalize_assistant({"chats": [{"id": "c1", "created": "1700000000",
+                                             "msgs": [{"role": "user", "text": "x"}, {"role": "bot", "text": "no"}, 5]}],
+                                  "active": "zz", "cfg": {"temperature": 9, "max_tokens": 1, "sys": "s" * 9000}})
+    assert a["chats"][0]["msgs"] == [{"role": "user", "text": "x"}]
+    assert a["active"] == ""
+    draft = core.normalize_assistant({"chats": [{"id": "draft", "created": 1, "msgs": []}], "active": "draft"})
+    assert draft["active"] == "draft" and draft["chats"] == [{"id": "draft", "title": "", "created": 1, "msgs": []}]
+    draft["chats"][0]["msgs"].extend([{"role": "user", "text": "Первое сообщение"}, {"role": "assistant", "text": ""}])
+    assert core.normalize_assistant(draft)["chats"][0]["msgs"] == draft["chats"][0]["msgs"]
+    assert a["cfg"]["temperature"] == 2.0 and a["cfg"]["max_tokens"] == 16
+    assert a["cfg"]["sys"] == "s" * 8000 and a["cfg"]["ctx_refs"] is True
+    assert "provider" not in a["cfg"] and "model" not in a["cfg"] and "n_ctx" not in a["cfg"]
+    assert core.normalize_assistant({}) == core.normalize_project({})["assistant"]
+    assert core.normalize_assistant({})["cfg"]["max_tokens"] == 16000
+    memory = core.normalize_assistant({"cfg": {"engine_defaults": True, "unload_on_generate": True}})["cfg"]
+    assert memory["engine_defaults"] is True and memory["unload_on_generate"] is True
+    thinking = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.05,
+                "presence_penalty": 0.0, "repetition_penalty": 1.0}
+    plain = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0,
+             "presence_penalty": 1.5, "repetition_penalty": 1.0}
+    defaults = core.normalize_assistant({})["cfg"]
+    assert defaults["thinking"] is True and defaults["sampling"] == {"thinking": thinking, "plain": plain}
+    assert defaults["show_reasoning"] is True and defaults["stream_timeout"] == 600
+    assert defaults["auto_unload"] is False and defaults["auto_unload_delay"] == 300
+    changed = {"thinking": {**thinking, "temperature": 1.15, "top_k": 35},
+               "plain": {**plain, "temperature": 0.45, "presence_penalty": 0.8}}
+    profiles = core.normalize_assistant({"cfg": {"thinking": False, "sampling": changed}})["cfg"]
+    assert profiles["sampling"] == changed
+    profiles = core.normalize_assistant({"cfg": {**profiles, "thinking": True}})["cfg"]
+    assert profiles["thinking"] is True and profiles["sampling"] == changed
+    reasoned = core.normalize_assistant({"chats": [{"id": "c1", "msgs": [{"role": "assistant", "text": "Ответ", "reasoning": "Сначала анализ",
+        "stats": {"prompt": 12, "completion": 8, "tps": 4.25, "elapsed": 1.88, "finish": "stop", "extra": "drop"}}]}],
+        "cfg": {"styles": ["cinema", "cinema", "realism"], "stream_timeout": 900, "unload_endpoint": "/free-llm",
+                "auto_unload": True, "auto_unload_delay": 45, "show_reasoning": False}})
+    assert reasoned["chats"][0]["msgs"][0]["reasoning"] == "Сначала анализ"
+    assert reasoned["chats"][0]["msgs"][0]["stats"] == {"prompt": 12, "completion": 8, "tps": 4.25, "elapsed": 1.88, "finish": "stop"}
+    assert reasoned["cfg"]["styles"] == ["cinema", "realism"] and reasoned["cfg"]["stream_timeout"] == 900
+    assert reasoned["cfg"]["unload_endpoint"] == "/free-llm" and reasoned["cfg"]["auto_unload_delay"] == 45
+    assert reasoned["cfg"]["auto_unload"] is True and reasoned["cfg"]["show_reasoning"] is False
+    pr = core.normalize_assistant({"presets": [{"name": "Кино", "cfg": {"mode": "lipsync", "api_base": "http://x/v1", "temperature": 3}}, {"name": "  "}, "bad"],
+                                   "preset": "nope"})
+    assert len(pr["presets"]) == 1 and pr["presets"][0]["cfg"]["mode"] == "lipsync" and pr["presets"][0]["cfg"]["temperature"] == 2.0
+    assert pr["presets"][0]["cfg"]["api_base"] == "http://x/v1" and pr["preset"] == ""
+
+
+def test_assistant_official_h3_rules_and_text_selection():
+    src = pathlib.Path(JS, "h3s_assist.js").read_text(encoding="utf-8")
+    for marker in ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music",
+                   "subject_definitions", "retention_analysis", "detailed_description",
+                   "with small/large amplitude", "at slow/fast speed", "(S1,S2)",
+                   "says in an off-screen voiceover", "<scenetrans>", "<cutoff>",
+                   "fully_preserved", "attribute_transfer", "fully_copy", "partially_copy",
+                   "<Audio N> is the voice-timbre reference for <Subject N> (Sx).",
+                   "For the target video, at 0.00 seconds into the target video",
+                   "How the reference pictures align with the target video"):
+        assert marker in src
+    assert ".h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text" in src
+
+
+@need_node
+def test_assistant_composer_keys_and_autogrow(tmp_path):
+    src = pathlib.Path(JS, "h3s_assist.js").read_text(encoding="utf-8")
+    assert ".h3z-ast-inputbox{display:flex;align-items:center;" in src
+    driver = tmp_path / "assistant_composer.mjs"
+    driver.write_text(textwrap.dedent(f"""
+        import {{ H3Editor }} from {json.dumps(pathlib.Path(JS, "h3s_editor.js").as_uri())};
+        import {{ installAssist }} from {json.dumps(pathlib.Path(JS, "h3s_assist.js").as_uri())};
+        installAssist(H3Editor, {{ C: {{}}, h: () => null, ICON: {{}} }});
+        const ed = Object.create(H3Editor.prototype);
+        ed.root = {{}}; ed._ast = {{}};
+        let sent = 0; ed.astSend = () => sent++;
+        const event = (shiftKey = false, isComposing = false) => ({{
+          key: "Enter", shiftKey, isComposing, prevented: false,
+          target: {{ tagName: "TEXTAREA", matches: (s) => s === ".h3z-ast-inputbox textarea", classList: {{ contains: () => false }} }},
+          stopPropagation() {{}}, preventDefault() {{ this.prevented = true; }}
+        }});
+        const enter = event(); ed.onKey(enter);
+        const shift = event(true); ed.onKey(shift);
+        const composing = event(false, true); ed.onKey(composing);
+        const ta = {{ style: {{}} }}; let scrollHeight = 180;
+        Object.defineProperty(ta, "scrollHeight", {{ get: () => scrollHeight }});
+        ed.astAutoGrow(ta); const large = {{ ...ta.style }};
+        scrollHeight = 36; ed.astAutoGrow(ta); const small = {{ ...ta.style }};
+        const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
+        installAssist(H3Editor, {{ C, h: () => null, ICON: {{}} }});
+        const crud = Object.create(H3Editor.prototype);
+        crud.p = C.normalizeProject({{}}); crud._ast = {{ styleDraft: null }};
+        crud.flushSave = () => {{}}; crud.renderAssistSettings = () => {{}}; crud.astPaintComposer = () => {{}}; crud.toast = () => {{}};
+        globalThis.confirm = () => true;
+        crud.astEditStyle();
+        Object.assign(crud._ast.styleDraft, {{ name: "Test style", description: "Desc", instructions: "First rule\\nSecond rule", priority: 80 }});
+        crud.astSaveStyle();
+        const created = crud.p.assistant.style_defs.find((s) => s.name === "Test style");
+        crud.astEditStyle(created.id); crud._ast.styleDraft.name = "Edited custom"; crud.astSaveStyle();
+        const edited = crud.astStyles().find((s) => s.id === created.id);
+        crud.astDeleteStyle(created.id);
+        const customDeleted = !crud.astStyles().some((s) => s.id === created.id) && !crud.p.assistant.cfg.styles.includes(created.id);
+        const builtin = crud.astStyles()[0], originalName = builtin.name;
+        crud.astEditStyle(builtin.id); crud._ast.styleDraft.name = "Edited builtin"; crud.astSaveStyle();
+        const builtinEdited = crud.astStyles().find((s) => s.id === builtin.id).name === "Edited builtin";
+        crud.astDeleteStyle(builtin.id);
+        const builtinDeleted = !crud.astStyles().some((s) => s.id === builtin.id);
+        crud.astResetStyles();
+        const restored = crud.astStyles().find((s) => s.id === builtin.id)?.name === originalName;
+        console.log(JSON.stringify({{ sent, enter: enter.prevented, shift: shift.prevented, composing: composing.prevented, large, small,
+          created: !!created && created.instructions.length === 2, edited: edited?.name === "Edited custom", customDeleted, builtinEdited, builtinDeleted, restored }}));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["sent"] == 1 and out["enter"] is True
+    assert out["shift"] is False and out["composing"] is False
+    assert out["large"] == {"height": "150px", "minHeight": "38px", "overflowY": "auto"}
+    assert out["small"] == {"height": "38px", "minHeight": "38px", "overflowY": "hidden"}
+    assert all(out[key] for key in ("created", "edited", "customDeleted", "builtinEdited", "builtinDeleted", "restored"))
+
+
+@need_node
+def test_upscale_gen_ui_sig(tmp_path):
+    """The UI change signature of an upscale carries the custom refine model / LoRA (a changed setting marks
+    upscaled clips stale); «Как в проект» keeps the old signatures (the cache stays valid)."""
+    js = tmp_path / "ug.mjs"
+    js.write_text(textwrap.dedent(f"""
+        const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
+        const mk = (ug, upm) => C.normalizeProject({{ settings: {{ megapixels: 1, ...(ug ? {{ upscale_gen: ug }} : {{}}), ...(upm ? {{ upscale_model: upm }} : {{}}) }},
+                                               segments: [{{ frames: 124, upscale: {{ method: "latent" }} }}] }});
+        const sig = (p) => C.upscaleSigList(C.limitedProject(p), C.baseSigs(p), C.runKind(p.settings))[0];
+        const a = mk(null), b = mk({{ mode: "custom", model: "m.safetensors", lora: "", lora_strength: 1 }}),
+              c = mk({{ mode: "custom", model: "m.safetensors", lora: "l.safetensors", lora_strength: 0.8 }}), d = mk(null),
+              e = mk(null, "u.safetensors");
+        console.log(JSON.stringify({{ eq: sig(a) === sig(d), ne1: sig(a) !== sig(b), ne2: sig(b) !== sig(c), ne3: sig(a) !== sig(e),
+                                     gen: [C.upscaleGen(a.settings), C.upscaleGen(b.settings)] }}));
+    """))
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["eq"] and o["ne1"] and o["ne2"] and o["ne3"]
+    assert o["gen"] == [None, {"model": "m.safetensors", "loras": []}]
 
 
 @need_node
@@ -366,10 +688,56 @@ def test_fill_trailing_area_moves_the_end_marker(tmp_path):
             assert o["end"] > o["last"] and o["toasts"] == 1, o            # longer than one clip: max piece, click again
 
 
+@need_node
+def test_workspace_audio_lanes_and_flexible_video_track(tmp_path):
+    """Optional lane 2 keeps visible-row drag/drop mapping and existing clips; video shrinks before overflow."""
+    js = tmp_path / "workspace.mjs"
+    js.write_text(textwrap.dedent(f"""
+        const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
+        const {{ H3Editor }} = await import({json.dumps(pathlib.Path(JS, "h3s_editor.js").as_uri())});
+        const e = Object.create(H3Editor.prototype);
+        e.p = C.normalizeProject({{ audio: {{ clips: [] }}, segments: [{{ frames: 124 }}] }});
+        e.audioLane2 = false;
+        const hidden = {{ lanes: e.audioLanes(), musicRow: e.audioRow(2), drops: [0, 38, 80].map((y) => e.audioLaneAt(y)) }};
+        e.audioLane2 = true;
+        const visible = {{ lanes: e.audioLanes(), rows: [0, 1, 2].map((l) => e.audioRow(l)), drops: [0, 38, 80].map((y) => e.audioLaneAt(y)) }};
+        e.audioLane2 = false;
+        e.p.audio.clips.push({{ id: "lane2", asset: "input", lane: 1, start: 0, in: 0, length: 1, volume: 1, fade_in: 0, fade_out: 0 }});
+        const occupied = e.audioLanes();
+        const metrics = [];
+        for (const height of [230, 120]) {{
+          const props = {{}};
+          e.$ = {{ tscroll: {{ clientHeight: height }}, tl: {{ style: {{ setProperty: (k, v) => props[k] = v }}, classList: {{ toggle() {{}} }} }} }};
+          e.syncTimelineMetrics();
+          metrics.push({{ height, video: e.timelineVideoHeight, props }});
+        }}
+        console.log(JSON.stringify({{ hidden, visible, occupied, metrics }}));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["hidden"] == {"lanes": [0, 2], "musicRow": 1, "drops": [0, 2, 2]}
+    assert o["visible"] == {"lanes": [0, 1, 2], "rows": [0, 1, 2], "drops": [0, 1, 2]}
+    assert o["occupied"] == [0, 1, 2]
+    assert o["metrics"][0]["video"] == 68 and o["metrics"][0]["props"]["--audio-h"] == "110px"
+    assert o["metrics"][1]["video"] == 64 and o["metrics"][1]["props"]["--timeline-min"] == "226px"
+
+
+def test_workspace_layout_and_gallery_wiring():
+    editor = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
+    style = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
+    gallery = pathlib.Path(JS, "h3s_gallery.js").read_text(encoding="utf-8")
+    assert 'class: "h3z-head-main"' in editor and 'class: "h3z-head-meta"' in editor
+    assert 'togglePanel(side)' in editor and 'this.$.left.hidden = L.lc' in editor and 'this.$.insp.hidden = L.rc' in editor
+    assert 'class: "h3z-heads-inner"' in editor and 'translateY(${-$.tscroll.scrollTop}px)' in editor
+    assert 'grid-template-rows:auto var(--h3z-gap)' in style and '--video-h' in style and '--timeline-min' in style
+    assert 'class: "gtype"' in gallery and 'T("Стопка · {0} видео"' in gallery and 'T("Видео · {0}"' in gallery
+
+
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
-I18N_SKIP = {"h3s_i18n.js", "h3s_i18n_en.js", "h3s_help_ru.js"}   # the dictionary and the Russian help text (the sources)
+I18N_SKIP = {"h3s_i18n.js", "h3s_i18n_en.js", "h3s_help_ru.js", "h3s_prompt_library.js"}   # dictionaries and source-language content
 I18N_ALLOW = {"H3ZeroStudio · Таймлайн", "максимум"}              # matched against Russian text on purpose
 
 

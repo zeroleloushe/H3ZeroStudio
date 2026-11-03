@@ -41,23 +41,26 @@ export function installDyn(Editor, { h }) {
       const last = y.step ? y.sigmas[y.step - 1] : null;
       $.dynInfo.textContent = [last != null ? `σ ${last.toFixed(3)}` : "", y.delta[y.step - 1] != null ? `Δ ${y.delta[y.step - 1].toFixed(4)}` : "", avg != null ? T("{0} с/шаг", (avg / 1000).toFixed(2)) : ""].filter(Boolean).join(" · ");
       if (this.dynOpen === false) return;
+      const style = getComputedStyle($.dyn), ink = style.getPropertyValue("--txt").trim() || "#e5e7ff";
+      const accent = style.getPropertyValue("--a1").trim() || "#8b5cf6", cyan = style.getPropertyValue("--a2").trim() || "#22d3ee";
+      const orange = style.getPropertyValue("--warn").trim() || "#fb923c", grid = style.getPropertyValue("--line2").trim() || "rgba(148,163,255,.10)";
       const n = Math.max(y.steps || 0, y.sigmas.length - 1, y.ms.length, 1);
-      chart($.dynSig, n, [{ v: y.sigmas.slice(0, n + 1), color: "#e5e7ff", dots: true, x0: 0 }, { v: y.delta, color: "#fb923c", x0: 1 }], y.step);
-      chart($.dynMs, n, [{ v: y.ms, color: "#22d3ee", bars: true, x0: 1 }], y.step);
+      chart($.dynSig, n, [{ v: y.sigmas.slice(0, n + 1), color: ink, dots: true, x0: 0 }, { v: y.delta, color: orange, x0: 1 }], y.step, grid, accent);
+      chart($.dynMs, n, [{ v: y.ms, color: cyan, bars: true, x0: 1 }], y.step, grid, accent);
     },
   });
 }
 
-function chart(cv, n, series, step) {
+function chart(cv, n, series, step, grid, accent) {
   const W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   if (cv.width !== Math.round(W * dpr)) cv.width = Math.round(W * dpr);
   if (cv.height !== Math.round(H * dpr)) cv.height = Math.round(H * dpr);
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   const pad = 6, xs = (i) => pad + (W - 2 * pad) * (n ? i / n : 0);
-  g.strokeStyle = "rgba(148,163,255,.10)"; g.lineWidth = 1;
+  g.strokeStyle = grid; g.lineWidth = 1;
   for (let i = 0; i <= n; i++) { const x = Math.round(xs(i)) + 0.5; g.beginPath(); g.moveTo(x, pad); g.lineTo(x, H - pad); g.stroke(); }
-  if (step) { g.fillStyle = "rgba(139,92,246,.12)"; g.fillRect(xs(step - 1), 0, xs(step) - xs(step - 1), H); }
+  if (step) { g.fillStyle = accent; g.globalAlpha = .12; g.fillRect(xs(step - 1), 0, xs(step) - xs(step - 1), H); g.globalAlpha = 1; }
   for (const s of series) {
     const pts = s.v.map((v, i) => [i + (s.x0 || 0), v]).filter((p) => p[1] != null && isFinite(p[1]));
     if (!pts.length) continue;

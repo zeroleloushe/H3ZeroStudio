@@ -109,12 +109,21 @@ def effective_input(method):
     return None
 
 
-def env_tag(method):
-    """Part of the cache key: a fallback result must not be served once the preferred tool is installed."""
+def env_tag(method, model=None):
+    """Part of the cache key: a fallback result must not be served once the preferred tool is installed.
+    model: the picked learned upscaler (settings.upscale_model); "" / missing / absent file = the first found."""
     eff = effective_input(method)
     if eff == "learned":
-        return "learned:" + learned_models()[0]
+        return "learned:" + picked_learned_model(model)
     return eff or "none"
+
+
+def picked_learned_model(name=None):
+    """The learned upscaler file that will really run: the picked one when present, else the first found."""
+    models = learned_models()
+    if name and name in models:
+        return name
+    return models[0] if models else ""
 
 
 # ---------------------------------------------------------------- VRAM handoff
@@ -244,13 +253,15 @@ def _pieces_upscale(once, v, w, h, nt, ns):
 LEARNED_RETRIES = ((1, 1), (2, 1), (4, 1), (2, 2), (4, 3))
 
 
-def learned_upscale(v, w, h):
+def learned_upscale(v, w, h, model=None):
     """Video latent -> w x h canvas with the learned upscaler node; None when unavailable / failed.
+    model: which file from models/latent_upscale_models (settings.upscale_model); None / missing = the first found.
     Out of VRAM: free memory and retry with more temporal pieces, then spatial tiles (overlap + linear blend);
     only when the whole ladder fails -> None (the caller falls back)."""
     cls, models = learned_node(), learned_models()
     if cls is None or not models:
         return None
+    name = model if model in models else models[0]
     try:
         fn = getattr(cls, "execute", None) or getattr(cls(), getattr(cls, "FUNCTION", "execute"))
     except Exception as e:
@@ -258,7 +269,7 @@ def learned_upscale(v, w, h):
         return None
 
     def once(x, ww, hh):
-        kw = {"latent": {"samples": x.float()}, "model_name": models[0],
+        kw = {"latent": {"samples": x.float()}, "model_name": name,
               "mode": {"mode": "target dimensions", "width": int(ww), "height": int(hh)}, "align": 32,
               "enable_temporal_chunking": True, "force_unload": True,
               "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -294,7 +305,7 @@ def learned_upscale(v, w, h):
         if tuple(z.shape[-2:]) != (h // 16, w // 16) or z.shape[2] != v.shape[2]:
             log(f"  learned upscaler returned {tuple(z.shape)}, expected {w}x{h} -> fallback")
             return None
-        log(f"  learned latent upscaler ({models[0]}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}"
+        log(f"  learned latent upscaler ({name}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}"
             + (f" in {nt} temporal piece(s)" + (f" x {ns}x{ns} tiles" if ns > 1 else "") if k else ""))
         return z
     return None
@@ -345,10 +356,11 @@ def rtx_frames(frames, w, h, quality="ULTRA"):
         return None
 
 
-def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA"):
+def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA", model=None):
     """Upscaled start latent: the learned H3 latent upscaler (default) or RTX VSR -> VAE encode ("rtx"), each
     falling back to the other. Neither available -> UpscaleUnavailable with a clear message (no silent
-    nearest-exact / Lanczos result). Returns (latent [1,24,T,h/16,w/16] CPU, used input)."""
+    nearest-exact / Lanczos result). model: which learned upscaler file (settings.upscale_model, "" = the first).
+    Returns (latent [1,24,T,h/16,w/16] CPU, used input)."""
     from .h3s_gen import decode_video, _resize
     if tuple(v.shape[-2:]) == (h // 16, w // 16):
         return v.float().cpu(), "none"
@@ -366,7 +378,7 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA"):
     try:
         for m in order:
             if m == "learned":
-                z = learned_upscale(v, w, h)
+                z = learned_upscale(v, w, h, model)
                 if z is not None:
                     return z, "learned"
             else:
@@ -774,7 +786,7 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
             p0 = 17 * (v0 // 5)
             fc = frames[p0:p0 + frames_for_latent_t(v1 - v0)]
         t_in = time.perf_counter()
-        uv, used = upscale_input(vae, v[:, :, v0:v1], W, H, want, fc, up.get("quality", "ULTRA"))
+        uv, used = upscale_input(vae, v[:, :, v0:v1], W, H, want, fc, up.get("quality", "ULTRA"), s.get("upscale_model") or None)
         used_all.add(used)
         log(f"{tag} upscale input done in {time.perf_counter() - t_in:.1f}s ({used})")
         if models is not None:
@@ -823,7 +835,10 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
         ac = a[..., a0:a1].float()
         samples = comfy.nested_tensor.NestedTensor((uv.to(dev), ac.to(dev)))
         noise = comfy.sample.prepare_noise(samples, p["seed"] + ci)
-        if sigmas is None:
+        gen.check_custom_sigmas(p)
+        if p.get("sigmas") is not None:   # the profile's «custom SIGMAS» win over the σ-based refine schedule
+            sigmas = torch.tensor(p["sigmas"], dtype=torch.float32)
+        elif sigmas is None:
             sigmas = gen.refine_sigmas(m, p["steps"], p["scheduler"], up["sigma"])
         if hasattr(preview_cb, "set_sigmas"):
             preview_cb.audio_scale = gen.sampler_audio_scale(m) or 1.0

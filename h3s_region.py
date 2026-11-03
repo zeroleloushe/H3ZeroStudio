@@ -167,7 +167,8 @@ def sample_region(model, clip, vae, proj, region, win, src_v, src_a, kind, ref_i
     m.set_model_unet_function_wrapper(gen.LockWrapper(video.clone().float(), keep_v.clone(), None, None, probe=int((keep_a > 0.5).sum())))
     samples = comfy.nested_tensor.NestedTensor((video, audio))
     noise = comfy.sample.prepare_noise(samples, p["seed"])
-    sigmas = gen.refine_sigmas(m, p["steps"], p["scheduler"], p["sigma0"]) if refine is not None else None
+    gen.check_custom_sigmas(p)
+    sigmas = gen.pass_sigmas(m, p, refine is not None)
     fresh = refine is None   # pure-noise pass: wired SIGMAS apply (a wired SAMPLER applies to every pass)
     if hasattr(preview_cb, "set_sigmas"):
         preview_cb.audio_scale = gen.sampler_audio_scale(m) or 1.0

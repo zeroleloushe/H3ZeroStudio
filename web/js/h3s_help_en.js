@@ -11,7 +11,7 @@ export const HELP_EN = [
 <ol><li>Add the <b>“H3ZeroStudio · Timeline”</b> node (category <code>MiniMax H3/H3ZeroStudio</code>).</li>
 <li>Connect the <code>model</code> (H3, turbo LoRA optional), <code>clip</code> and <code>vae</code> inputs, and <code>audio_vae</code> for sound. Without <code>audio_vae</code> only video is generated. The <code>audio</code> input is optional: you can also upload your own sound as an asset.</li>
 <li>Click <b>“Expand”</b> on the node (or double-click it): the editor opens full-window.</li>
-<li>In the segment card on the right, write the <b>segment prompt</b>. In the “Video” card below it, write the <b>global prompt</b> (style, characters, world).</li>
+<li>In the segment card on the right, write the <b>segment prompt</b> (action, camera, sound).</li>
 <li>In the “Assets” tab on the left, drop in pictures of characters and locations, then drag them onto a clip or into the card's “References”.</li>
 <li>Click <b>“Generate”</b> (${K("Ctrl+Enter")}). The run joins the ComfyUI queue; progress shows in the header and on the clip.</li>
 <li>Add the next segment (${K("E")} or “+ Segment”): by default it <b>continues</b> the previous one. “Generate” again: the finished first segment comes from the cache.</li>
@@ -28,7 +28,7 @@ export const HELP_EN = [
 <li>While generating, the buttons are replaced by a <b>progress bar</b> with status and a <b>“Stop”</b> button.</li></ul>`],
   ["left", "Left tabs", `
 <ul><li><b>Assets</b>: your files — pictures (characters, locations, other), audio and video. Upload by dropping, with the button or ${K("Ctrl+V")} (picture from the clipboard). Double-click opens the asset editor, right-click opens the menu.</li>
-<li><b>Gallery</b>: every generation result; versions of one video are grouped into stacks.</li>
+<li><b>Gallery</b>: every generation result; versions of one video are grouped into folders.</li>
 <li><b>Projects</b>: saved projects, new project, zip import and export.</li>
 <li><b>Settings</b>: rarely changed parameters — stages, sampling, upscale, sound, cache, preview, models, interface language.</li>
 <li><b>Keys</b>: keyboard shortcuts.</li>
@@ -39,12 +39,11 @@ export const HELP_EN = [
 <ul><li><b>Segment card</b>:
 <ul><li>name and color;</li>
 <li>link to the previous one (“Continuation” / “New scene”);</li>
-<li>duration (H3 grid of 17k+5 frames);</li>
-<li>segment prompt, references;</li>
-<li>“Final prompt”: what actually goes to the model;</li>
-<li>“Segment overrides”: seed, steps, cfg and more for this segment only;</li>
-<li>takes and action buttons.</li></ul></li>
-<li><b>Video</b>: global prompt, negative (works with cfg &gt; 1), resolution (aspect ratio + megapixels, or your own W×H in multiples of 32), seed. The summary line at the bottom opens “Settings”.</li>
+<li>duration (H3 grid of 17k+5 frames), resolution and seed;</li>
+<li>segment prompt, references, characters;</li>
+<li>takes, “Segment upscale” and action buttons;</li>
+<li>“Additional settings” (at the bottom): the clip's model preset, “Segment overrides” (seed, steps, cfg…).</li></ul></li>
+<li><b>Video</b>: negative (shown when cfg &gt; 1) and “Additional settings” (at the bottom): project model presets and the summary line that opens “Settings”.</li>
 <li>When a marker or an audio clip is selected, its card appears at the top.</li></ul>`],
   ["timeline", "Timeline and tracks", `
 <ul><li><b>Video</b>: segment clips. Drag to reorder, drag the right edge to change length (in H3 grid steps). The seam between two clips can be dragged: one gets longer, its neighbour shorter; with ${K("Shift")} all following clips move.</li>
@@ -67,11 +66,9 @@ export const HELP_EN = [
 <li><b>Fixed</b>: the marker stays where it is. If you delete or shorten clips, an empty area remains before it (“Extend” fills it).</li>
 <li>Type the length into “Video length … s” or drag the flag (${K("Shift")} snaps to seconds).</li></ul></li></ul>`],
   ["prompts", "Segments and prompts", `
-<ul><li>The <b>global prompt</b> (“Video” card) is placed at the start of <i>every</i> segment's prompt. Put style, characters and world there.</li>
-<li>The <b>segment prompt</b> is what happens in this piece: action, camera, lines.</li>
-<li>“Final prompt” in the segment card shows the combined text with <code>&lt;Picture N&gt;</code> numbers, the continuation phrase and marker events.</li>
+<ul><li>The <b>segment prompt</b> is what happens in this piece: action, camera, lines. The project's global prompt (if set) is placed at the start of <i>every</i> segment's prompt.</li>
 <li>Keep segments within H3's training range: 5–15 s (124–362 frames). Split a long scene into several continuations.</li>
-<li>“Segment overrides” change seed, steps, cfg and more for one segment only.</li></ul>`],
+<li>“Segment overrides” (the “Additional settings” shutter at the bottom of the card) change seed, steps, cfg and more for one segment only.</li></ul>`],
   ["presets", "📦 Model presets and LoRA", `
 <ul><li>A preset = base model (diffusion model + dtype, or a checkpoint), text encoder, video VAE, audio VAE and an ordered LoRA list (on/off, model and encoder strength). The library is shared by all projects. Everything is in the <b>“Models”</b> tab on the left (next to “Projects”): the preset bar on top (project preset, the one being edited, new / save as / duplicate / delete / export / import / refresh lists), the LoRA stack on the left, base model, encoder and VAE on the right.</li>
 <li><b>LoRA stack.</b> “＋ Add LoRA” opens a picker with search and the models/loras folders (folders with file counts and ›, “All” and the path on top; searching all folders shows each file's folder; ↑↓ Enter, Esc). Each row: name (click to change), strength with ▲▼ (mouse wheel in the field steps 0.05), ⓘ for the path and a separate encoder strength, an on/off switch (a disabled LoRA stays listed and is not in the cache key), ✕ to remove, ⋮⋮ to drag. The master switch on top toggles all, next to “N / M on”.</li>
@@ -89,10 +86,10 @@ export const HELP_EN = [
 <li><b>VRAM reserve.</b> “Settings” → “⚙ Generation” → “Components and VRAM” → “VRAM reserve during generation”: how much video memory ComfyUI keeps free while generating (the standard <code>--reserve-vram</code>; a larger reserve set at launch is never lowered). If steps suddenly run several times slower with a browser open or screen recording, raise it to 2–3 GB.</li>
 </ul>`],
   ["prompted", "✎ Prompt editor", `
-<ul><li>Every prompt field has an <b>✎ Edit</b> button: segment prompt, global prompt, negative, ✂ span prompt, marker event, the continuation phrase in “Settings”. It opens a large editor window.</li>
+<ul><li>Every prompt field has an <b>✎ Edit</b> button: segment prompt, negative, ✂ span prompt, marker event, the continuation phrase in “Settings”. It opens a large editor window.</li>
 <li><b>@ links a reference.</b> Type ${"<code>@</code>"}: a list of this prompt's references with thumbnails appears (pictures ${"<code>&lt;Picture N&gt;</code>"}, video ${"<code>&lt;Video N&gt;</code>"}, audio ${"<code>&lt;Audio N&gt;</code>"}, the continuation frame). Keep typing part of a name or number to filter; ↑/↓ and Enter or Tab insert the tag. The same references sit above the text as chips: click to insert the tag at the cursor.</li>
-<li>Tags are highlighted. A <span style="color:var(--err)">red wave</span> means no such reference (or ${"<code>&lt;Image N&gt;</code>"} was written; H3 expects ${"<code>&lt;Picture N&gt;</code>"}). Yellow means the tag is missing in some segments (for the global prompt) or exceeds H3's limit.</li>
-<li>For the global prompt and the negative the list covers all segments: ${"<code>&lt;Picture 1&gt;</code>"} differs per segment, and you can see who it is in which segment.</li>
+<li>Tags are highlighted. A <span style="color:var(--err)">red wave</span> means no such reference (or ${"<code>&lt;Image N&gt;</code>"} was written; H3 expects ${"<code>&lt;Picture N&gt;</code>"}). Yellow means the tag exceeds H3's limit.</li>
+<li>For the negative the list covers all segments: ${"<code>&lt;Picture 1&gt;</code>"} differs per segment, and you can see who it is in which segment.</li>
 <li><b>Editing:</b> undo/redo (${K("Ctrl")}+${K("Z")} / ${K("Ctrl")}+${K("Y")}, text only, not the project), find ${K("Ctrl")}+${K("F")}, replace ${K("Ctrl")}+${K("H")}, word wrap, line numbers, monospace font, font size (${K("Ctrl")}+${K("=")} / ${K("Ctrl")}+${K("−")}), auto-indent, multiple cursors (${K("Alt")}+click), copy / paste / clear. At the bottom: words, characters, approximate tokens and cursor position.</li>
 <li>${K("Ctrl")}+${K("Enter")} applies, ${K("Esc")} cancels (asks if the text changed). Applying is one studio undo step.</li>
 <li><b>H3 structure</b> (right-hand panel): recommended sections ${"<code>subject_definitions</code>"} (who is who), ${"<code>summary</code>"} ([task type] + a paragraph), ${"<code>retention_analysis</code>"} (what to keep: fully_preserved…), ${"<code>detailed_description</code>"} (frame-by-frame description, 350–500 words), ${"<code>overall_soundscape</code>"} (ambient sound), ${"<code>non_diegetic_music</code>"} (score, or N/A). Each has a hint, a status and quick inserts; the description has a live word count. “⊕ Insert template” inserts the skeleton (reference tags fill in automatically, existing text moves to detailed_description); “⇣ Tags → subject_definitions” adds lines for new references.</li></ul>`],
@@ -206,10 +203,10 @@ export const HELP_EN = [
   ["gallery", "Gallery", `
 <ul><li>All results: takes, drafts, finals, upscales, locked segments and assembled videos — of <b>this project</b> or <b>all projects</b>.</li>
 <li>Search by prompt, name and seed, filters by type (including “✂ Spans”) and ★ favorites. Cards have a fixed size; if they don't fit, the list scrolls, and the scroll position survives refreshes.</li>
-<li><b>Stacks.</b> Versions of one video are grouped into one card: draft, final ↑, upscales with different methods and sizes, redone takes and regenerated spans of a segment; the project's assembled videos form one stack too. The cover shows the most finished version (upscale → final → take → span → draft; the newest among equals), a “▣ N” badge and stage chips. Click to open a stack like a folder: all versions with captions (stage, method, resolution and MP, seed, date); “← Gallery” goes back. Versions are linked by segment and origin (upscale → its final → its draft); older files without this data are linked by project takes and segment number, otherwise the card stays separate. The “☰ List” switch shows everything without stacks.</li>
-<li>Double-click to watch. ${K("Ctrl")}+click two cards → “⇄ Compare selected”: A/B side by side with synced playback and a choice of sound. The selection survives moving between stacks, so you can compare versions from different stacks. If side A or B belongs to a stack, a list under it switches to another version of that stack without closing the comparison.</li>
+<li><b>Folders.</b> Versions of one video are grouped into one card: draft, final ↑, upscales with different methods and sizes, redone takes and regenerated spans of a segment; the project's assembled videos form one folder too. The cover shows the most finished version (upscale → final → take → span → draft; the newest among equals), a “▣ N” badge and stage chips. Click to open it like a folder: all versions with captions (stage, method, resolution and MP, seed, date); “← Gallery” goes back. Versions are linked by segment and origin (upscale → its final → its draft); older files without this data are linked by project takes and segment number, otherwise the card stays separate. The “☰ List” switch shows everything without folders.</li>
+<li>Double-click to watch. ${K("Ctrl")}+click two cards → “⇄ Compare selected”: A/B side by side with synced playback and a choice of sound. The selection survives moving between folders, so you can compare versions from different folders. If side A or B belongs to a folder, a list under it switches to another version of that folder without closing the comparison.</li>
 <li><b>Zoom in A/B:</b> ${K("×1")} ${K("×2")} ${K("×4")} buttons (plus the mouse wheel at the cursor and double-click). The window doesn't grow — only the frame inside it is magnified. A and B zoom and pan together: drag to inspect a spot. ${K("▦")}: pixels without smoothing.</li>
-<li>Right-click a card: (on a stack) “▣ Open stack”, “⇄ Compare the two latest versions”; “▶ Watch”, “⇄ Compare with selected”, select the take on the timeline, “To timeline (footage)”, into the segment's references, “↑ Upscale segment”, “↑ Final from draft”, “💾 Save to folder…”, favorite, “Delete…”.</li></ul>`],
+<li>Right-click a card: (on a folder) “📁 Open folder”, “⇄ Compare the two latest versions”; “▶ Watch”, “⇄ Compare with selected”, select the take on the timeline, “To timeline (footage)”, into the segment's references, “↑ Upscale segment”, “↑ Final from draft”, “💾 Save to folder…”, favorite, “Delete…”.</li></ul>`],
   ["settings", "Settings: for all projects or per project", `
 <ul><li><b>For all projects</b>: changes are saved globally (<code>output/h3zerostudio/_settings.json</code>). Such projects pick them up every time they open; new projects work this way.</li>
 <li><b>This project only</b>: the project keeps its own settings. Projects from earlier versions open this way so their finished clips don't become “changed”. “Make global” writes the project's settings as the shared ones.</li>

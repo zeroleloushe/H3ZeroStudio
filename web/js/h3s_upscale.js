@@ -1,4 +1,5 @@
 import { T } from "./h3s_i18n.js";
+import { MT_CSS } from "./h3s_modeltab.js";
 // H3ZeroStudio: «Апскейл отрезка» — per-segment upscale + low-strength refine (backend: h3s_upscale.py).
 // The upscale is a segment field ({method, mp, sigma, quality}; mp = megapixels of the upscaled frame, older
 // projects stored a ×1.5/×2 multiplier — migrated to the mp with the same canvas); it is part of the take snapshot, so an upscaled
@@ -242,6 +243,12 @@ export function installUpscale(Editor, { C, h, ICON }) {
       });
       if (this.globScope()) this.globPut({ upscale_profiles: this.p.settings.upscale_profiles, seg_upscale: this.p.settings.seg_upscale });
     },
+    /** «Модель доработки» (settings.upscale_gen): the refine after the upscale runs on the project / clip presets
+     *  or on the user's own model + LoRA. A set-once setting (goes to the global settings on «Для всех проектов»). */
+    upSetGen(patch) {
+      const cur = { ...(this.p.settings.upscale_gen || {}) };
+      this.setOnce("upscale_gen", C.normalizeUpscaleGen({ ...cur, ...patch }));
+    },
     upscaleSection(g, set) {
       // every method has its own profile (C.normalizeUpscaleProfiles): the pills only select one, nothing is reset
       const m0 = (C.normalizeUpscale(g.seg_upscale) || this.upDefault()).method;
@@ -290,14 +297,89 @@ export function installUpscale(Editor, { C, h, ICON }) {
           .map((x) => h("option", { value: x, selected: x === pr.steps }, x ? T("{0} шаг.", x) : T("как «Этап 2» · {0} шаг.", st2.steps))));
       steps.onchange = () => put({ steps: Number(steps.value) });
       const opt = (k, list, base) => { const e = h("select", { class: "h3z-sel up-" + k }, ["", ...list.filter((x) => x !== pr[k])].concat(pr[k] ? [pr[k]] : []).map((x) => h("option", { value: x, selected: x === (pr[k] || "") }, x || T("как «Этап 2» · {0}", base)))); e.onchange = () => put({ [k]: e.value }); return e; };
-      const smp = opt("sampler", this.opts?.samplers || [], st2.sampler), sch = opt("scheduler", this.opts?.schedulers || [], st2.scheduler);
+      const smp = opt("sampler", this.opts?.samplers || [], st2.sampler);
+      const sch = this.schedSel(pr.scheduler || "", this.opts?.schedulers || [], (v) => put({ scheduler: v }),
+        { value: pr.sigmas || "", onch: (t) => put({ sigmas: t }) },
+        T("как «Этап 2» · {0}", st2.scheduler));
       const q = m0 === "rtx" ? h("select", { class: "h3z-sel up-quality", title: T("Качество RTX VSR") }, C.RTX_QUALITIES.map((x) => h("option", { value: x, selected: f.quality === x }, x))) : null;
       if (q) q.onchange = () => put({ quality: q.value });
+      // the refine's model + LoRA: the project / clip presets or the user's own (settings.upscale_gen)
+      const ug = g.upscale_gen, own = ug.mode === "custom";
+      if (!this._mp) this.mpLoad().then(() => { if (this.tool === "settings" && this._setTab === "up") this.renderLeft(); });
+      const files = this._mp?.files || {};
+      const ck = files.checkpoint || [], un = files.unet || [], loras = files.lora || [];
+      const hasModel = (n) => !n || ck.includes(n) || un.includes(n), hasLora = (n) => !n || loras.includes(n);
+      const mSel = h("select", { class: "h3z-sel" + (own && ug.model && !hasModel(ug.model) ? " miss" : ""),
+        title: T("Модель для доработки после апскейла: чекпойнт из checkpoints или диффузионная модель из diffusion_models") },
+        h("option", { value: "", selected: !ug.model }, T("— выберите модель —")),
+        h("optgroup", { label: T("чекпойнты") }, ck.map((f) => h("option", { value: f, selected: f === ug.model }, f))),
+        h("optgroup", { label: T("диффузионные модели") }, un.map((f) => h("option", { value: f, selected: f === ug.model }, f))),
+        own && ug.model && !hasModel(ug.model) ? h("option", { value: ug.model, selected: true }, T("⚠ нет файла: {0}", ug.model)) : null);
+      mSel.onchange = () => this.upSetGen({ model: mSel.value });
+      const lStem = (f) => String(f || "").split(/[\\/]/).pop().replace(/\.(safetensors|ckpt|pt|pth)$/i, "");
+      if (own && !document.getElementById("h3z-mt-style")) document.head.append(h("style", { id: "h3z-mt-style" }, MT_CSS));
+      this._ugInfo = this._ugInfo || new Set();
+      const loraRow = (l, n) => {
+        const row = h("div", { class: "h3z-lr" + (l.on === false ? " off" : " on") }, h("div"));   // grip column stays empty
+        const setL = (fn) => this.upSetGen({ loras: ug.loras.map((x, k) => (k === n ? fn(x) : x)) });
+        const miss = l.file && !hasLora(l.file);
+        const dir = String(l.file || "").split(/[\\/]/).slice(0, -1).join(" / ");
+        const nm = h("div", { class: "nm" + (miss ? " miss" : ""), title: l.file + (miss ? T("\n⚠ нет файла") : "") + T("\nКлик — выбрать другую LoRA"),
+          onclick: () => this.mpLoraPicker(nm, l.file, (nf) => setL((x) => ({ ...x, file: nf }))) },
+          h("b", null, (miss ? "⚠ " : "") + lStem(l.file)), h("small", null, (miss ? T("нет файла · ") : "") + (dir || "models/loras")));
+        const linked = Number(l.sm) === Number(l.sc);
+        const setS = (v, which) => setL((x) => {
+          v = Math.round(Math.max(-10, Math.min(10, Number(v) || 0)) * 100) / 100;
+          const y = { ...x };
+          if (which === "sc") y.sc = v;
+          else { if (Number(y.sm) === Number(y.sc)) y.sc = v; y.sm = v; }
+          return y;
+        });
+        const num = h("input", { type: "number", step: 0.05, min: -10, max: 10, value: Number(l.sm).toFixed(2),
+          title: linked ? T("Сила LoRA (модель и энкодер вместе); ⓘ — отдельно для энкодера") : T("Сила для модели; энкодер {0} (ⓘ)", Number(l.sc).toFixed(2)) });
+        num.onchange = () => setS(num.value, "sm");
+        num.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") num.blur(); });
+        const st = h("div", { class: "st" }, num, h("div", { class: "ud" },
+          h("button", { title: "+0.05", onclick: () => setS(Number(l.sm) + 0.05, "sm") }, "▲"),
+          h("button", { title: "−0.05", onclick: () => setS(Number(l.sm) - 0.05, "sm") }, "▼")));
+        const key = "ug" + n;
+        const inf = h("button", { class: "inf" + (this._ugInfo.has(key) ? " on" : ""), title: T("Подробнее: путь, сила для энкодера"),
+          html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>' });
+        inf.onclick = () => { this._ugInfo.has(key) ? this._ugInfo.delete(key) : this._ugInfo.add(key); this.renderLeft(); };
+        const sw = h("div", { class: "h3z-sw" + (l.on === false ? "" : " on"), title: l.on === false ? T("Включить") : T("Выключить (останется в списке, в ключ кэша не входит)") });
+        sw.onclick = () => setL((x) => ({ ...x, on: x.on === false }));
+        const xb = h("button", { class: "x", title: T("Убрать LoRA из стека"), onclick: () => this.upSetGen({ loras: ug.loras.filter((_, k) => k !== n) }) }, "✕");
+        row.append(nm, st, inf, sw, xb);
+        if (this._ugInfo.has(key)) {
+          const sc = h("input", { class: "h3z-in", type: "number", step: 0.05, min: -10, max: 10, value: Number(l.sc).toFixed(2) });
+          sc.onchange = () => setS(sc.value, "sc");
+          row.append(h("div", { class: "h3z-lr-info" }, h("code", null, "models/loras/" + l.file),
+            h("label", null, T("сила энкодера "), sc),
+            h("span", { class: "h3z-note" }, linked ? T("связана с силой модели") : T("отдельно от модели")),
+            linked ? null : h("button", { class: "h3z-btn sm", onclick: () => setS(Number(l.sm), "sc") }, T("связать"))));
+        }
+        return row;
+      };
+      const lAdd = h("button", { class: "h3z-btn sm", disabled: ug.loras.length >= 8 || undefined,
+        title: T("Добавить LoRA (models/loras) — выбор по папкам"),
+        onclick: () => this.mpLoraPicker(lAdd, "", (f) => { if (!ug.loras.some((x) => x.file === f)) this.upSetGen({ loras: [...ug.loras, { file: f, on: true, sm: 1, sc: 1 }] }); }) }, T("＋ LoRA"));
+      const gen = h("div", null,
+        h("div", { class: "h3z-pills" },
+          pill(!own, T("Как в проекте"), T("Доработка после апскейла идёт той же моделью и LoRA, что и генерация (пресет проекта / клипа, иначе входы проводом)"), () => this.upSetGen({ mode: "project" })),
+          pill(own, T("Своя модель + LoRA"), T("Доработка после апскейла — выбранной моделью и LoRA вместо пресета"), () => this.upSetGen({ mode: "custom" }))),
+        own ? h("div", null,
+          this.field(T("Модель"), mSel),
+          h("div", null, h("div", { class: "h3z-lbl" }, "LoRA", h("em", null, T("до {0} · по порядку, сила у каждой, ⓘ — энкодер", 8))),
+            ...ug.loras.map(loraRow), lAdd),
+          !this._mp ? h("div", { class: "h3z-note" }, T("Списки моделей загружаются…")) : null,
+          h("div", { class: "h3z-note" }, T("Чекпойнт даёт модель и свой текстовый энкодер. Диффузионная модель (diffusion_models) берёт энкодер пресета или вход clip. VAE проекта не меняется.")))
+          : null);
       return h("details", { class: "h3z-det" }, h("summary", null, T("Апскейл")), h("div", { class: "in" },
         this.field(T("Метод"), methods), h("div", { class: "h3z-note" }, T("Ниже — настройки метода «{0}». У каждого метода свои: переключение их не сбрасывает.", LBL[m0])),
         this.field(T("Размер"), scales), this.field(T("Куски по времени"), chunks),
         h("div", { class: "h3z-grid2" }, this.field(T("Сила доработки"), sig), this.field(T("Шаги доработки"), steps)),
         h("div", { class: "h3z-grid2" }, this.field(T("Сэмплер"), smp), this.field(T("Расписание"), sch)),
+        this.field(T("Модель доработки"), gen),
         q ? this.field("RTX VSR", q) : null,
         m0 === "tiles" ? this.field(T("Плитки"), this.upTileSettings(f, put)) : null,
         !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,

@@ -15,7 +15,8 @@ const IC = {
 };
 
 export const MT_CSS = `
-.h3z-body.h3z-mtwide{grid-template-columns:60px var(--h3z-gap,8px) min(max(var(--lw,272px),860px),44vw) var(--h3z-gap,8px) minmax(0,1fr) var(--h3z-gap,8px) min(var(--rw,372px),30vw)}
+.h3z-mt{overflow:auto;min-height:0;overscroll-behavior:contain}
+.h3z-root:not(.h3z-left-collapsed) .h3z-body.h3z-mtwide{grid-template-columns:76px var(--left-gap,8px) min(max(var(--lw,272px),860px),44vw) 16px minmax(0,1fr) 16px var(--right-col,372px)}
 .h3z-mt-bar{padding:2px 0 10px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:12px}
 .h3z-mt-barrow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .h3z-mt-cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}

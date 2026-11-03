@@ -1,4 +1,5 @@
 import { T, langSetting, setLangSetting } from "./h3s_i18n.js";
+import { UI_THEMES, themeSetting, applyTheme } from "./h3s_theme.js";
 // «Настройки»: the rarely changed, set-once settings in their own rail tab — generation stages (1 / 2) with the
 // parameters of each stage, upscale, extension and audio seams, cache, live preview, logging and the status of
 // the models. They are global (stored by the server in output/h3zerostudio/_settings.json and shared by all
@@ -182,7 +183,9 @@ export function installSettings(Editor, { C, h, ICON }) {
           : T("1 этап: каждый отрезок сразу в {0}×{1}.", w, hh)),
         h("div", { class: "h3z-lbl" }, T("Основной проход"), h("em", null, two ? T("по умолчанию для этапов") : T("единственный этап"))),
         h("div", { class: "h3z-grid3" }, num("steps", T("шаги"), 1, 1, 200), num("cfg", "cfg", 0.1, 0, 30), num("denoise", "denoise", 0.01, 0, 1)),
-        h("div", { class: "h3z-grid2" }, sel("sampler", T("сэмплер"), smp), sel("scheduler", T("расписание"), sch)),
+        h("div", { class: "h3z-grid2" }, sel("sampler", T("сэмплер"), smp),
+          this.field(T("расписание"), this.schedSel(g.scheduler, sch, (v) => set("scheduler", v),
+            { value: g.sigmas, onch: (t) => set("sigmas", t, { coalesce: "sigmas", render: "none" }) }))),
         h("div", { class: "h3z-grid2" }, num("shift_video", T("shift видео"), 0.1, 0, 100), num("shift_audio", T("shift аудио"), 0.1, 0.01, 100)),
         h("div", { class: "h3z-note" }, T("Turbo LoRA Ref2VA: 4 шага, cfg 1. Без LoRA — ~20 шагов. shift видео 0 — расписание модели. fps — всегда 24 (H3).")));
       const scale = h("select", { class: "h3z-sel" }, C.DRAFT_SCALES.map((k) => { const [a, b] = C.workResolution({ ...g, quality: "draft", draft_scale: k }, "draft"); return h("option", { value: k, selected: Number(g.draft_scale) === k }, T("{0} Мп · {1}×{2} ({3}%)", (a * b / 1e6).toFixed(2), a, b, Math.round(k * 100))); }));
@@ -190,7 +193,10 @@ export function installSettings(Editor, { C, h, ICON }) {
       const st1 = det(T("Этап 1 · Черновик"),
         this.field(T("Размер"), scale),
         h("div", { class: "h3z-grid2" }, num("draft_steps", T("шаги"), 1, 0, 200, String(g.steps)), num("draft_cfg", "cfg", 0.1, 0, 30, String(g.cfg))),
-        h("div", { class: "h3z-grid2" }, sel("draft_sampler", T("сэмплер"), smp, g.sampler), sel("draft_scheduler", T("расписание"), sch, g.scheduler)),
+        h("div", { class: "h3z-grid2" }, sel("draft_sampler", T("сэмплер"), smp, g.sampler),
+          this.field(T("расписание"), this.schedSel(g.draft_scheduler, sch, (v) => set("draft_scheduler", v),
+            { value: g.draft_sigmas, onch: (t) => set("draft_sigmas", t, { coalesce: "dsigmas", render: "none" }) },
+            T("как основной · {0}", g.scheduler)))),
         h("div", { class: "h3z-note" }, T("Пусто — как в основном проходе. Используется вторым режимом, «✎ Черновик» в шапке и «✎ Черновик» клипа.")));
       const sig = h("select", { class: "h3z-sel", title: T("σ старта доработки: 0.25–0.45 сохраняет черновик и добавляет детали") },
         [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7].map((v) => h("option", { value: v, selected: Math.abs(Number(g.refine_sigma) - v) < 1e-6 }, `σ ${v.toFixed(2)}` + (v === 0.4 ? T(" · рекоменд.") : v > 0.45 ? T(" · сильно") : ""))));
@@ -201,7 +207,10 @@ export function installSettings(Editor, { C, h, ICON }) {
       up.onchange = () => set("upscale_method", up.value);
       const st2 = det(T("Этап 2 · Чистовик"),
         h("div", { class: "h3z-grid2" }, this.field(T("сила доработки"), sig), num("refine_steps", T("шаги"), 1, 0, 200, String(C.passSteps({ ...g, refine_steps: 0 }, Number(g.steps), "refine")))),
-        h("div", { class: "h3z-grid2" }, sel("refine_sampler", T("сэмплер"), smp, g.sampler), sel("refine_scheduler", T("расписание"), sch, g.scheduler)),
+        h("div", { class: "h3z-grid2" }, sel("refine_sampler", T("сэмплер"), smp, g.sampler),
+          this.field(T("расписание"), this.schedSel(g.refine_scheduler, sch, (v) => set("refine_scheduler", v),
+            { value: g.refine_sigmas, onch: (t) => set("refine_sigmas", t, { coalesce: "rsigmas", render: "none" }) },
+            T("как основной · {0}", g.scheduler)))),
         h("div", { class: "h3z-grid2" }, num("refine_cfg", "cfg", 0.1, 0, 30, String(g.cfg)), h("div")),
         this.field(T("Апскейл черновика"), up),
         !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,
@@ -267,7 +276,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         num("vram_headroom_gb", T("Запас VRAM во время генерации, ГБ"), 0.25, 0, 8),
         h("div", { class: "h3z-note" }, T("Столько видеопамяти ComfyUI оставляет свободной, пока идёт генерация (штатный резерв --reserve-vram, поднимается только на время запуска и никогда не уменьшается). Помогает, когда открыт браузер / запись: иначе Windows выгружает VRAM в RAM и шаги идут в разы медленнее. 1 ГБ — голый рабочий стол, 2–3 ГБ — с браузером. 0 — выключено.")));
       const upS = this.upscaleSection(g, set);
-      const TABS = [["gen", T("⚙ Генерация"), [stages, st1, st2, upS, models, presetsDet]], ["ext", T("🔗 Продление и звук"), [ext]], ["prev", T("👁 Превью и кэш"), [pv, cache]]];
+      const TABS = [["gen", T("⚙ Генерация"), [stages, st1, st2, models, presetsDet]], ["up", T("↑ Апскейл"), [upS]], ["ext", T("🔗 Продление и звук"), [ext]], ["prev", T("👁 Превью и кэш"), [pv, cache]]];
       const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
       if (this._setOpen) { const t = TABS.find(([, , ds]) => ds.some((d) => titleOf(d) === this._setOpen)); if (t) this._setTab = t[0]; }
       const cur = TABS.find((t) => t[0] === this._setTab) || TABS[0];
@@ -278,7 +287,20 @@ export function installSettings(Editor, { C, h, ICON }) {
       const lsel = h("select", { class: "h3z-sel sm" }, [["auto", T("Авто (как в ComfyUI)")], ["ru", T("Русский")], ["en", "English"]].map(([v, l]) => h("option", { value: v, selected: langSetting() === v }, l)));
       lsel.onchange = () => { if (setLangSetting(lsel.value)) this.toast(T("Язык сменится после перезагрузки страницы"), false, { label: T("Перезагрузить"), fn: () => location.reload() }); };
       const langRow = h("div", { class: "h3z-langrow" }, h("span", { class: "h3z-lbl" }, "🌐 " + T("Язык интерфейса")), lsel);
-      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, scope, tabs, ...cur[2]);
+      const themeGrid = h("div", { class: "h3z-themegrid" }, UI_THEMES.map((theme) => h("button", {
+        type: "button", class: "h3z-theme" + (themeSetting() === theme.id ? " on" : ""), title: theme.description,
+        "aria-label": T("Тема: {0}", theme.name), "aria-pressed": themeSetting() === theme.id ? "true" : "false",
+        onclick: () => {
+          applyTheme(theme.id, true);
+          this.drawDyn?.();
+          themeGrid.querySelectorAll(".h3z-theme").forEach((button) => {
+            const on = button.getAttribute("aria-label") === T("Тема: {0}", theme.name);
+            button.classList.toggle("on", on); button.setAttribute("aria-pressed", String(on));
+          });
+        } },
+        h("span", { class: "swatches", "aria-hidden": "true" }, theme.swatches.map((color) => h("i", { style: `background:${color}` }))), theme.name)));
+      const themeRow = h("div", { class: "h3z-themerow" }, h("span", { class: "h3z-lbl" }, T("Тема интерфейса")), themeGrid);
+      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, scope, tabs, ...cur[2]);
       L.append(head, body);
       this._setOpen = null;
       this.keepDetails(L);

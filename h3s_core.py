@@ -98,9 +98,18 @@ DEFAULT_SETTINGS = {
     "upscale_chunk_sec": 5.0,      # legacy (one value for all methods): migrated into upscale_profiles
     "upscale_chunk_overlap": 1,
     "upscale_profiles": None,      # own settings per upscale method (normalize_upscale_profiles), see SEG_UPSCALE_METHODS
+    # «Настройки → Апскейл» → «Модель доработки»: the refine after the upscale runs on the project / clip presets
+    # ("project") or on the user's own model + LoRA ("custom": a checkpoint from checkpoints / a diffusion model
+    # from diffusion_models + one LoRA from loras)
+    "upscale_gen": {"mode": "project", "model": "", "lora": "", "lora_strength": 1.0},
+    # the learned H3 latent upscaler model (models/latent_upscale_models); "" = the first found (auto)
+    "upscale_model": "",
     # stage parameters ("" / 0 = as the main sampling parameters)
     "draft_sampler": "", "draft_scheduler": "", "draft_cfg": 0.0,
     "refine_sampler": "", "refine_scheduler": "", "refine_cfg": 0.0,
+    # «custom SIGMAS» schedules (set with the scheduler of the same level): "1.0, 0.5, 0.0" —
+    # the exact list replaces the model's curve, the step count is len − 1
+    "sigmas": "", "draft_sigmas": "", "refine_sigmas": "",
     # «Настройки»: "global" = follows the user's global settings, "project" = own settings (older projects)
     "settings_scope": "project",
 }
@@ -110,7 +119,8 @@ RUN_KINDS = ("draft", "refine", "full")
 GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_steps", "refine_sampler", "refine_scheduler", "refine_cfg",
-               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
+               "sigmas", "draft_sigmas", "refine_sigmas",
+               "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "verbose_log")
@@ -253,7 +263,21 @@ CARD_LOOK_PHRASE = {
 }
 CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference."
 CARD_SNAP_KEYS = ("name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description")
-OVERRIDE_KEYS = ("seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio")
+OVERRIDE_KEYS = ("seed", "steps", "cfg", "denoise", "sampler", "scheduler", "sigmas", "shift_video", "shift_audio")
+# «custom SIGMAS» (a scheduler select item): the companion text field holds the exact schedule
+SIGMAS_SCHEDULER = "custom"
+SIGMAS_TEXT_MAX = 2000
+
+
+def parse_sigmas(text):
+    """"1.0, 0.5, 0.0" -> [1.0, 0.5, 0.0] (n steps = n+1 values, any curve); None when empty / unparsable."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        vals = [round(float(x), 6) for x in re.split(r"[,\s]+", text.strip()) if x]
+    except ValueError:
+        return None
+    return vals if 2 <= len(vals) <= 1000 and all(math.isfinite(x) for x in vals) else None
 
 
 # ---------------------------------------------------------------- frame grid
@@ -371,6 +395,146 @@ def _num(v, d):
 
 
 # ------------------------------------------------------------------ model & LoRA presets (mirror of h3s_core.js)
+# «✨ Ассистент»: chats and prompt-mode presets live in the project. Every preset uses
+# an OpenAI-compatible API; cfg stores its model, sampling, system prompt and context switches.
+MAX_ASSIST_CHATS = 20
+MAX_ASSIST_MSGS = 200
+MAX_ASSIST_PRESETS = 20
+ASSIST_BUILTIN_PRESETS = ("chat", "t2va", "ref2va", "i2va", "fl2va", "l2va", "lipsync")
+
+
+def _assist_sampling(rc, thinking):
+    defaults = {"temperature": 1.0 if thinking else 0.7, "top_p": 0.95 if thinking else 0.8,
+                "top_k": 20, "min_p": 0.05 if thinking else 0.0,
+                "presence_penalty": 0.0 if thinking else 1.5, "repetition_penalty": 1.0}
+    sampling = rc.get("sampling") if isinstance(rc.get("sampling"), dict) else {}
+    profile = sampling.get("thinking" if thinking else "plain")
+    profile = profile if isinstance(profile, dict) else {}
+    legacy = not sampling and (("thinking" not in rc) or (rc.get("thinking") is not False) == thinking)
+    limits = {"temperature": (0.0, 2.0), "top_p": (0.0, 1.0), "top_k": (0, 200),
+              "min_p": (0.0, 1.0), "presence_penalty": (-2.0, 2.0), "repetition_penalty": (0.0, 2.0)}
+    out = {}
+    for key, default in defaults.items():
+        fallback = rc.get(key, default) if legacy and key in ("temperature", "top_p") else default
+        value = _num(profile.get(key), _num(fallback, default))
+        lo, hi = limits[key]
+        value = max(lo, min(hi, value))
+        out[key] = int(value) if key == "top_k" else _round(value, 3)
+    return out
+
+
+def _assist_cfg(rc):
+    rc = rc if isinstance(rc, dict) else {}
+    return {"mode": str(rc.get("mode") or "chat")[:30],
+            "temperature": _round(max(0.0, min(2.0, _num(rc.get("temperature"), 0.7))), 2),
+            "top_p": _round(max(0.0, min(1.0, _num(rc.get("top_p"), 0.9))), 2),
+            "thinking": rc.get("thinking") is not False,
+            "sampling": {"thinking": _assist_sampling(rc, True), "plain": _assist_sampling(rc, False)},
+            "max_tokens": int(min(16000, max(16, _num(rc.get("max_tokens"), 16000)))),
+            "sys": str(rc.get("sys") or "")[:8000],
+            "ctx_refs": rc.get("ctx_refs") is not False,
+            "ctx_neighbours": rc.get("ctx_neighbours") is True,
+            "styles": list(dict.fromkeys(str(x)[:80] for x in rc.get("styles", []) if str(x).strip()))[:156]
+                      if isinstance(rc.get("styles"), list) else [],
+            "engine_defaults": rc.get("engine_defaults") is True,
+            "show_reasoning": rc.get("show_reasoning") is not False,
+            "stream_timeout": int(min(3600, max(30, _num(rc.get("stream_timeout"), 600)))),
+            "unload_on_generate": rc.get("unload_on_generate") is True,
+            "unload_endpoint": str(rc.get("unload_endpoint") or "")[:500],
+            "auto_unload": rc.get("auto_unload") is True,
+            "auto_unload_delay": int(min(86400, max(0, _num(rc.get("auto_unload_delay"), 300)))),
+            "api_base": str(rc.get("api_base") or "http://127.0.0.1:1234/v1")[:300],
+            "api_key": str(rc.get("api_key") or "")[:500],
+            "api_model": str(rc.get("api_model") or "")[:200]}
+
+
+def _assist_style_defs(rows):
+    out, seen = [], set()
+    for style in (rows if isinstance(rows, list) else []):
+        if not isinstance(style, dict) or not str(style.get("name") or "").strip():
+            continue
+        sid = str(style.get("id") or "")[:80] or f"style{len(out) + 1}"
+        while sid in seen:
+            sid += "_2"
+        seen.add(sid)
+        instructions = style.get("instructions") if isinstance(style.get("instructions"), list) else str(style.get("instructions") or "").splitlines()
+        out.append({"id": sid, "name": str(style["name"]).strip()[:100], "description": str(style.get("description") or "")[:500],
+                    "instructions": [str(x).strip()[:2000] for x in instructions if str(x).strip()][:80],
+                    "priority": int(min(100, max(0, _num(style.get("priority"), 50)))),
+                    "enabled": style.get("enabled") is True,
+                    "category": str(style.get("category") or "Custom")[:80],
+                    "icon": str(style.get("icon") or "sparkles")[:30], "tone": str(style.get("tone") or "violet")[:30],
+                    "custom": style.get("custom") is True})
+        if len(out) >= 100:
+            break
+    return out
+
+
+def normalize_assistant(a):
+    a = a if isinstance(a, dict) else {}
+    chats = []
+    for c in (a.get("chats") if isinstance(a.get("chats"), list) else []):
+        if not isinstance(c, dict):
+            continue
+        msgs = []
+        for m in (c.get("msgs") if isinstance(c.get("msgs"), list) else []):
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
+                msg = {"role": m["role"], "text": str(m.get("text") or "")[:20000]}
+                if m.get("reasoning"):
+                    msg["reasoning"] = str(m["reasoning"])[:40000]
+                if isinstance(m.get("stats"), dict):
+                    stats = {"prompt": int(min(1000000000, max(0, _num(m["stats"].get("prompt"), 0)))),
+                             "completion": int(min(1000000000, max(0, _num(m["stats"].get("completion"), 0)))),
+                             "tps": _round(min(10000000, max(0, _num(m["stats"].get("tps"), 0))), 2),
+                             "elapsed": _round(min(10000000, max(0, _num(m["stats"].get("elapsed"), 0))), 2),
+                             "finish": str(m["stats"].get("finish") or "")[:30]}
+                    msg["stats"] = stats
+                msgs.append(msg)
+        if msgs or str(c.get("id") or "") == str(a.get("active") or ""):
+            chats.append({"id": str(c.get("id") or "")[:40] or "c1", "title": str(c.get("title") or "")[:120],
+                          "created": max(0, int(_num(c.get("created"), 0))), "msgs": msgs[:MAX_ASSIST_MSGS]})
+        if len(chats) >= MAX_ASSIST_CHATS:
+            break
+    seen, uniq = set(), []
+    for c in chats:
+        cid, n = c["id"], 2
+        while cid in seen:
+            cid = f"{c['id']}_{n}"
+            n += 1
+        seen.add(cid)
+        c["id"] = cid
+        uniq.append(c)
+    active = str(a.get("active") or "")[:40]
+    if active and active not in seen:
+        active = ""
+    presets = []
+    for pr in (a.get("presets") if isinstance(a.get("presets"), list) else []):
+        if not isinstance(pr, dict) or not str(pr.get("name") or "").strip():
+            continue
+        presets.append({"id": str(pr.get("id") or "")[:40] or f"p{len(presets) + 1}",
+                        "name": str(pr.get("name") or "").strip()[:80],
+                        "cfg": _assist_cfg(pr.get("cfg"))})
+        if len(presets) >= MAX_ASSIST_PRESETS:
+            break
+    pseen, puniq = set(), []
+    for pr in presets:
+        pid, n = pr["id"], 2
+        while pid in pseen:
+            pid = f"{pr['id']}_{n}"
+            n += 1
+        pseen.add(pid)
+        pr["id"] = pid
+        puniq.append(pr)
+    preset = str(a.get("preset") or "")[:40]
+    if preset and preset not in pseen and preset not in ASSIST_BUILTIN_PRESETS:
+        preset = ""
+    deleted = list(dict.fromkeys(str(x)[:80] for x in a.get("style_deleted", []) if str(x).strip()))[:56] \
+        if isinstance(a.get("style_deleted"), list) else []
+    return {"chats": uniq, "active": active, "presets": puniq, "preset": preset,
+            "style_defs": _assist_style_defs(a.get("style_defs")), "style_deleted": deleted,
+            "cfg": _assist_cfg(a.get("cfg"))}
+
+
 PRESET_DTYPES = ("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
 MAX_PRESET_LORAS = 16
 MAX_PRESETS = 64
@@ -470,6 +634,7 @@ def normalize_project(p):
     if out["end_mode"] == "auto":
         out["end"] = 0
     out["cards"] = normalize_card_snaps(p.get("cards"))
+    out["assistant"] = normalize_assistant(p.get("assistant"))
     out["model_presets"] = {}
     if isinstance(p.get("model_presets"), dict):
         for k, v in list(p["model_presets"].items())[:MAX_PRESETS]:
@@ -494,6 +659,28 @@ def normalize_project(p):
     st["upscale_chunk_sec"] = 0.0 if cs <= 0 else _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1)
     st["upscale_chunk_overlap"] = int(min(UPSCALE_CHUNK_OVERLAP_RANGE[1], max(UPSCALE_CHUNK_OVERLAP_RANGE[0], _num(st.get("upscale_chunk_overlap"), 1))))
     normalize_upscale_profiles(st)
+    ug = st.get("upscale_gen") if isinstance(st.get("upscale_gen"), dict) else {}
+    _raw = ug.get("loras") if isinstance(ug.get("loras"), list) else ([ug.get("lora")] if ug.get("lora") else [])
+    _defst = _round(max(-10.0, min(10.0, _num(ug.get("lora_strength"), 1.0))), 2)
+
+    def _lora(x):
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            x = str(x)
+        if isinstance(x, str):
+            f = x.strip()[:300]
+            return {"file": f, "on": True, "sm": _defst, "sc": _defst} if f else None
+        if isinstance(x, dict):
+            f = str(x.get("file") or "").strip()[:300]
+            if not f:
+                return None
+            return {"file": f, "on": x.get("on") is not False,
+                    "sm": _round(max(-10.0, min(10.0, _num(x.get("sm"), _defst))), 2),
+                    "sc": _round(max(-10.0, min(10.0, _num(x.get("sc"), _defst))), 2)}
+        return None
+    st["upscale_gen"] = {"mode": "custom" if ug.get("mode") == "custom" else "project",
+                         "model": str(ug.get("model") or "")[:300],
+                         "loras": [y for y in map(_lora, _raw) if y][:8]}
+    st["upscale_model"] = str(st.get("upscale_model") or "")[:300]
     if old_rev < 4:   # rev 4: tiles default σ 0.35 -> 0.60 (user-tested); a profile still at the old default follows,
         tp = st["upscale_profiles"]["tiles"]   # a value the user picked stays; clips keep their own σ (cache keys unchanged)
         if abs(tp["sigma"] - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6:
@@ -503,6 +690,8 @@ def normalize_project(p):
         st[k + "_sampler"] = str(st.get(k + "_sampler") or "")[:64]
         st[k + "_scheduler"] = str(st.get(k + "_scheduler") or "")[:64]
         st[k + "_cfg"] = round(max(0.0, min(30.0, _num(st.get(k + "_cfg"), 0.0))), 2)
+    for k in ("sigmas", "draft_sigmas", "refine_sigmas"):
+        st[k] = str(st.get(k) or "")[:SIGMAS_TEXT_MAX]
     st["settings_scope"] = "global" if st.get("settings_scope") == "global" else "project"
     out["run"]["upto"] = int(_num((p.get("run") or {}).get("upto", -1) if isinstance(p.get("run"), dict) else -1, -1))
     out["run"]["only"] = int(_num((p.get("run") or {}).get("only", -1) if isinstance(p.get("run"), dict) else -1, -1))
@@ -649,6 +838,7 @@ def normalize_upscale_profile(m, p):
     out["steps"] = int(max(0, min(200, _num(p.get("steps"), 0))))
     out["sampler"] = str(p.get("sampler") or "")[:64]
     out["scheduler"] = str(p.get("scheduler") or "")[:64]
+    out["sigmas"] = str(p.get("sigmas") or "")[:SIGMAS_TEXT_MAX]
     out["chunk"] = bool(p["chunk"]) if "chunk" in p else UPSCALE_CHUNK_DEFAULT[m]
     cs = _num(p.get("chunk_sec"), 5.0)
     out["chunk_sec"] = _round(min(UPSCALE_CHUNK_SEC_RANGE[1], max(UPSCALE_CHUNK_SEC_RANGE[0], cs if cs > 0 else 5.0)), 1)
@@ -687,8 +877,18 @@ def profile_upscale(settings, method):
     return normalize_upscale({**{k: pr[k] for k in UPSCALE_UP_FIELDS if k in pr}, "method": method})
 
 
+def upscale_gen(settings):
+    """The refine's own model + LoRAs (settings.upscale_gen, «Настройки → Апскейл»): None = the project / clip
+    presets; else {"model": file (checkpoints / diffusion_models), "loras": [{file, on, sm, sc}], ...}."""
+    ug = ((settings or {}).get("upscale_gen") or {})
+    if ug.get("mode") != "custom" or not ug.get("model"):
+        return None
+    return {"model": ug["model"], "loras": [dict(l) for l in (ug.get("loras") or []) if l.get("file")]}
+
+
 def upscale_pass_params(project, index, method):
-    """pass_params of a clip's upscale refine: «Этап 2» with the method profile's own steps / sampler / scheduler."""
+    """pass_params of a clip's upscale refine: «Этап 2» with the method profile's own steps / sampler / scheduler
+    (the profile's own «custom SIGMAS» win over the refine stage's ones)."""
     p = pass_params(project, index, "refine")
     pr = upscale_profile(project["settings"], method)
     if pr.get("steps"):
@@ -697,6 +897,10 @@ def upscale_pass_params(project, index, method):
         p["sampler"] = pr["sampler"]
     if pr.get("scheduler"):
         p["scheduler"] = pr["scheduler"]
+    if p["scheduler"] == SIGMAS_SCHEDULER:
+        sg = parse_sigmas(pr.get("sigmas"))
+        if sg:
+            p["sigmas"], p["steps"] = sg, len(sg) - 1
     return p
 
 
@@ -925,6 +1129,15 @@ def pass_params(project, index, kind=None):
     if kind == "refine":
         p["denoise"] = 1.0   # the refine pass runs its own schedule from refine_sigma (see h3s_gen.refine_sigmas)
         p["sigma0"] = float(s.get("refine_sigma") or 0.4)
+    if p["scheduler"] == SIGMAS_SCHEDULER:   # «custom SIGMAS»: the exact list replaces the curve, steps = len − 1
+        seg = project["segments"][index]
+        ov = (seg.get("overrides") or {})
+        src = ov.get("sigmas") if ov.get("scheduler") == SIGMAS_SCHEDULER else \
+            s.get(kind + "_sigmas") if kind in ("draft", "refine") and s.get(kind + "_scheduler") == SIGMAS_SCHEDULER else \
+            s.get("sigmas") if s.get("scheduler") == SIGMAS_SCHEDULER else None
+        sg = parse_sigmas(src)
+        if sg:
+            p["sigmas"], p["steps"] = sg, len(sg) - 1
     return p
 
 
@@ -1406,6 +1619,7 @@ def upscale_keys(project, base_keys, kind=None, up_env=None):
         smp = [pr.get("sampler") or "", pr.get("scheduler") or ""]   # in the key only when the profile sets its own (old keys stay)
         k = _h({"v": KEY_VERSION, "up": bk, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
                 "steps": upp["steps"], "prev": chain, **({"rx": refine_extra(project["settings"])} if refine_extra(project["settings"]) else {}),
+                **({"upm": project["settings"].get("upscale_model")} if project["settings"].get("upscale_model") else {}),
                 **({"ch": [cf, co]} if nch > 1 else {}), **({"smp": smp} if any(smp) else {})})[:16]
         out.append(k)
         prev = (k, wh)
@@ -1424,7 +1638,9 @@ def region_upscale_key(project, region_key, region, w, h, up_env=None, index=0):
     steps = upscale_pass_params(project, index, up["method"])["steps"]
     smp = [pr.get("sampler") or "", pr.get("scheduler") or ""]
     return _h({"v": KEY_VERSION, "rup": region_key, "p": upscale_key_form(up, w, h), "env": (up_env or {}).get(up["method"], ""), "wh": wh,
-               "steps": steps, **({"rx": refine_extra(s)} if refine_extra(s) else {}), "ch": [cf, co], **({"smp": smp} if any(smp) else {})})[:16]
+               "steps": steps, **({"rx": refine_extra(s)} if refine_extra(s) else {}),
+               **({"upm": s.get("upscale_model")} if s.get("upscale_model") else {}),
+               "ch": [cf, co], **({"smp": smp} if any(smp) else {})})[:16]
 
 
 def refine_extra(s):

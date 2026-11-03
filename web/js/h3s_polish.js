@@ -2,20 +2,20 @@
 import { splitGlyph } from "./h3s_menus.js";
 import { T } from "./h3s_i18n.js";
 export function installPolish(Editor, { C, h, ICON }) {
-  const CLIP_H = 110;
   Object.assign(Editor.prototype, {
     /** Tile the generated sprite over the clip: as many thumbnails as fit, each showing the frame under it. */
     clipThumbs(clip, res, it, ov, wd, fileOff = 0) {   // fileOff: footage in-point (frames into the file)
       const box = h("div", { class: "strip" });
       if (!res.strip_n) { box.style.backgroundImage = `url("${this.host.url(res.strip)}")`; clip.append(box); return; }
-      const [w, hh] = C.resolution(this.p.settings), tw = Math.max(24, CLIP_H * w / hh), n = res.strip_n;
+      const clipH = this.timelineVideoHeight || 110;
+      const [w, hh] = C.resolution(this.p.settings), tw = Math.max(24, clipH * w / hh), n = res.strip_n;
       const url = this.host.url(res.strip), frames = res.frames || it.frames;
       box.classList.add("tiles");
       const count = Math.min(200, Math.ceil(wd / tw));
       for (let k = 0; k < count; k++) {
         const f = fileOff + ov + (k * tw + tw / 2) / this.ppf;
         const idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
-        box.append(h("i", { style: { left: k * tw + "px", width: tw + "px", backgroundImage: `url("${url}")`, backgroundSize: `${n * tw}px ${CLIP_H}px`, backgroundPosition: `${-idx * tw}px 0` } }));
+        box.append(h("i", { style: { left: k * tw + "px", width: tw + "px", backgroundImage: `url("${url}")`, backgroundSize: `${n * tw}px ${clipH}px`, backgroundPosition: `${-idx * tw}px 0` } }));
       }
       clip.append(box);
     },
