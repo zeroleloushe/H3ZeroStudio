@@ -600,7 +600,7 @@ function normalizeSource(src, videoIds) {
 }
 
 /** Footage used as is (no sampling). */
-export const isFootage = (seg) => !!seg.source && !seg.source.denoise;
+export const isFootage = (seg) => !!seg?.source && !seg.source.denoise;
 
 /** Video references of a segment (<Video k> order = chip order). */
 export function videoRefs(project, seg) {
@@ -621,7 +621,7 @@ export function passParams(project, index, kind = null) {
   }
   if (kind === "refine") { p.denoise = 1.0; p.sigma0 = Number(s.refine_sigma || 0.4); }
   if (p.scheduler === SIGMAS_SCHEDULER) {   // «custom SIGMAS»: the exact list replaces the curve, steps = len − 1
-    const ov = project.segments[index].overrides || {};
+    const ov = (project.segments[index] || {}).overrides || {};
     const src = ov.scheduler === SIGMAS_SCHEDULER ? ov.sigmas
       : (kind === "draft" || kind === "refine") && s[kind + "_scheduler"] === SIGMAS_SCHEDULER ? s[kind + "_sigmas"]
       : s.scheduler === SIGMAS_SCHEDULER ? s.sigmas : null;
@@ -649,7 +649,7 @@ export function segParam(project, seg, index, key) {
 }
 
 export function effectiveParams(project, index) {
-  const seg = project.segments[index];
+  const seg = project.segments[index] || {};
   const p = {};
   for (const k of ["seed", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio"]) p[k] = segParam(project, seg, index, k);
   p.seed = Math.trunc(Number(p.seed)); p.steps = Math.trunc(Number(p.steps));
