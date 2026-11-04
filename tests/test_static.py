@@ -770,6 +770,17 @@ def test_author_links_open_in_new_tabs_above_help():
     assert '.h3z-social-link:focus-visible, .h3z-support:focus-visible' in style
 
 
+def test_help_colors_follow_interface_theme():
+    style = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
+    help_css = style[style.index(".h3z-body > .h3z-helpview"):style.index(".h3z-setbody")]
+    assert "background:var(--bg1)" in help_css
+    assert "background:var(--control)" in help_css
+    assert "color:var(--txt)" in help_css
+    assert "color:var(--a1)" in help_css
+    for fixed in ("#0b1024", "#eef0ff", "#cfd4f6", "#c4b5fd", "#d6dafa", "rgba(139,92,246", "rgba(148,163,255"):
+        assert fixed not in help_css
+
+
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
