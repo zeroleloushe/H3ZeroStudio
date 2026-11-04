@@ -1,4 +1,5 @@
 import { T } from "./h3s_i18n.js";
+import { uiLocalPoint, uiLocalBounds, uiLocalSize, uiPlaceAtClient } from "./h3s_ui_scale.js";
 // H3ZeroStudio: «✂ Участок» — regenerate a time range in the MIDDLE of the video (generated clips or footage).
 // The range is snapped to the 17-frame block grid of its scene; H3 samples a window [ws, we) with clean head and
 // tail context (native per-modality noise mask: the context latents are kept, only the middle is noised) and the
@@ -198,7 +199,7 @@ export function installRegions(Editor, { C, h, ICON }) {
           else r.end = Math.max(s0 + 1, Math.round(e0 + dx));
         }, { coalesce: "rg" + id + what + sx, render: "none" });
         const w = this.regionWin(this.region(id));
-        tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
+        uiPlaceAtClient(ev.clientX, ev.clientY, tip, this.root);
         tip.textContent = w.error ? w.error : T("{0}–{1} · {2} кадр. (сетка 17)", C.fmtTime(w.a / C.FPS), C.fmtTime(w.b / C.FPS), w.b - w.a);
         this.renderTimeline();
       };
@@ -249,7 +250,7 @@ export function installRegions(Editor, { C, h, ICON }) {
         const im = hv.firstChild; im.style.width = W + "px"; im.style.height = HH + "px";
         im.style.backgroundImage = `url("${url}")`; im.style.backgroundSize = `${n * W}px ${HH}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
         hv.lastChild.textContent = `${C.fmtTime((w.a + (e.clientX - r.left) / ppf) / C.FPS)} · ${name.toLowerCase()} ${this.regionNo(rg.id)}` + (tk.fresh ? "" : T(" · устарел"));
-        hv.style.left = Math.max(8, Math.min(window.innerWidth - W - 16, e.clientX - W / 2)) + "px"; hv.style.top = r.top - HH - 34 + "px";
+        uiPlaceAtClient(e.clientX - W / 2 - 12, r.top, hv, this.root, { offsetX: 12, offsetY: -(HH + 34) });
         this.showHover(hv, core);
       });
       core.addEventListener("pointerleave", () => this.hideHover?.());
@@ -398,13 +399,19 @@ export function installRegions(Editor, { C, h, ICON }) {
 
     placeRegionPopover(w) {
       const $ = this.$, pop = $.regPop; if (!pop || !$.tscroll) return;
-      const r = $.tscroll.getBoundingClientRect(), root = this.root.getBoundingClientRect();
+      const r = $.tscroll.getBoundingClientRect();
       const ir = $.tinner.getBoundingClientRect();
       const fx = w && !w.error ? (w.a + w.b) / 2 : (this.region()?.start || 0);
-      const x = ir.left + fx * this.ppf;
+      const irLocal = uiLocalPoint(ir.left, ir.top, this.root);
+      const midLocalX = irLocal.x + fx * this.ppf;
+      const bounds = uiLocalBounds(this.root);
       const pw = pop.offsetWidth || 520;
-      pop.style.left = Math.round(Math.max(root.left + 8, Math.min(root.right - pw - 8, x - pw / 2)) - root.left) + "px";
-      pop.style.bottom = Math.round(root.bottom - r.top + 8) + "px";
+      const left = Math.round(Math.max(8, Math.min(bounds.w - pw - 8, midLocalX - pw / 2)));
+      const scrollTopLocal = uiLocalPoint(r.left, r.top, this.root);
+      pop.style.left = left + "px";
+      pop.style.right = "auto";
+      pop.style.top = "auto";
+      pop.style.bottom = Math.round(bounds.h - scrollTopLocal.y + 8) + "px";
     },
 
     selectRegionTake(id, tid) {

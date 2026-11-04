@@ -1,4 +1,5 @@
 import { T, tServer } from "./h3s_i18n.js";
+import { uiPlaceBelow } from "./h3s_ui_scale.js";
 
 export const MONITOR_CSS = `
 .h3z-sysmon{display:inline-flex;align-items:center;gap:10px;height:34px;padding:0 11px;border:1px solid var(--line);border-radius:10px;background:var(--control);color:var(--txt);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap;flex:none}
@@ -9,7 +10,7 @@ export const MONITOR_CSS = `
 .h3z-sysmon .m{display:flex;align-items:baseline;gap:4px;font-variant-numeric:tabular-nums}
 .h3z-sysmon small{font-size:9px;color:var(--mut)}.h3z-sysmon b{font-size:11px;font-weight:650;min-width:25px}
 .h3z-sysmon .temp{color:var(--warn)}
-.h3z-monpop{position:absolute;z-index:100003;width:min(820px,calc(100vw - 24px));max-height:calc(100vh - 86px);overflow:auto;padding:18px;display:flex;flex-direction:column;gap:16px;background:var(--bg1);box-shadow:0 24px 80px rgba(0,0,0,.42)}
+.h3z-monpop{position:absolute;z-index:100003;width:min(820px,calc(100% - 24px));max-height:min(780px,calc(100% - 86px));overflow:auto;padding:18px;display:flex;flex-direction:column;gap:16px;background:var(--bg1);box-shadow:0 24px 80px rgba(0,0,0,.42)}
 .h3z-monpop .hd{display:flex;align-items:center;gap:10px}.h3z-monpop .hd .ttl{font-size:16px;font-weight:750}.h3z-monpop .hd .sub{font-size:11px;color:var(--mut);margin-top:2px}.h3z-monpop .hd .grow{flex:1}
 .h3z-monmetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .h3z-moncard{min-width:0;padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--field);color:var(--txt);font:inherit;text-align:left;cursor:pointer}
@@ -187,11 +188,7 @@ export function installMonitor(Editor, { C, h }) {
       this.root.append(pop);
       this.$.monitorPop = pop;
       this.$.monitor?.setAttribute("aria-expanded", "true");
-      const b = this.$.monitor?.getBoundingClientRect(), rb = this.root.getBoundingClientRect();
-      if (b && rb) {
-        pop.style.top = `${Math.max(8, b.bottom - rb.top + 8)}px`;
-        pop.style.left = `${Math.max(12, Math.min(b.left - rb.left + b.width / 2 - pop.offsetWidth / 2, rb.width - pop.offsetWidth - 12))}px`;
-      }
+      if (this.$.monitor) uiPlaceBelow(this.$.monitor, pop, this.root, { align: "center", pad: 12, gap: 8 });
       const off = (e) => {
         if (!pop.contains(e.target) && !this.$.monitor?.contains(e.target)) this.monitorClose(false);
       };

@@ -1,4 +1,5 @@
 import { T } from "./h3s_i18n.js";
+import { uiPlaceBelow } from "./h3s_ui_scale.js";
 // H3ZeroStudio: generation timer in the header + history of the last runs.
 // Based on the server's run record (/h3zero/runs: start / end / status), so a reload or a background tab keeps the
 // right time. Ticks every second while running; afterwards it keeps the final time, coloured by the result.
@@ -82,11 +83,9 @@ export function installTimer(Editor, { h }) {
           h("small", null, T("{0} МСК · {1}{2}", msk(r.start), ST[r.status] || r.status, res) + (r.project ? ` · «${r.project}»` : "")));
       }) : [h("div", { class: "h3z-note" }, T("Запусков пока не было."))];
       const pop = h("div", { class: "h3z-tpop h3z-glass" }, h("b", null, T("Последние запуски")), ...rows);
-      const b = this.$.timer.getBoundingClientRect(), rb = this.root.getBoundingClientRect();
-      pop.style.top = (b.bottom - rb.top + 8) + "px";
-      pop.style.left = Math.max(12, Math.min(b.left - rb.left, rb.width - 572)) + "px";
       old?.remove();
       this.root.append(pop); this.$.tpop = pop;
+      uiPlaceBelow(this.$.timer, pop, this.root, { align: "start", pad: 12, gap: 8 });
       if (!refresh) {
         const off = (e) => { if (!pop.contains(e.target) && e.target !== this.$.timer) { pop.remove(); if (this.$.tpop === pop) this.$.tpop = null; document.removeEventListener("pointerdown", off, true); } };
         setTimeout(() => document.addEventListener("pointerdown", off, true));

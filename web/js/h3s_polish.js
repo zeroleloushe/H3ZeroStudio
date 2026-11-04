@@ -1,6 +1,7 @@
 // H3ZeroStudio: CapCut-style frame thumbnails on clips, hover scrubbing, clip context menu, live sampling preview.
 import { splitGlyph } from "./h3s_menus.js";
 import { T } from "./h3s_i18n.js";
+import { uiPlaceAtClient } from "./h3s_ui_scale.js";
 export function installPolish(Editor, { C, h, ICON }) {
   Object.assign(Editor.prototype, {
     /** Tile the generated sprite over the clip: as many thumbnails as fit, each showing the frame under it. */
@@ -36,8 +37,7 @@ export function installPolish(Editor, { C, h, ICON }) {
         im.style.backgroundImage = `url("${this.host.url(res.strip)}")`;
         im.style.backgroundSize = `${n * W}px ${H}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
         hv.lastChild.textContent = T("{0} · отрезок {1}", C.fmtTime((it.start + f) / C.FPS), i + 1);
-        hv.style.left = Math.max(8, Math.min(window.innerWidth - W - 16, e.clientX - W / 2)) + "px";
-        hv.style.top = r.top - H - 34 + "px";
+        uiPlaceAtClient(e.clientX - W / 2 - 12, r.top, hv, this.root, { offsetX: 12, offsetY: -(H + 34) });
         this.showHover(hv, clip);
       });
       clip.addEventListener("pointerleave", () => this.hideHover());

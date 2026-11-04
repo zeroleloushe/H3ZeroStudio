@@ -431,7 +431,7 @@ def _assist_cfg(rc):
             "top_p": _round(max(0.0, min(1.0, _num(rc.get("top_p"), 0.9))), 2),
             "thinking": rc.get("thinking") is not False,
             "sampling": {"thinking": _assist_sampling(rc, True), "plain": _assist_sampling(rc, False)},
-            "max_tokens": int(min(16000, max(16, _num(rc.get("max_tokens"), 16000)))),
+            "max_tokens": (lambda mt: int(min(32768, max(16, 32768 if mt == 16000 else mt))))(_num(rc.get("max_tokens"), 32768)),
             "sys": str(rc.get("sys") or "")[:8000],
             "ctx_refs": rc.get("ctx_refs") is not False,
             "ctx_neighbours": rc.get("ctx_neighbours") is True,
@@ -480,9 +480,9 @@ def normalize_assistant(a):
         msgs = []
         for m in (c.get("msgs") if isinstance(c.get("msgs"), list) else []):
             if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
-                msg = {"role": m["role"], "text": str(m.get("text") or "")[:20000]}
+                msg = {"role": m["role"], "text": str(m.get("text") or "")[:120000]}
                 if m.get("reasoning"):
-                    msg["reasoning"] = str(m["reasoning"])[:40000]
+                    msg["reasoning"] = str(m["reasoning"])[:200000]
                 if isinstance(m.get("stats"), dict):
                     stats = {"prompt": int(min(1000000000, max(0, _num(m["stats"].get("prompt"), 0)))),
                              "completion": int(min(1000000000, max(0, _num(m["stats"].get("completion"), 0)))),

@@ -1,4 +1,5 @@
 import { T } from "./h3s_i18n.js";
+import { uiPlaceBelow, uiPlaceAtClient, uiLocalSize } from "./h3s_ui_scale.js";
 // «Модели» rail tab: quick access to model presets, model files and the LoRA stack (rows with on/off, strength ▲▼,
 // ⓘ details, drag to reorder) with a searchable folder picker for models/loras. Own code; the layout follows the
 // idea of Pixaroma's LoRA Loader (ideas only).
@@ -58,7 +59,7 @@ export const MT_CSS = `
 .h3z-lr-info{grid-column:2/-1;font-size:11.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:6px 0 1px;border-top:1px dashed var(--line);margin-top:4px}
 .h3z-lr-info code{color:#b9c0ea;word-break:break-all;font-size:11px}
 .h3z-lr-info input{width:64px}
-.h3z-lp{position:fixed;z-index:100005;display:flex;flex-direction:column;max-height:70vh;border-radius:var(--r2,12px);background:var(--panel2);
+.h3z-lp{position:absolute;z-index:100005;display:flex;flex-direction:column;max-height:70vh;border-radius:var(--r2,12px);background:var(--panel2);
   border:1px solid var(--line2);backdrop-filter:blur(18px) saturate(140%);box-shadow:0 18px 48px rgba(0,0,0,.6);font-size:12.5px;overflow:hidden;color:var(--txt)}
 .h3z-lp::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--grad);opacity:.9}
 .h3z-lp .top{display:flex;align-items:center;gap:8px;margin:10px 10px 6px;padding:0 10px;border-radius:10px;background:rgba(5,7,15,.55);border:1px solid var(--line)}
@@ -167,11 +168,8 @@ export function installModelTab(Editor, { C, h }) {
       const curDir = parts(cur).slice(0, -1);
       let path = cur ? curDir : [], q = "", hi = 0, rows = [];
       const pop = h("div", { class: "h3z-lp" });
-      const r = anchor.getBoundingClientRect(), W = Math.max(r.width, 440);
-      pop.style.left = Math.max(8, Math.min(window.innerWidth - W - 8, r.left)) + "px";
+      const r = anchor.getBoundingClientRect(), W = Math.max(uiLocalSize(r.width), 440);
       pop.style.width = W + "px";
-      const below = window.innerHeight - r.bottom;
-      if (below > 320) pop.style.top = r.bottom + 4 + "px"; else pop.style.bottom = window.innerHeight - r.top + 4 + "px";
       const inp = h("input", { class: "q", placeholder: T("Поиск по всем папкам…"), spellcheck: "false" });
       const crumbs = h("div", { class: "crumbs" }), ls = h("div", { class: "ls" });
       pop.append(h("div", { class: "top", html: IC.search }, inp), crumbs, ls);
@@ -222,13 +220,7 @@ export function installModelTab(Editor, { C, h }) {
       const hidePrev = () => { clearTimeout(prevTimer); prevTimer = 0; prevEl?.remove(); prevEl = null; prevFile = null; };
       const placePrev = (ev) => {
         if (!prevEl) return;
-        const pad = 14, vw = window.innerWidth, vh = window.innerHeight;
-        const w = prevEl.offsetWidth || 200, hh = prevEl.offsetHeight || 160;
-        let x = ev.clientX + pad, y = ev.clientY + pad;
-        if (x + w > vw - 8) x = ev.clientX - w - pad;
-        if (y + hh > vh - 8) y = ev.clientY - hh - pad;
-        prevEl.style.left = Math.max(8, x) + "px";
-        prevEl.style.top = Math.max(8, y) + "px";
+        uiPlaceAtClient(ev.clientX, ev.clientY, prevEl, this.root, { offsetX: 14, offsetY: 14, pad: 8 });
       };
       const movePrev = (ev) => { if (prevEl) placePrev(ev); };
       const showPrev = (file, ev) => {
@@ -279,6 +271,7 @@ export function installModelTab(Editor, { C, h }) {
       };
       inp.addEventListener("h3zkey", (ev) => onKey(ev.detail));
       (this.root || document.body).append(pop);   // inside the editor root: the studio's theme variables apply
+      uiPlaceBelow(anchor, pop, this.root, { align: "start", pad: 8, gap: 4, flip: true });
       document.addEventListener("pointerdown", outside, true);
       paint();
       inp.focus();

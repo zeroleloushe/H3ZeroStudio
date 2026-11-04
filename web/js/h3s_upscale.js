@@ -15,7 +15,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
     /** True when options are known and the trained latent upscaler is missing → stretch fallback. */
     upStretchMode() { return this.upKnown() && !this.upCaps().learned; },
     upStretchWarnText() {
-      return T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.");
+      return T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Нужна модель в models/latent_upscale_models и одна из нод: встроенная MiniMaxH3LatentUpscaleWithModel (ComfyUI ≥ PR #17412), PixaromaH3LatentUpscale (Pixaroma ≥ 1.4.238) или MinimaxH3LatentUpscaler3D (LBH).");
     },
     /** @deprecated alias — stretch is a soft warn, not a hard unavail. */
     upUnavailText() { return this.upStretchWarnText(); },

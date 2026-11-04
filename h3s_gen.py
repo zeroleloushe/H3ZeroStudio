@@ -1794,8 +1794,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     ukeys = core.upscale_keys(proj, keys, kind, up_env)[:len(items)]
     if any(ukeys):
         caps = upscale.capabilities()
+        backs = caps.get("backends") or {}
+        back = ",".join(b for b in ("native", "pixaroma", "lbh") if backs.get(b)) or "none"
         log(f"segment upscale: {sum(1 for x in ukeys if x)} segment(s); learned latent upscaler "
-            f"{'yes (' + caps['learned_models'][0] + ')' if caps['learned'] else 'NO (' + ('model missing in models/latent_upscale_models' if caps['learned_node'] else 'node MinimaxH3LatentUpscaler3D not installed') + ')'}")
+            f"{'yes (' + caps['learned_models'][0] + ' via ' + (caps.get('backend') or back) + ')' if caps['learned'] else 'NO (' + ('model missing in models/latent_upscale_models' if caps['learned_node'] else 'no native/Pixaroma/LBH node') + '; nodes=' + back + ')'}")
     # final from the draft: every segment's draft (same key as a «Черновик» run) is the start of its refine pass
     dparts = []
     dkeys = core.segment_keys(proj, ref_sigs, env, "draft", parts=dparts)[:len(items)] if kind == "refine" else None

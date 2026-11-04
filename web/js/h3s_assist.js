@@ -18,26 +18,40 @@ const BUILTINS = [
   { id: "l2va", icon: "", name: T("Последний кадр"), desc: T("Сцена, которая логично приходит к заданному финалу."), suggestions: [T("Построй действие так, чтобы закончить текущим последним кадром"), T("Придумай плавный подход камеры к финальному изображению"), T("Сделай сцену с точной остановкой на последнем кадре")], cfg: { mode: "l2va", temperature: 0.5, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nL2VA mode. The first line must be: How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video. Replace N with the actual final shot index and S.SS with the exact duration to two decimal places. Follow it with one blank line before the three core fields. Picture 1 belongs only to the final shot, not inherently Shot 1. Construct plausible preceding state → explicit action and transition path → gradual convergence in the final shot → exact last-frame landing on composition, pose, lighting, and object positions.` } },
   { id: "lipsync", icon: "", name: T("Липсинк и диалог"), desc: T("Речь, мимика и голосовые референсы с точными репликами."), suggestions: [T("Напиши сцену с липсинком: герой спокойно представляется зрителю"), T("Используй аудио-референс как тембр голоса персонажа"), T("Сделай короткий диалог двух персонажей с естественной мимикой")], cfg: { mode: "lipsync", temperature: 0.4, top_p: 0.85, max_tokens: 4200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\n${REF_RULES}\n\nLipsync and dialogue mode uses the official Ref2VA structure, not a separate H3 checkpoint. Choose summary task types from the actual task, typically reference generation or video editing plus audio reference for voice timbre, or audio reuse only when the source signal itself is copied. Preserve every line verbatim inside <d>[Language] ...</d>. Describe observable articulation, pauses, breathing, gaze, eyebrows, and head movements in temporal alignment with speech. Do not promise exact lipsync in prose; define the physical sequence instead. Fit speech naturally into the segment duration; silence and pauses take time too.` } },
 ];
-for (const preset of BUILTINS) preset.cfg.max_tokens = 16000;
+for (const preset of BUILTINS) preset.cfg.max_tokens = 32768;
 
 const MODE_NAMES = { chat: T("Свободный чат"), t2va: T("Текст → видео"), ref2va: T("По референсам"), i2va: T("Первый кадр"), fl2va: T("Первый + последний"), l2va: T("Последний кадр"), lipsync: T("Липсинк и диалог") };
 
 const ASSIST_CSS = `
 /* Native H3 assistant — theme vars only; no hover reflow */
 .h3z-ast-panel,.h3z-ast-panel *{box-sizing:border-box}
-.h3z-ast-panel{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;flex:1 1 auto;width:100%;max-width:100%;height:100%;overflow:hidden;padding:0 12px 8px;background:transparent;font-size:12.5px;font-weight:400;box-sizing:border-box}
-.h3z-panel > .h3z-ast-panel{flex:1;min-height:0;min-width:0}
+.h3z-panel > .h3z-ph:has(.h3z-ast-titlerow),.h3z-panel > .h3z-ph:has(.h3z-ast-status),
+.h3z-ast-panel > .h3z-ph:has(.h3z-ast-titlerow),.h3z-ast-panel > .h3z-ph:has(.h3z-ast-status){min-width:0;max-width:100%;overflow:hidden;padding:0 0 2px;gap:6px;box-sizing:border-box;flex:0 0 auto}
+.h3z-panel > .h3z-ph:has(.h3z-ast-titlerow) h3,.h3z-panel > .h3z-ph:has(.h3z-ast-status) h3,
+.h3z-ast-panel > .h3z-ph:has(.h3z-ast-titlerow) h3,.h3z-ast-panel > .h3z-ph:has(.h3z-ast-status) h3{flex:1 1 auto;min-width:3.5em;height:28px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center}
+
+.h3z-ast-panel{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;flex:1 1 auto;width:100%;max-width:100%;height:auto;overflow:hidden;padding:10px 12px 8px;background:transparent;font-size:12.5px;font-weight:400;box-sizing:border-box}
+.h3z-panel > .h3z-ast-panel{flex:1 1 auto;min-height:0;min-width:0;overflow:hidden;height:auto}
+.h3z-panel:has(> .h3z-ast-panel){display:flex;flex-direction:column;min-height:0;overflow:hidden}
+/* Title + mode + dialog are flex:none header rows — never shrink/scroll/overlap */
+.h3z-ast-panel > .h3z-ph,
+.h3z-ast-panel > .h3z-ast-moderow,
+.h3z-ast-panel > .h3z-ast-histrow,
+.h3z-ast-panel > .h3z-ast-compose,
+.h3z-ast-panel > .h3z-settabs{flex:0 0 auto;flex-shrink:0;min-height:0;position:relative;z-index:1}
 .h3z-panel .h3z-ast-panel .h3z-scroll,.h3z-ast-panel .h3z-scroll{flex:1 1 auto;min-height:0;min-width:0;width:100%;max-width:100%;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:0;margin:0;border:none;background:transparent;box-shadow:none}
-.h3z-ast-panel .h3z-ph{display:flex;align-items:center;gap:8px;padding:0 0 2px;min-width:0;width:100%}
-.h3z-ast-panel .h3z-ph h3{margin:0;flex:1;min-width:0;font-size:14px;font-weight:700}
-.h3z-ast-titlerow{display:flex;align-items:center;gap:6px;flex:none}
-.h3z-ast-moderow,.h3z-ast-histrow{border:none;box-shadow:none;background:transparent}
-.h3z-ast-moderow{display:flex;align-items:center;gap:8px;min-width:0;width:100%}
+.h3z-ast-panel > .h3z-ph{display:flex;align-items:center;gap:8px;padding:0 0 2px;margin:0;min-width:0;width:100%;max-width:100%;overflow:hidden;min-height:28px}
+.h3z-ast-panel > .h3z-ph h3{margin:0;flex:1 1 auto;min-width:3.5em;height:28px;line-height:28px;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center}
+.h3z-ast-titlerow{display:flex;align-items:center;gap:6px;flex:0 0 auto;flex-shrink:0;min-width:0;max-width:none;height:28px}
+.h3z-ast-titlerow .h3z-btn.sm.icon,.h3z-ast-titlerow .h3z-ast-gear{flex:none;width:28px;min-width:28px;max-width:28px;height:28px;min-height:28px;max-height:28px;padding:0;margin:0;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center}
+.h3z-ast-titlerow .h3z-btn.sm.icon svg,.h3z-ast-titlerow .h3z-ast-gear svg{width:14px;height:14px;display:block;flex:none}
+.h3z-ast-moderow,.h3z-ast-histrow{border:none;box-shadow:none;background:transparent;overflow:hidden}
+.h3z-ast-moderow{display:flex;align-items:center;gap:8px;min-width:0;width:100%;flex:0 0 auto}
 .h3z-ast-moderow .h3z-lbl{flex:none;margin:0;color:var(--mut);font-size:11.5px;font-weight:600}
 .h3z-ast-mode{flex:1;min-width:0;max-width:100%;font-size:12.5px}
 .h3z-ast-histrow .h3z-lbl{flex:none;margin:0;color:var(--mut);font-size:11.5px;font-weight:600}
-.h3z-ast-status{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;max-width:160px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--mut);font:inherit;font-size:11px;font-weight:500;cursor:pointer;margin:0;min-width:0;overflow:hidden}
-.h3z-ast-status > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.h3z-ast-status{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;min-height:28px;max-height:28px;min-width:4.5em;max-width:11.5em;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--mut);font:inherit;font-size:11px;font-weight:500;line-height:1;cursor:pointer;margin:0;overflow:hidden;flex:0 1 auto;box-sizing:border-box;vertical-align:middle}
+.h3z-ast-status > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto;line-height:1}
 .h3z-ast-status.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
 .h3z-ast-status.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 35%,transparent)}
 .h3z-ast-status.busy .h3z-ast-dot{background:var(--a2);animation:h3zAstPulse 1s infinite alternate}
@@ -45,9 +59,11 @@ const ASSIST_CSS = `
 .h3z-ast-status.ok .h3z-ast-dot{background:var(--ok)}
 .h3z-ast-status.err .h3z-ast-dot{background:var(--err)}
 @keyframes h3zAstPulse{from{opacity:.45}to{opacity:1}}
-.h3z-ast-histrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap;min-width:0;width:100%}
-.h3z-ast-histrow .h3z-sel{flex:1 1 110px;min-width:0;height:28px}
-.h3z-ast-histacts{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:none}
+.h3z-ast-histrow{display:flex;gap:5px;align-items:center;flex-wrap:nowrap;min-width:0;width:100%;max-width:100%;flex:0 0 auto}
+.h3z-ast-histrow .h3z-sel{flex:1 1 auto;min-width:0;max-width:100%;height:28px;overflow:hidden}
+.h3z-ast-histrow .h3z-sel .h3z-dd-lab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.h3z-ast-histacts{display:flex;flex-wrap:nowrap;gap:3px;align-items:center;flex:0 0 auto;min-width:0}
+.h3z-ast-histacts .h3z-btn.icon{width:28px;min-width:28px;height:28px;padding:0}
 .h3z-ast-histrow .h3z-btn{flex:none;height:28px;font-weight:500}
 .h3z-ast-main,.h3z-root .h3z-ast-main{display:flex;flex-direction:column;min-height:0;min-width:0;flex:1;margin:0;padding:0;border:none;background:transparent;box-shadow:none}
 .h3z-ast-log{flex:1;min-height:0;min-width:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:2px 0;margin:0;border:none;background:transparent;box-shadow:none}
@@ -56,21 +72,22 @@ const ASSIST_CSS = `
 .h3z-ast-msg .h3z-card-h h4{font-size:12px;font-weight:650}
 .h3z-ast-msg.user{border-color:color-mix(in srgb,var(--a1) 28%,transparent);background:color-mix(in srgb,var(--a1) 8%,var(--panel))}
 .h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text}
-.h3z-ast-bubble{white-space:pre-wrap;word-break:break-word;font-size:12.5px;font-weight:400;line-height:1.5;min-width:0}
+.h3z-ast-bubble{white-space:normal;word-break:break-word;overflow-wrap:anywhere;font-size:12.5px;font-weight:400;line-height:1.5;min-width:0;background:transparent;border:none;padding:0;margin:0;box-shadow:none}
 .h3z-ast-msg .h3z-row{gap:5px;flex-wrap:wrap;margin-top:6px}
 .h3z-ast-msg .h3z-btn{font-weight:500}
 .h3z-ast-empty{flex:1;min-height:0;min-width:0;display:flex;align-items:center;justify-content:center;padding:12px 16px;pointer-events:none}
 .h3z-ast-emptyblurb{max-width:280px;margin:0;text-align:center;font-size:12px;font-weight:400;line-height:1.5;color:var(--mut);white-space:pre-line}
 /* Composer card: textarea full width, toolbar below, never clipped */
-.h3z-ast-compose{flex:none;position:relative;z-index:2;display:flex;flex-direction:column;gap:8px;padding:10px;margin:0 0 8px;min-width:0;width:100%;max-width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow:hidden}
-.h3z-ast-compose textarea.h3z-ast-input,.h3z-ast-compose .h3z-ast-input{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;max-height:132px;resize:none;overflow-y:auto;font-size:12.5px;font-weight:400;line-height:1.4;box-sizing:border-box;margin:0}
-.h3z-ast-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;width:100%}
-.h3z-ast-toolbar .h3z-ast-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;flex:1 1 auto}
-.h3z-ast-toolbar .h3z-ast-send{flex:none;margin-left:auto}
+.h3z-ast-compose{flex:0 0 auto;flex-shrink:0;position:relative;z-index:2;display:flex;flex-direction:column;gap:6px;padding:8px;margin:0;min-width:0;width:100%;max-width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow:hidden}
+.h3z-ast-compose textarea.h3z-ast-input,.h3z-ast-compose .h3z-ast-input{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;max-height:140px;resize:none;overflow-y:auto;font-size:12.5px;font-weight:400;line-height:1.45;box-sizing:border-box;margin:0;flex:0 0 auto}
+.h3z-ast-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;min-width:0;width:100%}
+.h3z-ast-toolbar .h3z-ast-tools{display:flex;flex-wrap:nowrap;align-items:center;gap:5px;min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:thin}
+.h3z-ast-toolbar .h3z-ast-send{flex:none;grid-column:2;grid-row:1;align-self:center;margin:0;white-space:nowrap}
+.h3z-ast-toolbar .h3z-pill,.h3z-ast-toolbar .h3z-ast-neighpill{flex:none;white-space:nowrap}
 .h3z-ast-stylechips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
 .h3z-ast-stylechips .h3z-pill{font-size:11px;font-weight:500;padding:3px 8px;flex:none}
-.h3z-ast-neighpill{appearance:none;-webkit-appearance:none;font:inherit;font-size:11px;font-weight:500;padding:3px 8px;flex:none;border:1px solid var(--line);border-radius:999px;background:var(--field);color:var(--mut);cursor:pointer;margin:0}
-.h3z-ast-neighpill.on{color:var(--txt);border-color:color-mix(in srgb,var(--a1) 45%,var(--line));background:color-mix(in srgb,var(--a1) 14%,var(--field))}
+.h3z-ast-neighpill{appearance:none;-webkit-appearance:none;font:inherit;font-size:11px;font-weight:600;padding:0 8px;height:26px;min-width:26px;flex:none;border:1px solid var(--line);border-radius:999px;background:var(--field);color:var(--mut);cursor:pointer;margin:0;display:inline-flex;align-items:center;justify-content:center;gap:0}
+.h3z-ast-neighpill.on{color:var(--txt);border-color:color-mix(in srgb,var(--a1) 45%,var(--line));background:color-mix(in srgb,var(--a1) 14%,var(--field));box-shadow:0 0 0 1px color-mix(in srgb,var(--a1) 25%,transparent)}
 .h3z-ast-uploads{display:flex;flex-wrap:wrap;gap:4px;min-width:0;width:100%}
 .h3z-ast-settings .h3z-settabs{margin-left:-12px;margin-right:-12px}
 .h3z-ast-presetlist{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -88,15 +105,162 @@ const ASSIST_CSS = `
 .h3z-ast-styleops .h3z-btn{width:26px;height:26px;padding:0}
 .h3z-ast-stylename{display:block;font-size:12.5px;font-weight:650;line-height:1.3;word-break:break-word}
 .h3z-ast-styledesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:11px;font-weight:400;line-height:1.35}
-.h3z-ast-reason{margin:0 0 6px;border-left:2px solid color-mix(in srgb,var(--a1) 40%,transparent);padding:4px 0 4px 8px;color:var(--mut);font-size:11px;min-width:0}
-.h3z-ast-reason summary{cursor:pointer;list-style:none}
-.h3z-ast-reasonbody{max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.h3z-ast-content{display:flex;flex-direction:column;gap:6px;min-width:0;background:transparent}
+.h3z-ast-bubble{background:transparent;border:none;padding:0;margin:0;box-shadow:none}
+.h3z-ast-msg.user .h3z-ast-bubble{background:transparent;border:none}
+.h3z-ast-bubble.plain{white-space:pre-wrap}
+.h3z-ast-p{margin:0 0 .55em}
+.h3z-ast-p:last-child{margin-bottom:0}
+.h3z-ast-h{margin:.55em 0 .3em;font-weight:700;color:var(--txt);line-height:1.35}
+.h3z-ast-h.h1{font-size:1.15em}.h3z-ast-h.h2{font-size:1.08em}.h3z-ast-h.h3{font-size:1.02em}
+.h3z-ast-ul,.h3z-ast-ol{margin:.3em 0 .55em;padding-left:1.3em}
+.h3z-ast-li{margin:.12em 0}
+.h3z-ast-code{font-family:ui-monospace,Consolas,monospace;font-size:.92em;background:color-mix(in srgb,var(--a1) 12%,var(--field));color:var(--a1);padding:1px 5px;border-radius:5px}
+.h3z-ast-pre{margin:.4em 0;padding:8px 10px;border-radius:8px;background:var(--field);border:1px solid var(--line);overflow-x:auto;max-width:100%;white-space:pre;box-sizing:border-box}
+.h3z-ast-pre code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--txt);background:transparent;padding:0;border-radius:0}
+.h3z-ast-a{color:var(--a1);text-decoration:underline;word-break:break-all}
+.h3z-ast-reason{margin:0;border-left:2px solid color-mix(in srgb,var(--a1) 40%,transparent);padding:4px 0 4px 8px;color:var(--mut);font-size:11px;min-width:0;background:transparent}
+.h3z-ast-reason summary{display:flex;align-items:center;gap:0;cursor:pointer;list-style:none;user-select:none}
+.h3z-ast-reason summary::-webkit-details-marker{display:none}
+.h3z-ast-reasondot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--a1);margin-right:6px;vertical-align:middle;flex:none}
+.h3z-ast-reason.live .h3z-ast-reasondot{animation:h3zAstPulse 1s infinite alternate}
+.h3z-ast-reasonbody{max-height:120px;overflow:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;background:transparent}
 @media (max-width:360px){.h3z-ast-stylelist{grid-template-columns:1fr}}
 `;
 
 
 
 
+
+
+/** Escape text for HTML text nodes / attributes. */
+export function astEsc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function _astSafeHref(url) {
+  const u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return "";
+  if (/[\s<>"']/.test(u)) return "";
+  return u.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+/** Inline markdown on already-escaped text. Only closed markers render (stream-safe). */
+function _astInline(s) {
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (m, label, url) => {
+    const href = _astSafeHref(url);
+    if (!href) return m;
+    return `<a class="h3z-ast-a" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  // Bold first. Underscore forms require word boundaries (CommonMark: no intraword emphasis),
+  // so snake_case keys like non_diegetic_music stay intact. Code is already parked by astMd.
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![A-Za-z0-9_])/g, "$1<strong>$2</strong>");
+  s = s.replace(/(^|[^\w*])\*([^*\n]+?)\*(?![\w*])/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])/g, "$1<em>$2</em>");
+  return s;
+}
+
+function _astRenderLists(lists) {
+  if (!lists?.length) return "";
+  return lists.map((list) => {
+    const tag = list.ordered ? "ol" : "ul";
+    const cls = list.ordered ? "h3z-ast-ol" : "h3z-ast-ul";
+    const body = list.items.map((li) => `<li class="h3z-ast-li">${li.html}${_astRenderLists(li.lists)}</li>`).join("");
+    return `<${tag} class="${cls}">${body}</${tag}>`;
+  }).join("");
+}
+
+/**
+ * Small safe markdown → HTML. Escape first; no raw HTML passthrough.
+ * Stream-friendly: unclosed ** / ` stay literal; an unclosed ``` fence becomes a trailing code block.
+ */
+export function astMd(raw) {
+  if (raw == null || raw === "") return "";
+  let text = astEsc(raw);
+  const slots = [];
+  const park = (html) => {
+    const id = `\uE000${slots.length}\uE001`;
+    slots.push(html);
+    return id;
+  };
+  text = text.replace(/```([a-zA-Z0-9_-]*)\r?\n?([\s\S]*?)```/g, (_, _lang, code) =>
+    park(`<pre class="h3z-ast-pre"><code>${code.replace(/^\r?\n/, "").replace(/\r?\n$/, "")}</code></pre>`));
+  text = text.replace(/```([a-zA-Z0-9_-]*)\r?\n?([\s\S]*)$/g, (_, _lang, code) =>
+    park(`<pre class="h3z-ast-pre"><code>${code}</code></pre>`));
+  text = text.replace(/`([^`\n]+)`/g, (_, code) => park(`<code class="h3z-ast-code">${code}</code>`));
+
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  const para = [];
+  let i = 0;
+  const flushPara = () => {
+    if (!para.length) return;
+    out.push(`<p class="h3z-ast-p">${_astInline(para.join("<br>"))}</p>`);
+    para.length = 0;
+  };
+
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (/^\uE000\d+\uE001$/.test(ln.trim())) {
+      flushPara();
+      out.push(ln.trim());
+      i++;
+      continue;
+    }
+    const heading = ln.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushPara();
+      const level = Math.min(3, heading[1].length);
+      out.push(`<div class="h3z-ast-h h${level}">${_astInline(heading[2])}</div>`);
+      i++;
+      continue;
+    }
+    if (/^(\s*)([-*]|\d+\.)\s+/.test(ln)) {
+      flushPara();
+      const items = [];
+      while (i < lines.length) {
+        const u = lines[i].match(/^(\s*)([-*])\s+(.+)$/);
+        const o = lines[i].match(/^(\s*)(\d+)\.\s+(.+)$/);
+        if (!(u || o)) break;
+        const m = u || o;
+        const indent = m[1].replace(/\t/g, "  ").length;
+        items.push({ depth: Math.min(4, Math.floor(indent / 2)), ordered: !!o, html: _astInline(m[3]) });
+        i++;
+      }
+      const root = { lists: [] };
+      const stack = [{ depth: -1, node: root }];
+      for (const it of items) {
+        while (stack.length > 1 && stack[stack.length - 1].depth >= it.depth) stack.pop();
+        const parent = stack[stack.length - 1].node;
+        if (!parent.lists) parent.lists = [];
+        let list = parent.lists[parent.lists.length - 1];
+        if (!list || list.ordered !== it.ordered || list.depth !== it.depth) {
+          list = { ordered: it.ordered, depth: it.depth, items: [] };
+          parent.lists.push(list);
+        }
+        const li = { html: it.html, lists: [] };
+        list.items.push(li);
+        stack.push({ depth: it.depth, node: li });
+      }
+      out.push(_astRenderLists(root.lists));
+      continue;
+    }
+    if (!ln.trim()) { flushPara(); i++; continue; }
+    para.push(ln);
+    i++;
+  }
+  flushPara();
+  return out.join("").replace(/\uE000(\d+)\uE001/g, (_, n) => slots[Number(n)] || "");
+}
+
+function astFillMd(el, raw) {
+  if (!el) return;
+  const text = raw == null ? "" : String(raw);
+  if (el.dataset.mdRaw === text) return;
+  el.dataset.mdRaw = text;
+  el.innerHTML = astMd(text);
+}
 
 export function installAssist(Editor, { C, h, ICON }) {
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -108,8 +272,8 @@ export function installAssist(Editor, { C, h, ICON }) {
       if (!this._ast) {
         this._ast = { el: null, busy: false, abort: null, status: { state: "idle", models: [], error: "" }, setOpen: false,
           setTab: "connection", editPreset: "", presetDraft: null, sideOpen: false, connectSeq: 0,
-          uploads: [], uploading: false, styleQuery: "", styleCategory: "all" };
-      }
+          uploads: [], uploading: false, styleQuery: "", styleCategory: "all", drafts: this.astLoadDrafts() };
+      } else if (!this._ast.drafts) this._ast.drafts = this.astLoadDrafts();
       if (!this.astPreset()) this.astSet((a) => { a.preset = "chat"; });
       if (this.tool === "assist" && this.$.left?.querySelector(".h3z-ast-panel")) {
         this.astConnect(true);
@@ -122,8 +286,11 @@ export function installAssist(Editor, { C, h, ICON }) {
     },
     closeAssist() {
       if (this._ast) this._ast.connectSeq++;
+      this.astCaptureDraft();
+      this.astPersistDrafts();
       clearTimeout(this._astCfgT);
       clearTimeout(this._astUnloadT);
+      clearTimeout(this._astDraftT);
       this._ast?.abort?.abort();
       this._ast = null;
       if (this.tool === "assist") {
@@ -133,8 +300,11 @@ export function installAssist(Editor, { C, h, ICON }) {
     },
     disposeAssist() {
       if (this._ast) this._ast.connectSeq++;
+      this.astCaptureDraft();
+      this.astPersistDrafts();
       clearTimeout(this._astCfgT);
       clearTimeout(this._astUnloadT);
+      clearTimeout(this._astDraftT);
       this._ast?.abort?.abort();
       this._ast = null;
     },
@@ -145,6 +315,61 @@ export function installAssist(Editor, { C, h, ICON }) {
       this.flushSave();
     },
     astApplyCfg(patch) { this.astSet((a) => { a.cfg = { ...a.cfg, ...patch }; }); },
+    astDraftId() { return this.p?.assistant?.active || "none"; },
+    astLoadDrafts() {
+      try {
+        const raw = localStorage.getItem("h3zs.ast.drafts");
+        const data = raw ? JSON.parse(raw) : {};
+        return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+      } catch { return {}; }
+    },
+    astPersistDrafts() {
+      try {
+        const drafts = this._ast?.drafts;
+        if (!drafts) return;
+        // Keep only non-empty drafts; cap size
+        const out = {};
+        for (const [k, v] of Object.entries(drafts)) {
+          if (!v || typeof v !== "object") continue;
+          const text = String(v.text || "");
+          if (!text) continue;
+          out[String(k).slice(0, 80)] = { text: text.slice(0, 20000), height: Math.max(44, Math.min(220, Number(v.height) || 44)) };
+        }
+        localStorage.setItem("h3zs.ast.drafts", JSON.stringify(out));
+      } catch {}
+    },
+    astScheduleDraftPersist() {
+      clearTimeout(this._astDraftT);
+      this._astDraftT = setTimeout(() => this.astPersistDrafts(), 250);
+    },
+    astCaptureDraft() {
+      const A = this._ast; if (!A) return;
+      const ta = A.el?.querySelector?.("textarea.h3z-ast-input");
+      if (!ta) return;
+      if (!A.drafts) A.drafts = this.astLoadDrafts();
+      const id = this.astDraftId();
+      if (!ta.value) delete A.drafts[id];
+      else A.drafts[id] = { text: ta.value, height: parseInt(ta.style.height, 10) || 44 };
+      clearTimeout(this._astDraftT);
+      this.astPersistDrafts();
+    },
+    astRememberDraft(ta) {
+      const A = this._ast; if (!A || !ta) return;
+      if (!A.drafts) A.drafts = this.astLoadDrafts();
+      const id = this.astDraftId();
+      const text = ta.value;
+      if (!text) delete A.drafts[id];
+      else A.drafts[id] = { text, height: parseInt(ta.style.height, 10) || 44 };
+      this.astScheduleDraftPersist();
+    },
+    astClearDraft(cid) {
+      clearTimeout(this._astDraftT);
+      this._astDraftT = null;
+      const A = this._ast;
+      const id = cid || this.astDraftId();
+      if (A?.drafts) delete A.drafts[id];
+      this.astPersistDrafts();
+    },
     astText(k, e, connection = false) {
       clearTimeout(this._astCfgT);
       if (connection && this._ast) {
@@ -190,11 +415,12 @@ export function installAssist(Editor, { C, h, ICON }) {
     },
 
     astNewChat(render = true) {
+      this.astCaptureDraft();
       const cid = id("c");
       this.astSet((a) => { a.chats.unshift({ id: cid, title: "", created: Date.now(), msgs: [] }); a.active = cid; });
       if (render) this.renderAssist();
     },
-    astSelectChat(cid) { this.astSet((a) => { a.active = cid; }); if (this._ast) this._ast.sideOpen = false; this.renderAssist(); },
+    astSelectChat(cid) { this.astCaptureDraft(); this.astSet((a) => { a.active = cid; }); if (this._ast) this._ast.sideOpen = false; this.renderAssist(); },
     astRenameChat(cid) {
       const chat = this.p.assistant.chats.find((c) => c.id === cid); if (!chat) return;
       const title = prompt(T("Название чата"), chat.title || ""); if (title == null) return;
@@ -315,6 +541,7 @@ export function installAssist(Editor, { C, h, ICON }) {
     },
     astOpenSettings(tab = "connection") {
       if (!this._ast) return;
+      this.astCaptureDraft();
       this._ast.setOpen = true; this._ast.setTab = tab;
       if (tab === "presets" && !this._ast.presetDraft) {
         const p = this.astPreset() || BUILTINS[0];
@@ -390,7 +617,7 @@ export function installAssist(Editor, { C, h, ICON }) {
         const x = this.seg(j); if (!x) continue;
         const nr = C.orderedRefs(this.p, x).map((a) => a.name);
         const bits = [];
-        if ((x.prompt || "").trim()) bits.push(T("промпт «{0}»", x.prompt.trim().slice(0, 500)));
+        if ((x.prompt || "").trim()) bits.push(T("промпт «{0}»", x.prompt.trim().slice(0, 16000)));
         if (nr.length) bits.push(T("референсы: {0}", nr.join(", ")));
         if (bits.length) L.push(T("Соседний отрезок {0}: {1}.", j + 1, bits.join("; ")));
       }
@@ -408,12 +635,15 @@ export function installAssist(Editor, { C, h, ICON }) {
       const ta = A.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input");
       const text = ta?.value.trim() || (A.uploads.length ? T("Опиши прикреплённые изображения.") : "");
       if (!text) return;
+      // Clear composer + draft first so paint/render cannot re-save or restore the sent text.
+      if (ta) { ta.value = ""; ta.style.height = "44px"; ta.style.maxHeight = ""; }
+      this.astClearDraft(this.p.assistant.active);
       A.busy = true; this.astPaintComposer();
       if (!this.p.assistant.cfg.api_model) this.astOpenSettings("connection");
       if (!this.p.assistant.cfg.api_model || !(A.status.state === "connected" || await this.astConnect(true))) {
         A.busy = false; this.astPaintComposer();
         const input = A.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input");
-        if (input) { input.value = text; this.astAutoGrow(input); }
+        if (input) { input.value = text; this.astAutoGrow(input); this.astRememberDraft(input); }
         this.toast(this.p.assistant.cfg.api_model ? T("Сначала подключитесь к API") : T("Выберите модель в настройках API"), true);
         return;
       }
@@ -425,7 +655,7 @@ export function installAssist(Editor, { C, h, ICON }) {
         if (!c.title) c.title = text.slice(0, 60);
         c.msgs.push({ role: "assistant", text: "" });
       });
-      ta.value = ""; ta.style.height = "44px";
+      this.astClearDraft(cid); // again after any interim remember
       this.renderAssist();
       const messages = this.astMessages(), cfg = this.p.assistant.cfg, attachments = this.astAttachments();
       A.uploads = [];
@@ -474,44 +704,71 @@ export function installAssist(Editor, { C, h, ICON }) {
             if (!answer && !reasoning && failed) c.msgs.pop();
           }
         });
-        A.abort = null; A.busy = false; this.renderAssist();
+        A.abort = null; A.busy = false;
+        this.astClearDraft(cid);
+        this.renderAssist();
         if (answer) this.astScheduleUnload();
       }
     },
     astStop() { this._ast?.abort?.abort(); },
     astReasoning(text, active) {
-      return h("details", { class: "h3z-ast-reason", open: active || undefined },
+      return h("details", { class: "h3z-ast-reason" + (active ? " live" : ""), open: active || undefined },
         h("summary", null, h("i", { class: "h3z-ast-reasondot" }), h("span", null, active ? T("Модель размышляет…") : T("Размышления модели"))),
-        h("div", { class: "h3z-ast-reasonbody" }, text));
+        h("div", { class: "h3z-ast-reasonbody", dataset: { mdRaw: text || "" }, html: astMd(text) }));
     },
     astPaintStream(answer, reasoning) {
       const pending = this._ast?.el.querySelector(".h3z-ast-msg.pending"); if (!pending) return;
-      const bubble = pending.querySelector(".tx"); if (bubble) bubble.textContent = answer;
+      const bubble = pending.querySelector(".tx"); if (bubble) astFillMd(bubble, answer);
       let details = pending.querySelector(".h3z-ast-reason");
-      if (reasoning && !details && this.p.assistant.cfg.show_reasoning) {
+      const show = this.p.assistant.cfg.show_reasoning !== false;
+      if (reasoning && !details && show) {
         details = this.astReasoning(reasoning, !answer);
-        pending.querySelector(".h3z-ast-content")?.prepend(details);
+        const host = pending.querySelector(".h3z-ast-content") || pending;
+        const before = host.querySelector(".tx");
+        if (before) host.insertBefore(details, before);
+        else host.prepend(details);
       }
       if (details) {
         const body = details.querySelector(".h3z-ast-reasonbody");
-        body.textContent = reasoning;
-        details.querySelector("summary span").textContent = answer ? T("Размышления модели") : T("Модель размышляет…");
-        if (details.open) body.scrollTop = body.scrollHeight;
-        if (answer && details.dataset.closed !== "1") { details.open = false; details.dataset.closed = "1"; }
+        const active = !answer;
+        astFillMd(body, reasoning);
+        details.querySelector("summary span").textContent = active ? T("Модель размышляет…") : T("Размышления модели");
+        details.classList.toggle("live", active);
+        if (active) {
+          details.open = true;
+          body.scrollTop = body.scrollHeight;
+        } else if (details.dataset.closed !== "1") {
+          details.open = false;
+          details.dataset.closed = "1";
+        }
       }
     },
     astSuggestion(text) {
       const ta = this._ast?.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input"); if (!ta) return;
       ta.value = text; ta.focus(); this.astAutoGrow(ta);
     },
+    /** Cap composer at ~6 lines so the message log keeps the panel. */
+    astComposeMaxH() { return 140; },
+    astComposeCollapsedH() { return 44; }, // ~2 lines
+    astComposeEmptyIsh(ta) {
+      const text = String(ta?.value || "");
+      if (!text.trim()) return true;
+      // short enough that 2 lines still show it without feeling "draft-expanded"
+      return text.length < 48 && !text.includes("\n");
+    },
     astAutoGrow(ta) {
+      if (!ta) return;
+      const focused = (typeof document !== "undefined" && document.activeElement === ta);
+      const emptyIsh = this.astComposeEmptyIsh(ta);
+      const maxH = (!focused && emptyIsh) ? this.astComposeCollapsedH() : this.astComposeMaxH();
       ta.style.height = "0px";
       ta.style.minHeight = "0";
       const contentHeight = ta.scrollHeight;
-      const height = Math.min(132, Math.max(44, contentHeight));
+      const height = Math.min(maxH, Math.max(this.astComposeCollapsedH(), contentHeight));
       ta.style.height = height + "px";
-      ta.style.minHeight = "44px";
-      ta.style.overflowY = contentHeight > 132 ? "auto" : "hidden";
+      ta.style.maxHeight = this.astComposeMaxH() + "px";
+      ta.style.minHeight = this.astComposeCollapsedH() + "px";
+      ta.style.overflowY = contentHeight > maxH ? "auto" : "hidden";
     },
     astCopy(text) { navigator.clipboard?.writeText(text); this.toast(T("Скопировано")); },
     astInsertPrompt(text, generate) {
@@ -529,11 +786,14 @@ export function installAssist(Editor, { C, h, ICON }) {
     renderAssistHead() { if (this.tool === "assist") this.renderLeft(); },
     renderAssistSettings() { if (this.tool === "assist") this.renderLeft(); },
     astStatusView() {
-      const st = this._ast?.status || { state: "idle" }, model = this.p.assistant.cfg.api_model;
-      if (st.state === "connected") return { cls: "ok", text: model || T("API подключён") };
-      if (st.state === "checking") return { cls: "busy", text: T("Проверка API…") };
-      if (st.state === "error") return { cls: "err", text: T("Нет соединения") };
-      return { cls: "", text: T("API не проверен") };
+      const st = this._ast?.status || { state: "idle" }, model = (this.p.assistant.cfg.api_model || "").trim();
+      if (st.state === "connected") {
+        const text = model || T("API подключён");
+        return { cls: "ok", text, tip: text };
+      }
+      if (st.state === "checking") return { cls: "busy", text: T("Проверка API…"), tip: T("Проверка API…") };
+      if (st.state === "error") return { cls: "err", text: T("Нет соединения"), tip: st.error || T("Нет соединения") };
+      return { cls: "", text: T("API не проверен"), tip: T("Настройки ассистента") };
     },
     /** Native H3 left-panel tool (chat or settings view). */
     renderAssistPanel(L) {
@@ -541,16 +801,20 @@ export function installAssist(Editor, { C, h, ICON }) {
       if (!this._ast) {
         this._ast = { el: null, busy: false, abort: null, status: { state: "idle", models: [], error: "" }, setOpen: false,
           setTab: "connection", editPreset: "", presetDraft: null, sideOpen: false, connectSeq: 0,
-          uploads: [], uploading: false, styleQuery: "", styleCategory: "all", styleDraft: null };
-      }
+          uploads: [], uploading: false, styleQuery: "", styleCategory: "all", styleDraft: null, drafts: this.astLoadDrafts() };
+      } else if (!this._ast.drafts) this._ast.drafts = this.astLoadDrafts();
+      this.astCaptureDraft();
       if (!this.astPreset()) this.astSet((a) => { a.preset = "chat"; });
       if (this._ast.setOpen) return this.renderAssistSettingsView(L);
       const panel = h("div", { class: "h3z-ast-panel" },
+        h("div", { class: "h3z-ph" }, h("h3", null, T("Ассистент")), this.astTitleControls()),
         this.astModeRow(),
-        h("div", { class: "h3z-scroll" }, this.astHistoryRow(), this.astMain()),
+        this.astHistoryRow(),
+        h("div", { class: "h3z-scroll" }, this.astMain()),
         this.astComposer());
       this._ast.el = panel;
-      L.append(h("div", { class: "h3z-ph" }, h("h3", null, T("Ассистент")), this.astTitleControls()), panel);
+      try { L.scrollTop = 0; L.scrollLeft = 0; } catch {}
+      L.append(panel);
       const log = panel.querySelector(".h3z-ast-log"); if (log) log.scrollTop = log.scrollHeight;
     },
     renderAssistSettingsView(L) {
@@ -570,21 +834,33 @@ export function installAssist(Editor, { C, h, ICON }) {
         : A.setTab === "generation" ? this.astSetGeneration()
         : this.astSetContext();
       const panel = h("div", { class: "h3z-ast-panel h3z-ast-settings" },
-        h("div", { class: "h3z-settabs" }, tab("connection", T("Подключение")), tab("presets", T("Пресеты")), tab("styles", T("Стили")), tab("generation", T("Генерация")), tab("context", T("Контекст"))),
-        h("div", { class: "h3z-scroll h3z-setbody" }, body));
-      this._ast.el = panel;
-      L.append(
         h("div", { class: "h3z-ph" },
           h("button", { class: "h3z-btn sm icon", title: T("Назад"), onclick: close }, "←"),
           h("h3", null, T("Настройки ассистента"))),
-        panel);
+        h("div", { class: "h3z-settabs" }, tab("connection", T("Подключение")), tab("presets", T("Пресеты")), tab("styles", T("Стили")), tab("generation", T("Генерация")), tab("context", T("Контекст"))),
+        h("div", { class: "h3z-scroll h3z-setbody" }, body));
+      this._ast.el = panel;
+      try { L.scrollTop = 0; L.scrollLeft = 0; } catch {}
+      L.append(panel);
     },
     astTitleControls() {
       const st = this.astStatusView();
       return h("div", { class: "h3z-ast-titlerow" },
-        h("button", { class: "h3z-ast-status " + st.cls, title: T("Настройки ассистента"), onclick: () => this.astOpenSettings("connection") },
-          h("i", { class: "h3z-ast-dot" }), h("span", null, st.text)),
-        h("button", { class: "h3z-btn sm icon", title: T("Настройки ассистента"), html: ICON.settings, onclick: () => this.astOpenSettings("connection") }));
+        h("button", {
+          type: "button",
+          class: "h3z-ast-status " + st.cls,
+          title: st.tip || st.text,
+          "aria-label": st.tip || st.text,
+          onclick: () => this.astOpenSettings("connection"),
+        }, h("i", { class: "h3z-ast-dot", "aria-hidden": "true" }), h("span", null, st.text)),
+        h("button", {
+          type: "button",
+          class: "h3z-btn sm icon h3z-ast-gear",
+          title: T("Настройки ассистента"),
+          "aria-label": T("Настройки ассистента"),
+          html: ICON.settings,
+          onclick: () => this.astOpenSettings("connection"),
+        }));
     },
     astHead() { return this.astTitleControls(); },
     astModeRow() {
@@ -612,10 +888,11 @@ export function installAssist(Editor, { C, h, ICON }) {
       return h("button", {
         type: "button",
         class: "h3z-pill h3z-ast-neighpill" + (on ? " on" : ""),
-        title: T("Промпты и референсы предыдущего и следующего отрезков — удобно при продлении клипа."),
+        title: T("Соседние отрезки: промпты и референсы предыдущего и следующего — удобно при продлении клипа."),
+        "aria-label": T("Соседние отрезки"),
         "aria-pressed": on ? "true" : "false",
         onclick: () => { this.astApplyCfg({ ctx_neighbours: !on }); this.astPaintComposer(); },
-      }, T("Соседние отрезки"));
+      }, "⟷");
     },
     astStylesRow() { return null; },
     astToggleStyle(sid) {
@@ -642,9 +919,9 @@ export function installAssist(Editor, { C, h, ICON }) {
         h("span", { class: "h3z-lbl" }, T("Диалог")),
         sel,
         h("div", { class: "h3z-ast-histacts" },
-          h("button", { class: "h3z-btn sm", title: T("Новый чат"), onclick: () => this.astNewChat() }, T("Новый")),
-          h("button", { class: "h3z-btn sm", title: T("Показать версии промпта этого чата"), onclick: () => this.astShowVersions() }, T("Версии")),
-          h("button", { class: "h3z-btn sm", title: T("Перевести последний ответ ассистента на русский (кратко)"), onclick: () => this.astTranslateLast() }, T("Перевод"))));
+          h("button", { class: "h3z-btn sm icon", title: T("Новый чат"), "aria-label": T("Новый чат"), html: ICON.plus, onclick: () => this.astNewChat() }),
+          h("button", { class: "h3z-btn sm icon", title: T("Показать версии промпта этого чата"), "aria-label": T("Версии"), html: ICON.copy, onclick: () => this.astShowVersions() }),
+          h("button", { class: "h3z-btn sm icon", title: T("Перевести последний ответ ассистента на русский (кратко)"), "aria-label": T("Перевод"), onclick: () => this.astTranslateLast() }, "あ")));
     },
     astBody() { return this.astMain(); },
     astStudioRail() { return null; },
@@ -710,29 +987,47 @@ export function installAssist(Editor, { C, h, ICON }) {
         h("button", { class: "h3z-btn sm", onclick: () => this.astInsertPrompt(m.text, true) }, T("Вставить и сгенерировать"))) : null;
       return h("div", { class: "h3z-card h3z-glass h3z-ast-msg" + (user ? " user" : "") + (pending ? " pending" : "") },
         h("div", { class: "h3z-card-h" }, h("h4", null, user ? T("Вы") : "H3")),
-        !user && m.reasoning && this.p.assistant.cfg.show_reasoning ? this.astReasoning(m.reasoning, pending && !m.text) : null,
-        h("div", { class: "h3z-ast-bubble tx" }, m.text), stats, acts);
+        h("div", { class: "h3z-ast-content" },
+          !user && m.reasoning && this.p.assistant.cfg.show_reasoning !== false ? this.astReasoning(m.reasoning, pending && !m.text) : null,
+          user
+            ? h("div", { class: "h3z-ast-bubble tx plain" }, m.text)
+            : h("div", { class: "h3z-ast-bubble tx", dataset: { mdRaw: m.text || "" }, html: astMd(m.text) }),
+          stats, acts));
     },
     astComposer() {
       const A = this._ast, cfg = this.p.assistant.cfg;
       const ta = h("textarea", { class: "h3z-ta h3z-ast-input", rows: "2",
         placeholder: T("Опишите сцену или задайте вопрос…"),
-        title: T("Enter — отправить · Shift+Enter — новая строка"), spellcheck: "false" });
-      ta.addEventListener("input", () => this.astAutoGrow(ta));
-      ta.addEventListener("keydown", (e) => e.stopPropagation());
+        title: T("Enter / Ctrl+Enter — отправить · Shift+Enter — новая строка"), spellcheck: "false" });
+      const draft = A.drafts?.[this.astDraftId()];
+      if (draft?.text) {
+        ta.value = draft.text;
+        if (draft.height) { const maxH = this.astComposeMaxH(); ta.style.height = Math.max(44, Math.min(maxH, draft.height)) + "px"; ta.style.maxHeight = maxH + "px"; }
+      }
+      ta.addEventListener("input", () => { this.astAutoGrow(ta); this.astRememberDraft(ta); });
+      ta.addEventListener("focus", () => this.astAutoGrow(ta));
+      ta.addEventListener("blur", () => { this.astAutoGrow(ta); this.astRememberDraft(ta); });
+      ta.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+        if (e.shiftKey && !e.ctrlKey && !e.metaKey) return; // newline
+        e.preventDefault();
+        if (!this._ast?.busy) this.astSend();
+      });
+      queueMicrotask(() => this.astAutoGrow(ta));
       const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: true, style: "display:none" });
       file.onchange = () => { this.astAddImages([...file.files]); file.value = ""; };
       const send = A.busy
         ? h("button", { class: "h3z-btn sm danger h3z-ast-send", html: ICON.stop + `<span>${T("Стоп")}</span>`, onclick: () => this.astStop() })
         : h("button", { class: "h3z-btn sm primary h3z-ast-send", disabled: A.uploading || undefined, html: `<span>${A.uploading ? T("Загрузка…") : T("Отправить")}</span>`, onclick: () => this.astSend() });
       const styles = this.astStyles().filter((s) => cfg.styles.includes(s.id));
+      const styleLab = styles.length ? T("＋ Стили ·{0}", styles.length) : T("＋ Стили");
+      const styleTitle = styles.length
+        ? T("Выбрать стили промпта") + " — " + styles.map((s) => s.name).join(", ")
+        : T("Выбрать стили промпта");
       const tools = h("div", { class: "h3z-ast-tools" },
         h("button", { class: "h3z-btn sm icon", title: T("Прикрепить изображения"), disabled: A.busy || A.uploading || undefined, html: ICON.upload, onclick: () => file.click() }),
-        h("button", { class: "h3z-pill", title: T("Выбрать стили промпта"), onclick: () => this.astOpenSettings("styles") }, T("＋ Стили")),
-        ...styles.map((s) => h("button", { class: "h3z-pill on", title: s.description || s.name, onclick: () => this.astOpenSettings("styles") },
-          s.name,
-          " ",
-          h("span", { title: T("Убрать стиль"), onclick: (e) => { e.stopPropagation(); this.astToggleStyle(s.id); } }, "×"))),
+        h("button", { class: "h3z-pill" + (styles.length ? " on" : ""), title: styleTitle, onclick: () => this.astOpenSettings("styles") }, styleLab),
         this.astNeighPill());
       const compose = h("div", { class: "h3z-ast-compose" },
         A.uploads.length ? h("div", { class: "h3z-ast-uploads" }, A.uploads.map((u, i) => h("span", { class: "h3z-chip" },
@@ -748,9 +1043,10 @@ export function installAssist(Editor, { C, h, ICON }) {
     astPaintComposer() {
       const old = this._ast?.el?.querySelector(".h3z-ast-compose"); if (!old) return;
       const input = old.querySelector("textarea"), text = input?.value || "", focused = document.activeElement === input;
+      if (input) this.astRememberDraft(input);
       old.replaceWith(this.astComposer());
       const next = this._ast.el.querySelector(".h3z-ast-compose textarea");
-      if (next && text) { next.value = text; this.astAutoGrow(next); }
+      if (next && text) { next.value = text; this.astAutoGrow(next); this.astRememberDraft(next); }
       if (next && focused) next.focus();
     },
     astSettings() { return null; },
@@ -806,8 +1102,8 @@ export function installAssist(Editor, { C, h, ICON }) {
         e.onchange = () => onSample({ ...profile, [name]: Math.max(min, Math.min(max, Number(e.value) || 0)) });
         return this.field(label, e);
       };
-      const tokens = h("input", { class: "h3z-in", type: "number", value: cfg.max_tokens, step: 50, min: 16, max: 16000, disabled: disabled || undefined });
-      tokens.onchange = () => onTokens(Math.max(16, Math.min(16000, Number(tokens.value) || 16)));
+      const tokens = h("input", { class: "h3z-in", type: "number", value: cfg.max_tokens, step: 256, min: 16, max: 32768, disabled: disabled || undefined });
+      tokens.onchange = () => onTokens(Math.max(16, Math.min(32768, Number(tokens.value) || 16)));
       return h("div", null,
         h("div", { class: "h3z-lbl" }, cfg.thinking ? T("Параметры режима мышления") : T("Параметры обычного режима")),
         h("div", { class: "h3z-note" }, T("Два профиля хранятся независимо: переключение мышления не изменяет их значения.")),

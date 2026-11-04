@@ -393,7 +393,7 @@ def _stream_once(base, api_key, body, stream_timeout):
         yield "stats", stats
 
 
-def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=16000,
+def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=32768,
                 api_base_url="", api_key="", api_model="", attachments=None, engine_defaults=False,
                 sampling=None, thinking=True, stream_timeout=600):
     """Yield tokens, reasoning, notices and response statistics from an OpenAI-compatible API."""
@@ -407,16 +407,26 @@ def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=16000,
         stream_timeout = max(1.0, float(stream_timeout))
     except (TypeError, ValueError):
         stream_timeout = 600.0
+    try:
+        max_tokens = int(max_tokens)
+    except (TypeError, ValueError):
+        max_tokens = 32768
+    max_tokens = max(16, min(32768, max_tokens))
+    # Strata (and similar) derive a soft thinking budget from max_tokens (~75%). Keep headroom for the answer.
+    think_budget = max(1024, min(24576, max_tokens - 4096)) if thinking and max_tokens > 4096 else 0
     body = {"model": model, "messages": _with_images(messages, attachments), "stream": True,
             "chat_template_kwargs": {"enable_thinking": bool(thinking)}, "think": bool(thinking),
             "stream_options": {"include_usage": True}}
+    if thinking and think_budget:
+        body["chat_template_kwargs"]["thinking_budget"] = think_budget
+        body["thinking_budget"] = think_budget
     if not engine_defaults:
         params = sampling if isinstance(sampling, dict) else {"temperature": float(temperature), "top_p": float(top_p)}
         body.update(params)
         body["max_tokens"] = int(max_tokens)
     has_images = any(isinstance(m.get("content"), list) for m in body["messages"])
     dropped = set()
-    for _ in range(5):
+    for _ in range(6):
         emitted = False
         try:
             for kind, text in _stream_once(base, str(api_key or "").strip(), body, stream_timeout):
@@ -426,9 +436,14 @@ def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=16000,
         except ApiError as e:
             if emitted or e.status not in (400, 415, 422):
                 raise
-            field = next((key for key in ("stream_options", "chat_template_kwargs", "think") if key in body and key not in dropped), None)
+            field = next((key for key in ("stream_options", "thinking_budget", "chat_template_kwargs", "think") if key in body and key not in dropped), None)
+            if field == "thinking_budget" and isinstance(body.get("chat_template_kwargs"), dict):
+                body["chat_template_kwargs"].pop("thinking_budget", None)
             if field:
-                body.pop(field)
+                if field != "chat_template_kwargs":
+                    body.pop(field, None)
+                else:
+                    body.pop(field, None)
                 dropped.add(field)
                 yield "notice", f"API не поддерживает {field}; запрос повторён без этого поля."
             elif has_images:

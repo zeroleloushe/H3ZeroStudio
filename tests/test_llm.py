@@ -63,7 +63,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/v1/chat/completions" or not self._authorized():
             return
         if body.get("model") in ("strict", "no-vision"):
-            field = next((key for key in ("stream_options", "chat_template_kwargs", "think") if key in body), None)
+            field = next((key for key in ("stream_options", "thinking_budget", "chat_template_kwargs", "think") if key in body), None)
             if field:
                 self._json(422, {"error": {"message": "unsupported field: " + field}})
                 return
@@ -150,7 +150,13 @@ class ApiBackendTest(unittest.TestCase):
                 for key, value in sampling.items():
                     self.assertEqual(self.server.payload[key], value)
                 self.assertEqual(self.server.payload["max_tokens"], 16000)
-                self.assertEqual(self.server.payload["chat_template_kwargs"], {"enable_thinking": thinking})
+                kwargs = {"enable_thinking": thinking}
+                if thinking:
+                    kwargs["thinking_budget"] = 11904  # min(24576, 16000-4096)
+                    self.assertEqual(self.server.payload.get("thinking_budget"), 11904)
+                else:
+                    self.assertNotIn("thinking_budget", self.server.payload)
+                self.assertEqual(self.server.payload["chat_template_kwargs"], kwargs)
                 self.assertIs(self.server.payload["think"], thinking)
 
     def test_engine_defaults_omit_sampling_parameters(self):
@@ -230,8 +236,8 @@ class ApiBackendTest(unittest.TestCase):
         events = list(h3s_llm.stream_chat([{"role": "user", "content": "Hi"}], api_base_url=self.base,
                                          api_key="secret", api_model="strict"))
         self.assertEqual([event for event in events if event[0] == "token"], [("token", "Hello"), ("token", ", H3")])
-        self.assertEqual(len([event for event in events if event[0] == "notice"]), 3)
-        for key in ("stream_options", "chat_template_kwargs", "think"):
+        self.assertEqual(len([event for event in events if event[0] == "notice"]), 4)
+        for key in ("stream_options", "thinking_budget", "chat_template_kwargs", "think"):
             self.assertNotIn(key, self.server.payload)
 
     def test_non_vision_api_retries_with_text_labels(self):
@@ -322,3 +328,12 @@ class ApiBackendTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_thinking_budget_derived_from_max_tokens(self):
+        events = list(h3s_llm.stream_chat([{"role": "user", "content": "Hi"}], api_base_url=self.base,
+                                          api_key="secret", api_model="z-model", max_tokens=32768, thinking=True))
+        self.assertIn(("token", "Hello"), events)
+        self.assertEqual(self.server.payload["max_tokens"], 32768)
+        self.assertEqual(self.server.payload.get("thinking_budget"), 24576)
+        self.assertEqual(self.server.payload.get("chat_template_kwargs", {}).get("thinking_budget"), 24576)

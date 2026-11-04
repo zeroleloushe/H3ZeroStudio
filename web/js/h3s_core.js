@@ -313,7 +313,7 @@ export function normalizeAssistCfg(rc) {
     top_p: roundHalf(Math.min(1, Math.max(0, num(rc.top_p, 0.9))), 2),
     thinking: rc.thinking !== false,
     sampling: { thinking: assistSampling(rc, true), plain: assistSampling(rc, false) },
-    max_tokens: Math.trunc(Math.min(16000, Math.max(16, num(rc.max_tokens, 16000)))),
+    max_tokens: (() => { const mt = num(rc.max_tokens, 32768); return Math.trunc(Math.min(32768, Math.max(16, mt === 16000 ? 32768 : mt))); })(),
     sys: String(rc.sys || "").slice(0, 8000),
     ctx_refs: rc.ctx_refs !== false,
     ctx_neighbours: rc.ctx_neighbours === true,
@@ -354,8 +354,8 @@ export function normalizeAssistant(a) {
     const msgs = [];
     for (const m of (Array.isArray(c.msgs) ? c.msgs : [])) {
       if (m && typeof m === "object" && (m.role === "user" || m.role === "assistant")) {
-        const msg = { role: m.role, text: String(m.text || "").slice(0, 20000) };
-        if (m.reasoning) msg.reasoning = String(m.reasoning).slice(0, 40000);
+        const msg = { role: m.role, text: String(m.text || "").slice(0, 120000) };
+        if (m.reasoning) msg.reasoning = String(m.reasoning).slice(0, 200000);
         if (m.stats && typeof m.stats === "object") msg.stats = {
           prompt: Math.trunc(Math.min(1000000000, Math.max(0, num(m.stats.prompt, 0)))),
           completion: Math.trunc(Math.min(1000000000, Math.max(0, num(m.stats.completion, 0)))),

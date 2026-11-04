@@ -345,13 +345,18 @@ export function installSettings(Editor, { C, h, ICON }) {
         }
         this.closeWelcome();
       };
+      this._welcomeScan = scan;
+      const scaleRow = h("div", { class: "h3z-welcome-prefs" },
+        h("span", { class: "h3z-lbl" }, T("Масштаб интерфейса студии")),
+        this.uiScaleSelect("h3z-welcome-scale"));
       const box = h("div", { class: "h3z-welcome h3z-glass" },
         h("div", { class: "hd" }, h("b", null, T("Добро пожаловать в H3ZeroStudio")), h("i", { class: "grow" }),
           h("button", { class: "h3z-btn sm icon", onclick: () => close(false) }, "✕")),
         h("div", { class: "h3z-welcome-body" },
           h("p", null, T("Таймлайн-редактор для MiniMax H3 в ComfyUI: отрезки, референсы, черновик/чистовик, апскейл и Prompt Studio.")),
           h("p", { class: "h3z-note" }, status),
-          h("p", { class: "h3z-note" }, T("Скачайте веса на вкладке «Загрузка моделей» в Настройках — без них генерация не запустится."))),
+          h("p", { class: "h3z-note" }, T("Скачайте веса на вкладке «Загрузка моделей» в Настройках — без них генерация не запустится.")),
+          scaleRow),
         h("div", { class: "h3z-row" },
           h("button", { class: "h3z-btn sm", onclick: () => close(true) }, T("Больше не показывать")),
           h("i", { class: "grow" }),
@@ -477,7 +482,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const row = (ok, name, detail) => h("div", { class: "h3z-modrow" + (ok === null ? "" : ok ? " ok" : " bad") }, h("b", null, ok === null ? "…" : ok ? "✓" : "✕"), h("div", null, h("div", null, name), detail ? h("small", null, detail) : null));
       const presetsDet = h("div", { class: "h3z-note" }, T("Пресеты моделей и стек LoRA — во вкладке "), h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.tool = "models"; this.renderTools(); this.renderLeft(); } }, T("«Модели»")), T(" слева (быстрый доступ)."));
       const models = det(T("Компоненты и VRAM"),
-        row(known ? uc.learned : null, T("Обученный латентный апскейлер H3"), known ? (uc.learned ? uc.learned_models.join(", ") : !uc.learned_node ? T("нет ноды MinimaxH3LatentUpscaler3D") : T("нет модели minimax_h3_latent_upscaler_3d_bf16.safetensors")) : T("проверка…")),
+        row(known ? uc.learned : null, T("Обученный латентный апскейлер H3"), known ? (uc.learned ? uc.learned_models.join(", ") : !uc.learned_node ? T("нет ноды (встроенная / Pixaroma / LBH)") : T("нет модели minimax_h3_latent_upscaler_3d_bf16.safetensors")) : T("проверка…")),
         (paths.latent_upscale_models || []).length ? h("div", { class: "h3z-note mono" }, (paths.latent_upscale_models || []).join("\n")) : null,
         row(this.opts.tiny_vaes ? taeh3 : null, T("taeh3 — живое превью"), taeh3 ? (this.opts.tiny_vaes || []).filter((x) => /taeh3/i.test(x)).join(", ") : T("нет — превью latent2rgb")),
         (paths.vae_approx || []).length ? h("div", { class: "h3z-note mono" }, (paths.vae_approx || []).join("\n")) : null,

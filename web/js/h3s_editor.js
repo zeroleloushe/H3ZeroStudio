@@ -4,6 +4,7 @@ import { injectStyle } from "./h3s_style.js";
 import { installTakes, installRestore } from "./h3s_takes.js";
 import { installGenMeta } from "./h3s_genmeta.js";
 import { loadPluginThemes, applyTheme } from "./h3s_theme.js";
+import { UI_SCALES, uiScaleSetting, applyUiScale, uiScaleFactor, uiLocalPoint, uiLocalSize, uiLocalBounds, uiLayoutViewport, uiPlaceBelow, uiPlaceAtClient } from "./h3s_ui_scale.js";
 import { installMarkers } from "./h3s_markers.js";
 import { installAudio } from "./h3s_audio.js";
 import { installPolish } from "./h3s_polish.js";
@@ -138,6 +139,7 @@ export class H3Editor {
     this.p = C.normalizeProject(this.host.load());
     if (this.sel >= this.p.segments.length || this.sel < 0) this.sel = this.p.segments.length ? 0 : -1;
     this.root = h("div", { class: "h3z-root", tabindex: "-1" });
+    applyUiScale(uiScaleSetting(), false, this.root); // before first paint
     this.$ = {};
     this.build();
     document.body.appendChild(this.root);
@@ -304,11 +306,11 @@ export class H3Editor {
 
   /** Panel sizes and visibility persist; automatic collapsing stops after the first manual choice. */
   layoutDefaults() {
-    const W = window.innerWidth || 1600, H = window.innerHeight || 900;
+    const { W, H } = uiLayoutViewport(this.root);
     return { lw: clamp(Math.round(W * 0.15), 240, 560), rw: clamp(Math.round(W * 0.2), 340, 680), th: clamp(Math.round(H * 0.3), 230, 520) };
   }
   layoutSizes() {
-    const d = this.layoutDefaults(), u = loadLS(LAYOUT_KEY, {}), W = window.innerWidth || 1600, H = window.innerHeight || 900;
+    const d = this.layoutDefaults(), u = loadLS(LAYOUT_KEY, {}), { W, H } = uiLayoutViewport(this.root);
     return {
       lw: clamp(u.lw || d.lw, 200, Math.max(220, W * 0.4)), rw: clamp(u.rw || d.rw, 300, Math.max(320, W * 0.45)),
       th: clamp(u.th || d.th, 190, Math.max(200, H * 0.7)),
@@ -343,7 +345,8 @@ export class H3Editor {
       const start = this.layoutSizes()[key], p0 = key === "th" ? e.clientY : e.clientX;
       el.classList.add("on");
       const move = (ev) => {
-        const d = ((key === "th" ? ev.clientY : ev.clientX) - p0) * dir;
+        const scale = Math.max(0.5, uiScaleFactor() || 1);
+        const d = (((key === "th" ? ev.clientY : ev.clientX) - p0) * dir) / scale;
         const u = loadLS(LAYOUT_KEY, {}); u[key] = Math.round(start + d); saveLS(LAYOUT_KEY, u);
         this.applyLayout(); this.layoutStage();
       };
@@ -356,7 +359,7 @@ export class H3Editor {
     this._key = (e) => this.onKey(e);
     this._keyup = (e) => { if (this.root) e.stopPropagation(); };
     this._paste = (e) => this.onPaste(e);
-    this._resize = () => { if (this._rsz) return; this._rsz = requestAnimationFrame(() => { this._rsz = 0; if (this.root) { this.applyLayout(); this.renderTimeline(); this.layoutStage(); } }); };
+    this._resize = () => { if (this._rsz) return; this._rsz = requestAnimationFrame(() => { this._rsz = 0; if (this.root) { applyUiScale(uiScaleSetting(), false, this.root); this.applyLayout(); this.renderTimeline(); this.layoutStage(); } }); };
     window.addEventListener("keydown", this._key, true);
     window.addEventListener("keyup", this._keyup, true);
     document.addEventListener("paste", this._paste, true);
@@ -384,7 +387,30 @@ export class H3Editor {
     finally { if (btn) { btn.disabled = false; btn.style.opacity = ""; } }
   }
 
-  renderHeader() {
+  /** Shared H3 scale picker (header + welcome). Persists in localStorage; one setting everywhere. */
+  uiScaleSelect(extraClass = "") {
+    const scalePct = uiScaleSetting();
+    const cls = ("h3z-ui-scale" + (extraClass ? " " + extraClass : "")).trim();
+    return this.themedSelect({
+      value: String(scalePct), sm: true, className: cls,
+      title: T("Масштаб интерфейса студии"),
+      options: UI_SCALES.map((p) => ({ value: String(p), label: p + "%" })),
+      onChange: (v) => this.setUiScale(Number(v)),
+    });
+  }
+  setUiScale(pct) {
+    applyUiScale(pct, true, this.root);
+    this.applyLayout?.();
+    this.renderHeader?.();
+    this.renderTimeline?.();
+    this.layoutStage?.();
+    this.renderPreview?.();
+    this._resize?.();
+    // Keep welcome picker in sync if the start screen is open
+    if (this.$.welcomeModal) this.showWelcome?.(this._welcomeScan ?? null);
+  }
+
+    renderHeader() {
     const $ = this.$, est = C.estimate(this.p), kind = C.runKind(this.p.settings);
     $.head.innerHTML = "";
     const name = h("input", { class: "h3z-pname", value: this.p.name, spellcheck: "false", title: T("Название проекта") });
@@ -421,13 +447,14 @@ export class H3Editor {
           title: T("Поставить в очередь ComfyUI (Ctrl+Enter). Готовые неизменённые отрезки берутся из кэша") + (kind === "draft" ? T("\nЧерновик: маленький размер, быстро — для подбора промптов и дублей") : kind === "refine" ? T("\nФинал из черновика: каждый черновик увеличивается и дорабатывается (звук черновика сохраняется 1:1)") : ""), onclick: () => this.generate() })];
     }
     const history = h("div", { class: "h3z-head-group" }, undo, redo);
+    const scaleBtn = this.uiScaleSelect();
     const actions = h("div", { class: "h3z-head-group h3z-head-actions" },
       h("button", { class: "h3z-btn", html: ICON.broom + T("<span>Очистить память</span>"), title: T("Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)"), onclick: (e) => this.freeMemory(e.currentTarget) }),
       ...action.filter(Boolean),
       h("button", { class: "h3z-btn icon", title: T("Свернуть (Esc)"), html: ICON.close, onclick: () => this.close() }));
     $.head.append(
         h("div", { class: "h3z-logo" }, h("i", { html: ICON.film.replace("<svg", '<svg style="width:17px;height:17px;color:#fff"') }), h("span", null, h("b", null, "H3"), "ZeroStudio")),
-        name, chips, h("div", { class: "grow" }), history, this.timerEl(), this.monitorEl(), actions);
+        name, chips, h("div", { class: "grow" }), history, scaleBtn, this.timerEl(), this.monitorEl(), actions);
     this.updateRunUI();
   }
 
@@ -446,14 +473,9 @@ export class H3Editor {
     this.$.pop = h("div", { class: "h3z-pop h3z-glass" }, list.map((w) => h("div", null, w)));
     this.$.pop.onclick = () => { this.$.pop.remove(); this.$.pop = null; };
     this.root.append(this.$.pop);
-    // under the ⚠ chip that opened it (the header is centered, not at the right edge)
-    const a = ev?.currentTarget?.getBoundingClientRect?.() || ev?.target?.getBoundingClientRect?.();
-    if (a) {
-      const rr = this.root.getBoundingClientRect();
-      const x = Math.max(8, Math.min(a.left - rr.left + a.width / 2 - 220, rr.width - 448));
-      this.$.pop.style.left = x + "px";
-      this.$.pop.style.right = "auto";
-    }
+    // under the ⚠ chip that opened it (scale-aware local coords)
+    const anchor = ev?.currentTarget || ev?.target;
+    if (anchor?.getBoundingClientRect) uiPlaceBelow(anchor, this.$.pop, this.root, { align: "center", pad: 8, gap: 8 });
   }
 
   // ------------------------------------------------------------------ tools + left panel
@@ -521,6 +543,11 @@ export class H3Editor {
       let el = root; for (const i of r.p) { el = el?.children[i]; if (!el) break; }
       if (!el || el.className !== r.cls) { try { el = r.p.length && r.cls ? root.querySelector("." + String(r.cls).trim().split(/\s+/).join(".")) : null; } catch (e) { el = null; } }
       if (!el) continue;
+      // Never scroll the panel root or pinned header chrome — only message/log scrollers.
+      if (el === root) continue;
+      if (el.classList?.contains("h3z-ast-panel") || el.classList?.contains("h3z-ph")
+          || el.classList?.contains("h3z-ast-moderow") || el.classList?.contains("h3z-ast-histrow")
+          || el.classList?.contains("h3z-ast-compose")) continue;
       if (el.scrollTop < r.top) el.scrollTop = r.top;
       if (el.scrollLeft < r.left) el.scrollLeft = r.left;
     }
@@ -1354,7 +1381,7 @@ export class H3Editor {
       let f = Math.max(12, Math.round(this.frameAt(ev.clientX)));
       const near = edges.find((x) => Math.abs(x - f) * this.ppf < 7); if (near !== undefined && !ev.altKey) f = near;
       if (ev.shiftKey) f = Math.round(f / C.FPS) * C.FPS;
-      tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
+      uiPlaceAtClient(ev.clientX, ev.clientY, tip, this.root);
       tip.textContent = T("конец ролика {0} · {1} кадр.", C.fmtTime(f / C.FPS), f);
       this.mutate((p) => { p.end = f; p.end_mode = "fixed"; }, { coalesce: "enddrag" + e.clientX, render: "none" });
       this.renderTimeline(); this.renderHeader();
@@ -1599,7 +1626,7 @@ export class H3Editor {
     let first = true;
     const move = (ev) => {
       const f = Math.max(minF, C.snapFrames(this.frameAt(ev.clientX) - it.start));
-      tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
+      uiPlaceAtClient(ev.clientX, ev.clientY, tip, this.root);
       const warn = f < C.TRAINED_MIN_FRAMES || f > C.TRAINED_MAX_FRAMES;
       tip.innerHTML = T("{0} кадр. · {1} с{2}", f, (f / 24).toFixed(2), warn ? T(" <span style=\"color:#fbbf24\">⚠ вне 124–362</span>") : "");
       if (f !== this.seg(i).frames) {
@@ -1635,7 +1662,7 @@ export class H3Editor {
       if (!ripple) k = clamp(k, Math.ceil((fb0 - C.MAX_FRAMES) / 17), Math.floor((fb0 - minB) / 17));
       const fa = fa0 + 17 * k, fb = ripple ? fb0 : fb0 - 17 * k;
       const warn = (f) => (f < C.TRAINED_MIN_FRAMES || f > C.TRAINED_MAX_FRAMES ? ' <span style="color:#fbbf24">⚠</span>' : "");
-      tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
+      uiPlaceAtClient(ev.clientX, ev.clientY, tip, this.root);
       tip.innerHTML = T("{0}{1}: {2} с{3} · {4}: {5} с{6}", ripple ? T("только левый · ") : "", i + 1, (fa / 24).toFixed(2), warn(fa), i + 2, (fb / 24).toFixed(2), warn(fb));
       const key = fa + ":" + fb;
       if (key === last) return;
@@ -1716,9 +1743,14 @@ export class H3Editor {
       return;
     }
     if (this.tool === "assist" || this._ast) {
-      if (e.target?.matches?.(".h3z-ast-inputbox textarea") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        this.astSend();
+      // Composer: Enter / Ctrl|Cmd+Enter send; Shift+Enter newline. Capture on window owns keys, so handle here.
+      const sel = "textarea.h3z-ast-input, .h3z-ast-compose textarea, .h3z-ast-inputbox textarea";
+      const ta = e.target?.closest?.(sel) || (e.target?.matches?.(sel) ? e.target : null);
+      if (ta && e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+        if (!(e.shiftKey && !e.ctrlKey && !e.metaKey)) {
+          e.preventDefault();
+          if (!this._ast?.busy) this.astSend();
+        }
       } else if (e.key === "Escape" && !isTyping(e)) {
         e.preventDefault();
         if (this.$.menu) this.closeMenu();
@@ -1879,7 +1911,7 @@ export class H3Editor {
       let msg = d.msg || d.message || "";
       // stretch fallback: one i18n toast (RU/EN), mark so the phase handler does not repeat it
       if (d.kind === "upscale_stretch") {
-        msg = T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.");
+        msg = T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Нужна модель в models/latent_upscale_models и одна из нод: встроенная MiniMaxH3LatentUpscaleWithModel (ComfyUI ≥ PR #17412), PixaromaH3LatentUpscale (Pixaroma ≥ 1.4.238) или MinimaxH3LatentUpscaler3D (LBH).");
         this._stretchToast = true;
       }
       if (msg && this._lastWarn !== msg) { this._lastWarn = msg; this.toast(msg, true); }
@@ -1890,7 +1922,7 @@ export class H3Editor {
       if (d.phase !== "upscale") this.tileOverlay(null);
       if (d.input === "stretch" && !this._stretchToast) {
         this._stretchToast = true;
-        this.toast(T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models."), true);
+        this.toast(T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Нужна модель в models/latent_upscale_models и одна из нод: встроенная MiniMaxH3LatentUpscaleWithModel (ComfyUI ≥ PR #17412), PixaromaH3LatentUpscale (Pixaroma ≥ 1.4.238) или MinimaxH3LatentUpscaler3D (LBH)."), true);
       }
       this.updateRunUI?.(); return;
     }

@@ -1119,7 +1119,8 @@ def test_stitch_audio_different_sound_crossfades(h3s):
 def test_upscale_missing_model_stretches_not_aborts(patcher, dirs, monkeypatch):
     """No learned upscaler: spatial trilinear stretch + STRETCH_WARN path, no hard abort."""
     monkeypatch.setattr(upscale, "learned_models", lambda: [])
-    monkeypatch.setattr(upscale, "learned_node", lambda: None)
+    monkeypatch.setattr(upscale, "available_backends", lambda: [])
+    monkeypatch.setattr(upscale, "backend_flags", lambda: {"native": False, "pixaroma": False, "lbh": False})
     monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h, model=None: None)
     z, used = upscale.upscale_input(FakeVAE(), torch.zeros(1, 24, 2, 4, 6), 192, 128)
     assert used == "stretch" and tuple(z.shape) == (1, 24, 2, 8, 12)
@@ -1127,9 +1128,11 @@ def test_upscale_missing_model_stretches_not_aborts(patcher, dirs, monkeypatch):
     assert upscale.effective_input("tiles") == "stretch"
     assert upscale.env_tag("latent") == "stretch"
     assert "растянут" in upscale.STRETCH_WARN and "trilinear" in upscale.STRETCH_WARN.lower()
-    # once the model is present again, preferred path returns
+    assert "PixaromaH3LatentUpscale" in upscale.STRETCH_WARN
+    # once a backend + model are present again, preferred path returns
     monkeypatch.setattr(upscale, "learned_models", lambda: ["m.safetensors"])
-    monkeypatch.setattr(upscale, "learned_node", lambda: object)
+    monkeypatch.setattr(upscale, "available_backends", lambda: ["lbh"])
+    monkeypatch.setattr(upscale, "backend_flags", lambda: {"native": False, "pixaroma": False, "lbh": True})
     assert upscale.effective_input("learned") == "learned"
     assert upscale.effective_input("tiles") == "learned"
 
@@ -1464,22 +1467,27 @@ def test_learned_upscaler_oom_retries_smaller(monkeypatch, capsys):
     calls, frees = [], []
     monkeypatch.setattr(upscale, "learned_upscale", _REAL_LEARNED)
     monkeypatch.setattr(upscale, "free_vram", lambda: frees.append(1))
-    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(2000, calls))
+    monkeypatch.setattr(upscale, "learned_models", lambda: ["m.safetensors"])
+    monkeypatch.setattr(upscale, "available_backends", lambda: ["lbh"])
+    def _map(node):
+        monkeypatch.setattr(upscale, "_node_mappings", lambda n=node: {upscale.LEARNED_NODE: n})
+    _map(_oom_node(2000, calls))
     t, y, x = torch.meshgrid(torch.linspace(0, 1, 27), torch.linspace(0, 1, 10), torch.linspace(0, 1, 16), indexing="ij")
     v = (t + y + x).expand(1, 4, 27, 10, 16).contiguous()
     z = upscale.learned_upscale(v, 512, 320)
     log = capsys.readouterr().out
     assert z is not None and z.shape == (1, 4, 27, 20, 32)
     assert "retry with 2 temporal piece(s)" in log and "retry with 4 temporal piece(s)" in log and "x 2x2 tiles" in log
+    assert "via lbh" in log
     assert len(frees) == 3 and calls[0] == (1, 4, 27, 10, 16) and all(c[2] * c[3] * c[4] <= 2000 for c in calls[-4:])
     ref = torch.nn.functional.interpolate(v, size=(27, 20, 32), mode="trilinear")
     assert float((z - ref).abs().mean()) < 0.05, "pieces blend into the whole picture"
     # a non-OOM error falls back at once; OOM everywhere falls back after the whole ladder
     calls.clear()
-    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(0, calls, ValueError("bad weights")))
+    _map(_oom_node(0, calls, ValueError("bad weights")))
     assert upscale.learned_upscale(v, 512, 320) is None and len(calls) == 1
     calls.clear()
-    monkeypatch.setattr(upscale, "learned_node", lambda: _oom_node(0, calls))
+    _map(_oom_node(0, calls))
     assert upscale.learned_upscale(v, 512, 320) is None and "even in small pieces" in capsys.readouterr().out
 
 

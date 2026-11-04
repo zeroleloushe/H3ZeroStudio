@@ -13,7 +13,8 @@ export const CSS = String.raw`
   font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; color:var(--txt);
   font-size:13px; line-height:1.35; -webkit-font-smoothing:antialiased; }
 .h3z-root *, .h3z-compact * { box-sizing:border-box; }
-.h3z-root { position:fixed; inset:0; z-index:100000; display:grid; grid-template-rows:56px minmax(0,1fr) auto; gap:10px; padding:10px;
+.h3z-root { box-sizing:border-box; position:fixed; inset:0; z-index:100000; display:grid; grid-template-rows:56px minmax(0,1fr) auto; gap:10px; padding:10px;
+  /* ui-scale: width/height override inset when zoom≠1 */
   background: radial-gradient(1200px 600px at 12% -10%, var(--glow1), transparent 60%),
               radial-gradient(900px 500px at 95% 0%, var(--glow2), transparent 60%),
               radial-gradient(800px 600px at 50% 120%, var(--glow3), transparent 60%), var(--bg0);
@@ -175,7 +176,8 @@ button.h3z-pill { background:transparent; border:0; padding:5px 8px; }
 .h3z-time { font-variant-numeric:tabular-nums; color:var(--mut); font-size:12px; min-width:150px; text-align:center; }
 .h3z-time b { color:var(--txt); }
 /* ---------- inspector */
-.h3z-insp { display:flex; flex-direction:column; gap:10px; min-height:0; overflow:auto; padding-right:2px; }
+.h3z-insp { display:flex; flex-direction:column; gap:10px; min-height:0; overflow-x:clip; overflow-y:auto; padding-right:2px; align-content:flex-start; }
+.h3z-insp > .h3z-card { flex:0 0 auto; overflow:visible; min-height:auto; max-height:none; }
 .h3z-card { padding:14px; display:flex; flex-direction:column; gap:12px; }
 .h3z-card-h { display:flex; align-items:center; gap:8px; }
 .h3z-card-h h4 { margin:0; font-size:13px; font-weight:700; flex:1; display:flex; align-items:center; gap:8px; }
@@ -402,7 +404,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-afile > div { min-width:0; flex:1; display:flex; flex-direction:column; }
 .h3z-afile b { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .h3z-afile small { color:var(--mut); font-size:11px; }
 .h3z-pill.lk.on { background:linear-gradient(135deg,#f59e0b,#f97316); }
-.h3z-hover { position:fixed; z-index:100003; display:none; pointer-events:none; padding:5px; border-radius:12px; background:rgba(10,14,28,.92);
+.h3z-hover { position:absolute; z-index:100003; display:none; pointer-events:none; padding:5px; border-radius:12px; background:rgba(10,14,28,.92);
   border:1px solid var(--line2); box-shadow:0 14px 40px rgba(0,0,0,.6); backdrop-filter:blur(10px); }
 .h3z-hover .im { border-radius:8px; background-repeat:no-repeat; }
 .h3z-hover span { display:block; text-align:center; font-size:11px; font-weight:700; padding:4px 0 1px; color:var(--txt); font-variant-numeric:tabular-nums; }
@@ -676,7 +678,8 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-helptoc .it.dim { opacity:.35; }
 .h3z-helptoc .n { width:20px; text-align:right; color:var(--mut); font-variant-numeric:tabular-nums; flex:none; }
 .h3z-helpnone { padding:20px; text-align:center; }
-.h3z-setbody { display:flex; flex-direction:column; gap:10px; padding-bottom:12px; overflow-x:hidden; }
+.h3z-setbody { display:flex; flex-direction:column; gap:10px; padding-bottom:12px; overflow-x:clip; overflow-y:visible; }
+.h3z-setbody > .h3z-det, .h3z-setbody > .h3z-card, .h3z-setbody > .h3z-note, .h3z-panel .h3z-scroll > .h3z-card { flex:0 0 auto; overflow:visible; max-height:none; min-height:auto; }
 .h3z-panel .h3z-settabs { margin-left:-12px; margin-right:-12px; padding-left:12px; padding-right:12px; }
 .h3z-setbody .h3z-det .in { display:flex; flex-direction:column; gap:9px; }
 .h3z-setscope { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.025); }
@@ -950,7 +953,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-root .h3z-endbox .h3z-btn.on { background:color-mix(in srgb,var(--a1) 15%,var(--control)); border-color:var(--a1); color:var(--txt); }
 .h3z-root .h3z-ast-logo { background:var(--grad); box-shadow:0 5px 18px color-mix(in srgb,var(--a1) 24%,transparent); }
 .h3z-root .h3z-ast-chat.on, .h3z-root .h3z-ast-presetitem.on, .h3z-root .h3z-ast-stylecat.on, .h3z-root .h3z-ast-styleitem.on { background:color-mix(in srgb,var(--a1) 12%,transparent); border-color:color-mix(in srgb,var(--a1) 38%,transparent); color:var(--txt); }
-.h3z-root .h3z-ast-msg.user .h3z-ast-bubble { background:color-mix(in srgb,var(--a1) 14%,var(--panel2)); border-color:color-mix(in srgb,var(--a1) 28%,transparent); color:var(--txt); }
+.h3z-root .h3z-ast-msg.user .h3z-ast-bubble { background:transparent; border:none; color:var(--txt); }
 .h3z-root .h3z-ast-inputbox:focus-within { border-color:var(--a1); box-shadow:0 0 0 3px color-mix(in srgb,var(--a1) 10%,transparent); }
 .h3z-root .h3z-btn.primary, .h3z-root .h3z-pill.on, .h3z-root .h3z-q.on { color:var(--on-accent); }
 .h3z-root :is(.h3z-in,.h3z-ta,.h3z-sel) { background-color:var(--field); }
@@ -959,7 +962,8 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-root .h3z-ast-hd, .h3z-root .h3z-ast-compose { background:var(--panel); }
 .h3z-root .h3z-ast-side { background:color-mix(in srgb,var(--bg1) 80%,transparent); }
 .h3z-root .h3z-ast-main { background:transparent; border:none; box-shadow:none; }
-.h3z-root .h3z-ast-bubble, .h3z-root .h3z-ast-chip { background:var(--panel2); }
+.h3z-root .h3z-ast-bubble { background:transparent; }
+.h3z-root .h3z-ast-chip { background:var(--panel2); }
 .h3z-root .h3z-ast-inputbox, .h3z-root .h3z-ast-conn, .h3z-root .h3z-ast-styleitem, .h3z-root .h3z-ast-status { background:var(--field); }
 .h3z-root .h3z-ast-setbox { background:var(--bg1); }
 .h3z-root .h3z-ast-settab.on, .h3z-root .h3z-ast-stylecat.on { color:var(--txt); }
@@ -1147,6 +1151,9 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-welcome .hd{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .h3z-welcome-body{padding:14px 16px;display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:1.55}
 .h3z-welcome .h3z-row{padding:12px 16px 16px;border-top:1px solid var(--line)}
+.h3z-welcome-prefs{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--control)}
+.h3z-welcome-prefs .h3z-lbl{margin:0;flex:1;min-width:120px;text-transform:none;letter-spacing:0;font-size:12px;font-weight:600;color:var(--mut)}
+.h3z-welcome-prefs .h3z-ui-scale,.h3z-welcome .h3z-ui-scale{width:auto;min-width:64px;max-width:88px;height:30px;padding:0 22px 0 10px;flex:none;font-size:12.5px;font-weight:600}
 
 /* Generation params dialog */
 .h3z-gm { width:min(560px, 94vw); max-height:min(86vh, 820px); overflow:auto; }
@@ -1158,6 +1165,35 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-gm-thumb { width:64px; border-radius:8px; overflow:hidden; border:1px solid var(--line2); background:var(--panel2); text-align:center; font-size:10px; color:var(--mut); }
 .h3z-gm-thumb img { width:64px; height:48px; object-fit:cover; display:block; }
 .h3z-gm-thumb em { display:block; padding:2px 4px; font-style:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* insp fit: panel scrolls as a whole; section cards never get their own vertical scrollbars.
+   Note: overflow-x:hidden alone forces overflow-y:auto (CSS quirk) — that caused per-card scrollbars. */
+.h3z-insp { overflow-x: clip; overflow-y: auto; min-width: 0; max-width: 100%; align-content: flex-start; }
+.h3z-insp > .h3z-card, .h3z-insp > .h3z-insp-block {
+  flex: 0 0 auto; flex-shrink: 0; min-height: auto; max-height: none;
+  min-width: 0; max-width: 100%; overflow: visible; box-sizing: border-box;
+}
+.h3z-insp .h3z-row, .h3z-insp .h3z-grid2, .h3z-insp .h3z-grid3, .h3z-insp .h3z-qs { min-width: 0; max-width: 100%; }
+.h3z-insp .h3z-grid2, .h3z-insp .h3z-grid3 { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
+.h3z-insp .h3z-sel, .h3z-insp .h3z-in, .h3z-insp .h3z-ta, .h3z-insp .h3z-btn { max-width: 100%; min-width: 0; box-sizing: border-box; }
+.h3z-insp .h3z-takes, .h3z-insp .h3z-take-row { max-width: 100%; min-width: 0; }
+.h3z-insp .h3z-take-row { overflow-x: auto; overflow-y: hidden; } /* doubles strip: horizontal only */
+.h3z-insp .h3z-val { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.h3z-insp .h3z-card-h { min-width: 0; }
+.h3z-insp .h3z-card-h h4 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Prompt preview: few lines, fade/clamp — no inner scrollbar */
+.h3z-insp .h3z-final {
+  max-height: none; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7;
+  line-clamp: 7; mask-image: linear-gradient(180deg, #000 75%, transparent);
+}
+
+/* UI scale picker in header — compact, no crowding at 1366 */
+.h3z-head .h3z-ui-scale { width:auto; min-width:52px; max-width:68px; height:28px; padding:0 22px 0 8px; flex:none; font-size:12px; font-weight:600; }
+.h3z-head .h3z-ui-scale .h3z-dd-lab { overflow:hidden; text-overflow:ellipsis; }
+@media (max-width:1400px) {
+  .h3z-head .h3z-chips .h3z-chip.c-steps, .h3z-head .h3z-chips .h3z-chip.c-time { display:none; }
+}
 `;
 
 export function injectStyle() {

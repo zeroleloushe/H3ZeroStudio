@@ -435,6 +435,8 @@ H3ZeroStudio бесплатный, с открытым кодом (GPL-3.0), и 
 
 H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — той же лицензией, что ComfyUI и KJNodes. Код из перечисленных проектов **не копировался**: всё написано заново на штатных механизмах ComfyUI. Ниже — у кого взяты идеи и что вызывается во время работы.
 
+- **Первым делом — лучшему на свете приложению и разработчику** 😉 [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) от EvgenRublev (GPL-3.0). Сохранение AV-латента, «Повторить», умная Veda (dense-fallback), арбитр VRAM и восстановление прогресса после перезагрузки честно подсмотрены у него. Код свой.
+  *First and foremost — to the best app and developer in the world* 😉 [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) by EvgenRublev: AV latent persistence, Repeat, smarter Veda fallbacks, the VRAM arbiter and progress re-attach after reload were shamelessly borrowed as ideas. Our own code.
 - **Продление и звук на стыках** (нативные video/audio denoise masks H3, cond-аудио до стыка). Подход сверен с:
   - [Herrgott — H3 Infinite Continuation Suite](https://github.com/HerrgottMargott/Herrgotts-H3-Infinite-Continuation-Suite) (GPL-3.0);
   - [NikoDemon80 — ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) (GPL-3.0);
@@ -465,7 +467,6 @@ H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — 
   - [panghea — ComfyUI-MiniMax-H3-Inpaint-Tools](https://github.com/panghea/ComfyUI-MiniMax-H3-Inpaint-Tools) (GPL-3.0): маски по отрезку времени;
   - [filliptm — ComfyUI-FL-MiniMaxH3](https://github.com/filliptm/ComfyUI-FL-MiniMaxH3), «Temporal Reshot» (Apache-2.0): интервал + контекст по сетке 17k+5;
   - [red-polo — ComfyUI-MiniMaxH3FrameInfill](https://github.com/red-polo/ComfyUI-MiniMaxH3FrameInfill) (GPL-3.0): заполнение промежутка по окружающему видео.
-- **Сохранение AV-латента, «Повторить», умная Veda (dense-fallback), арбитр VRAM, восстановление прогресса после перезагрузки:** часть идей подсмотрена у лучшего на свете приложения и разработчика — [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) от EvgenRublev 😉 (GPL-3.0). Код свой.
 - **ComfyUI** (GPL-3.0) — нативная реализация MiniMax H3: refs, keyframes, `ModelSamplingAV`, блоки TAESD/TAEHV.
 
 **Кадры на скриншотах** — из фильма *Tears of Steel* © Blender Foundation | [mango.blender.org](https://mango.blender.org), лицензия [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Используется только видео; музыка в демо-проекте синтезирована отдельно. Генерации на скриншотах воспроизводят интерфейс на реальных кадрах — это не выход модели.

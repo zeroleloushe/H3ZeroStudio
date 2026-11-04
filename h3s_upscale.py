@@ -1,11 +1,16 @@
 """«Апскейл отрезка» for H3ZeroStudio: per-segment upscale + low-strength refine of a finished clip.
 
 Inputs (how the upscaled start latent is made):
-  * learned H3 latent upscaler (default): the "Minimax H3 Latent Upscaler (3D)" node (LBH-123-AI,
-    Comfyui_Minimax_h3_latent_Upscaler) with a model from models/latent_upscale_models. It is only *called*
-    at runtime (MIT-licensed repo; no code is copied). Fast: no VAE decode/encode.
+  * learned H3 latent upscaler (default), picked at call time from whatever is installed:
+      1. native ComfyUI MiniMaxH3LatentUpscaleWithModel (+ LatentUpscaleModelLoader; PR #17412);
+      2. Pixaroma PixaromaH3LatentUpscale (v1.4.238+);
+      3. LBH-123-AI MinimaxH3LatentUpscaler3D (Comfyui_Minimax_h3_latent_Upscaler).
+    Same model file from models/latent_upscale_models. Nodes are only *called* at runtime
+    (MIT / core; no code is copied). Fast: no VAE decode/encode. A backend that raises
+    (including the known native post-upscale shape mismatch path) is logged and the next
+    one is tried.
   * (RTX VSR was removed: projects that used it migrate to tiles σ 0.60.)
-  * If the learned upscaler node/model is missing: spatial trilinear stretch of the latent
+  * If no learned upscaler node/model is available: spatial trilinear stretch of the latent
     (temporal length unchanged), then the usual refine — faster/lighter, lower quality; the UI warns.
 
 Refine engine: one sampling pass from a low start sigma over the upscaled latent. Long or large canvases are cut
@@ -41,8 +46,13 @@ import comfy.sample
 from . import h3s_core as core
 
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
-LEARNED_NODE = "MinimaxH3LatentUpscaler3D"
+LEARNED_NODE = "MinimaxH3LatentUpscaler3D"          # LBH-123-AI (legacy / fallback)
+NATIVE_NODE = "MiniMaxH3LatentUpscaleWithModel"     # ComfyUI core (PR #17412)
+NATIVE_LOADER = "LatentUpscaleModelLoader"
+PIXAROMA_NODE = "PixaromaH3LatentUpscale"           # ComfyUI-Pixaroma ≥ 1.4.238
 LEARNED_FOLDER = "latent_upscale_models"
+# Prefer native → Pixaroma → LBH; stretch is the last resort outside this list.
+BACKEND_ORDER = ("native", "pixaroma", "lbh")
 OFFICIAL_TOKENS = 37 * (768 // 32) * (1344 // 32)   # 1344x768, 124 frames: the token count H3 is made for
 MIN_WINDOW_BLOCKS = 7                               # 37 latent frames (124 px frames): shorter windows lose context
 
@@ -65,30 +75,66 @@ def learned_models():
     return h3 or names
 
 
-def learned_node():
+def _node_mappings():
+    """Live NODE_CLASS_MAPPINGS (call-time, not import-time — packs load after us)."""
     try:
         import nodes
-        return nodes.NODE_CLASS_MAPPINGS.get(LEARNED_NODE)
+        return getattr(nodes, "NODE_CLASS_MAPPINGS", None) or {}
     except Exception:
-        return None
+        return {}
+
+
+def node_class(name):
+    """Resolve a ComfyUI node class by id from the live mapping; None when missing."""
+    return _node_mappings().get(name)
+
+
+def learned_node():
+    """Any learned H3 latent-upscale node class (prefer native → Pixaroma → LBH). Kept for older callers."""
+    for key in (NATIVE_NODE, PIXAROMA_NODE, LEARNED_NODE):
+        cls = node_class(key)
+        if cls is not None:
+            return cls
+    return None
+
+
+def backend_flags():
+    """Which learned backends are registered right now (model file checked separately)."""
+    m = _node_mappings()
+    return {
+        "native": NATIVE_NODE in m and NATIVE_LOADER in m,
+        "pixaroma": PIXAROMA_NODE in m,
+        "lbh": LEARNED_NODE in m,
+    }
+
+
+def available_backends():
+    """Ordered list of backend ids that are currently registered."""
+    flags = backend_flags()
+    return [b for b in BACKEND_ORDER if flags.get(b)]
 
 
 def capabilities():
     models = learned_models()
-    node = learned_node() is not None
-    learned = bool(models and node)
-    return {"learned": learned, "learned_models": models, "learned_node": node,
+    flags = backend_flags()
+    any_node = any(flags.values())
+    learned = bool(models and any_node)
+    return {"learned": learned, "learned_models": models, "learned_node": any_node,
+            "backends": flags, "backend": (available_backends()[0] if learned else None),
             "stretch": True,   # always available: spatial trilinear when learned is missing
             "input": "learned" if learned else "stretch"}
 
 
 # Legacy hard-fail text (kept for older callers); stretch is the real path now.
-UNAVAILABLE = ("Апскейл недоступен: нет обученного латентного апскейлера H3 (нода MinimaxH3LatentUpscaler3D + модель "
-               "minimax_h3_latent_upscaler_3d_bf16.safetensors в models/latent_upscale_models). "
-               "Установите ноду и модель и перезапустите ComfyUI.")
+UNAVAILABLE = ("Апскейл недоступен: нет обученного латентного апскейлера H3 "
+               "(встроенная MiniMaxH3LatentUpscaleWithModel / PixaromaH3LatentUpscale / "
+               "MinimaxH3LatentUpscaler3D + модель minimax_h3_latent_upscaler_3d_*.safetensors "
+               "в models/latent_upscale_models). Установите ноду и модель и перезапустите ComfyUI.")
 # Soft fallback when the learned upscaler is missing: stretch the latent, then refine (+ UI toast).
 STRETCH_WARN = ("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. "
-                "Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.")
+                "Нужна модель в models/latent_upscale_models и одна из нод: встроенная "
+                "MiniMaxH3LatentUpscaleWithModel (ComfyUI ≥ PR #17412), PixaromaH3LatentUpscale "
+                "(Pixaroma ≥ 1.4.238) или MinimaxH3LatentUpscaler3D (LBH).")
 
 
 class UpscaleUnavailable(RuntimeError):
@@ -120,6 +166,12 @@ def picked_learned_model(name=None):
     if name and name in models:
         return name
     return models[0] if models else ""
+
+
+def align32(n):
+    """Round a pixel size up/down to a multiple of 32 (H3 / native / Pixaroma grid)."""
+    n = int(n)
+    return max(32, int(round(n / 32)) * 32)
 
 
 # ---------------------------------------------------------------- VRAM handoff
@@ -249,61 +301,139 @@ def _pieces_upscale(once, v, w, h, nt, ns):
 LEARNED_RETRIES = ((1, 1), (2, 1), (4, 1), (2, 2), (4, 3))
 
 
+def _unwrap_node_out(res):
+    """ComfyUI NodeOutput / tuple / bare value -> the first payload (LATENT dict or model)."""
+    out = getattr(res, "result", None)
+    if out is None:
+        out = getattr(res, "args", None)
+    if out is None:
+        out = res
+    if isinstance(out, (tuple, list)):
+        return out[0] if out else None
+    return out
+
+
+def _video_from_latent(lat):
+    """LATENT dict / NestedTensor / plain tensor -> float CPU video [B,C,T,H,W] (4-D gains a T=1)."""
+    z = lat["samples"] if isinstance(lat, dict) else lat
+    if getattr(z, "is_nested", False):
+        parts = z.unbind() if hasattr(z, "unbind") else z.tensors
+        z = parts[0]
+    z = z.float().cpu()
+    return z.unsqueeze(2) if z.dim() == 4 else z
+
+
+def _call_node_fn(cls, method_names, *args, **kwargs):
+    """Invoke a node's execute/FUNCTION, whether it is a ComfyNode classmethod or an old instance method."""
+    fn = None
+    for name in method_names:
+        fn = getattr(cls, name, None)
+        if fn is not None:
+            break
+    if fn is None:
+        # classic custom node: FUNCTION on an instance
+        inst = cls()
+        fn = getattr(inst, getattr(cls, "FUNCTION", "execute"))
+        return fn(*args, **kwargs)
+    # classmethod / static / unbound: prefer calling on the class (ComfyNode.execute)
+    try:
+        return fn(*args, **kwargs)
+    except TypeError:
+        return fn(cls(), *args, **kwargs)
+
+
+def _native_once(x, ww, hh, name):
+    """Native MiniMaxH3LatentUpscaleWithModel: load model via LatentUpscaleModelLoader, target W×H (×32)."""
+    loader, up = node_class(NATIVE_LOADER), node_class(NATIVE_NODE)
+    if loader is None or up is None:
+        raise RuntimeError("native MiniMaxH3LatentUpscaleWithModel / LatentUpscaleModelLoader missing")
+    model = _unwrap_node_out(_call_node_fn(loader, ("execute",), name))
+    samples = {"samples": x.float()}
+    lat = _unwrap_node_out(_call_node_fn(up, ("execute",), model, samples, int(ww), int(hh)))
+    return _video_from_latent(lat)
+
+
+def _pixaroma_once(x, ww, hh, name):
+    """PixaromaH3LatentUpscale: filename combo + target W×H (×32). Refuses smaller/aspect-mismatched sizes."""
+    cls = node_class(PIXAROMA_NODE)
+    if cls is None:
+        raise RuntimeError("PixaromaH3LatentUpscale missing")
+    # Prefer the instance METHOD named by FUNCTION ("upscale"); fall back to execute.
+    fn_name = getattr(cls, "FUNCTION", "upscale")
+    lat = _unwrap_node_out(_call_node_fn(cls, (fn_name, "upscale", "execute"),
+                                         {"samples": x.float()}, name, int(ww), int(hh)))
+    return _video_from_latent(lat)
+
+
+def _lbh_once(x, ww, hh, name):
+    """LBH MinimaxH3LatentUpscaler3D: target-dimensions mode (existing call shape)."""
+    cls = node_class(LEARNED_NODE)
+    if cls is None:
+        raise RuntimeError("MinimaxH3LatentUpscaler3D missing")
+    fn = getattr(cls, "execute", None)
+    if fn is None:
+        fn = getattr(cls(), getattr(cls, "FUNCTION", "execute"))
+    kw = {"latent": {"samples": x.float()}, "model_name": name,
+          "mode": {"mode": "target dimensions", "width": int(ww), "height": int(hh)}, "align": 32,
+          "enable_temporal_chunking": True, "force_unload": True,
+          "device": "cuda" if torch.cuda.is_available() else "cpu",
+          "precision": "bf16" if torch.cuda.is_available() else "fp32"}
+    try:
+        names = set(inspect.signature(fn).parameters)
+        kw = {k: y for k, y in kw.items() if k in names} if names - {"cls", "self", "kwargs"} else kw
+    except (TypeError, ValueError):
+        pass
+    return _video_from_latent(_unwrap_node_out(fn(**kw)))
+
+
+_BACKEND_CALL = {
+    "native": _native_once,
+    "pixaroma": _pixaroma_once,
+    "lbh": _lbh_once,
+}
+
+
 def learned_upscale(v, w, h, model=None):
-    """Video latent -> w x h canvas with the learned upscaler node; None when unavailable / failed.
-    model: which file from models/latent_upscale_models (settings.upscale_model); None / missing = the first found.
-    Out of VRAM: free memory and retry with more temporal pieces, then spatial tiles (overlap + linear blend);
-    only when the whole ladder fails -> None (the caller falls back)."""
-    cls, models = learned_node(), learned_models()
-    if cls is None or not models:
+    """Video latent -> w x h canvas with the best available learned upscaler; None when all fail / missing.
+    Order: native ComfyUI → Pixaroma → LBH. model: file in models/latent_upscale_models (settings.upscale_model);
+    None / missing = the first found. A backend that raises (non-OOM) is logged and the next is tried
+    (guards e.g. native shape issues / Pixaroma aspect checks). Out of VRAM: free memory and retry with more
+    temporal pieces, then spatial tiles; then the next backend. Only when every backend fails -> None."""
+    models = learned_models()
+    backends = available_backends()
+    if not models or not backends:
         return None
     name = model if model in models else models[0]
-    try:
-        fn = getattr(cls, "execute", None) or getattr(cls(), getattr(cls, "FUNCTION", "execute"))
-    except Exception as e:
-        log(f"  learned latent upscaler failed ({e}) -> fallback")
-        return None
+    w, h = align32(w), align32(h)
 
-    def once(x, ww, hh):
-        kw = {"latent": {"samples": x.float()}, "model_name": name,
-              "mode": {"mode": "target dimensions", "width": int(ww), "height": int(hh)}, "align": 32,
-              "enable_temporal_chunking": True, "force_unload": True,
-              "device": "cuda" if torch.cuda.is_available() else "cpu",
-              "precision": "bf16" if torch.cuda.is_available() else "fp32"}
-        try:
-            names = set(inspect.signature(fn).parameters)
-            kw = {k: y for k, y in kw.items() if k in names} if names - {"cls", "self", "kwargs"} else kw
-        except (TypeError, ValueError):
-            pass
-        res = fn(**kw)
-        out = getattr(res, "result", None) or getattr(res, "args", None) or res
-        lat = out[0] if isinstance(out, (tuple, list)) else out
-        z = lat["samples"] if isinstance(lat, dict) else lat
-        z = z.float().cpu()
-        return z.unsqueeze(2) if z.dim() == 4 else z
+    for backend in backends:
+        once_fn = _BACKEND_CALL[backend]
 
-    for k, (nt, ns) in enumerate(LEARNED_RETRIES):
-        try:
-            z = _pieces_upscale(once, v, w, h, nt, ns)
-        except Exception as e:
-            if not is_oom(e):
-                log(f"  learned latent upscaler failed ({e}) -> fallback")
-                return None
-            del e
-            free_vram()
-            if k + 1 < len(LEARNED_RETRIES):
-                n2, s2 = LEARNED_RETRIES[k + 1]
-                log(f"  learned latent upscaler: out of VRAM -> freed ({vram_note()}), retry with {n2} temporal piece(s)"
-                    + (f" x {s2}x{s2} tiles" if s2 > 1 else ""))
-                continue
-            log("  learned latent upscaler: out of VRAM even in small pieces -> fallback")
-            return None
-        if tuple(z.shape[-2:]) != (h // 16, w // 16) or z.shape[2] != v.shape[2]:
-            log(f"  learned upscaler returned {tuple(z.shape)}, expected {w}x{h} -> fallback")
-            return None
-        log(f"  learned latent upscaler ({name}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}"
-            + (f" in {nt} temporal piece(s)" + (f" x {ns}x{ns} tiles" if ns > 1 else "") if k else ""))
-        return z
+        def once(x, ww, hh, _fn=once_fn, _name=name):
+            return _fn(x, align32(ww), align32(hh), _name)
+
+        for k, (nt, ns) in enumerate(LEARNED_RETRIES):
+            try:
+                z = _pieces_upscale(once, v, w, h, nt, ns)
+            except Exception as e:
+                if is_oom(e):
+                    del e
+                    free_vram()
+                    if k + 1 < len(LEARNED_RETRIES):
+                        n2, s2 = LEARNED_RETRIES[k + 1]
+                        log(f"  latent upscaler ({backend}): out of VRAM -> freed ({vram_note()}), "
+                            f"retry with {n2} temporal piece(s)" + (f" x {s2}x{s2} tiles" if s2 > 1 else ""))
+                        continue
+                    log(f"  latent upscaler ({backend}): out of VRAM even in small pieces -> next")
+                    break
+                log(f"  latent upscaler ({backend}) failed ({e}) -> next")
+                break
+            if tuple(z.shape[-2:]) != (h // 16, w // 16) or z.shape[2] != v.shape[2]:
+                log(f"  latent upscaler ({backend}) returned {tuple(z.shape)}, expected {w}x{h} -> next")
+                break
+            log(f"  latent upscaler via {backend} ({name}): {tuple(v.shape[-2:])} -> {tuple(z.shape[-2:])}"
+                + (f" in {nt} temporal piece(s)" + (f" x {ns}x{ns} tiles" if ns > 1 else "") if k else ""))
+            return z
     return None
 
 
@@ -342,8 +472,8 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality=None, mod
         if frames is None:
             frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
         return vae.encode(_resize(frames, w, h)).float().cpu(), "resize"
-    if learned_node() is None or not learned_models():
-        log("  no learned latent upscaler -> spatial trilinear stretch (quality lower)")
+    if not available_backends() or not learned_models():
+        log("  no learned latent upscaler (native/Pixaroma/LBH) -> spatial trilinear stretch (quality lower)")
         return latent_stretch(v, w, h), "stretch"
     # VRAM handoff: the H3 model (+ CLIP, LoRA clones) leaves the GPU for the upscaler, the upscaler leaves it
     # before the refine / the next sampling brings H3 back (lazily, from RAM: ComfyUI loads it on sampling)

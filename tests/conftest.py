@@ -28,9 +28,13 @@ def h3s():
 
 
 @pytest.fixture(autouse=True)
-def fake_learned_upscaler(monkeypatch):
+def fake_learned_upscaler(request, monkeypatch):
     """The learned H3 latent upscaler (node + model) is not on the test box: a nearest-exact stand-in keeps the
-    draft -> final / segment-upscale tests running. Tests of the "nothing available" error override it."""
+    draft -> final / segment-upscale tests running. Tests of the "nothing available" error override it.
+    Mark a test with @pytest.mark.real_upscale_backends to keep the real backend chain."""
+    if request.node.get_closest_marker("real_upscale_backends"):
+        yield
+        return
     import torch
     import h3s.h3s_upscale as up
 
@@ -39,6 +43,9 @@ def fake_learned_upscaler(monkeypatch):
     monkeypatch.setattr(up, "learned_upscale", fake)
     monkeypatch.setattr(up, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])
     monkeypatch.setattr(up, "learned_node", lambda: object)
+    # upscale_input / capabilities gate on available_backends() (live NODE_CLASS_MAPPINGS), not learned_node()
+    monkeypatch.setattr(up, "available_backends", lambda: ["lbh"])
+    monkeypatch.setattr(up, "backend_flags", lambda: {"native": False, "pixaroma": False, "lbh": True})
     yield
 
 

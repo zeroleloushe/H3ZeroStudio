@@ -48,3 +48,5 @@ desktop.ini
 # user-installed drop-in UI themes (survive outside the node via ComfyUI user dir)
 themes_user/
 node_modules/
+tests/harness/node_modules
+**/node_modules

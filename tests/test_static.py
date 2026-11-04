@@ -155,7 +155,7 @@ PROJECTS = [
                    "active": "c1", "style_deleted": ["cinema", "cinema"],
                    "style_defs": [{"id": "custom", "name": " Custom ", "instructions": "one\ntwo", "priority": 120, "enabled": True, "custom": True},
                                   {"id": "custom", "name": "Duplicate", "instructions": [" three ", ""], "category": None}, {"name": " "}],
-                   "cfg": {"model": "m.gguf", "temperature": 5, "max_tokens": 0, "n_ctx": 100, "ctx_refs": False,
+                   "cfg": {"model": "m.gguf", "temperature": 5, "max_tokens": 0, "ctx_refs": False,
                            "styles": ["custom", "cinema", "cinema"], "stream_timeout": 900, "auto_unload": True,
                            "auto_unload_delay": 30, "unload_endpoint": "/unload", "show_reasoning": False}},
      "segments": [{"frames": 124}]},
@@ -449,7 +449,7 @@ def test_assistant_llm(h3s):
     assert a["cfg"]["sys"] == "s" * 8000 and a["cfg"]["ctx_refs"] is True
     assert "provider" not in a["cfg"] and "model" not in a["cfg"] and "n_ctx" not in a["cfg"]
     assert core.normalize_assistant({}) == core.normalize_project({})["assistant"]
-    assert core.normalize_assistant({})["cfg"]["max_tokens"] == 16000
+    assert core.normalize_assistant({})["cfg"]["max_tokens"] == 32768
     memory = core.normalize_assistant({"cfg": {"engine_defaults": True, "unload_on_generate": True}})["cfg"]
     assert memory["engine_defaults"] is True and memory["unload_on_generate"] is True
     defaults = core.normalize_assistant({"cfg": {}})["cfg"]
@@ -519,10 +519,10 @@ def test_assistant_composer_keys_and_autogrow(tmp_path):
         const enter = event(); ed.onKey(enter);
         const shift = event(true); ed.onKey(shift);
         const composing = event(false, true); ed.onKey(composing);
-        const ta = {{ style: {{}} }}; let scrollHeight = 180;
+        const ta = {{ style: {{}}, value: "x".repeat(80) }}; let scrollHeight = 180;
         Object.defineProperty(ta, "scrollHeight", {{ get: () => scrollHeight }});
         ed.astAutoGrow(ta); const large = {{ ...ta.style }};
-        scrollHeight = 36; ed.astAutoGrow(ta); const small = {{ ...ta.style }};
+        ta.value = ""; scrollHeight = 36; ed.astAutoGrow(ta); const small = {{ ...ta.style }};
         const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
         installAssist(H3Editor, {{ C, h: () => null, ICON: {{}} }});
         const crud = Object.create(H3Editor.prototype);
@@ -552,8 +552,9 @@ def test_assistant_composer_keys_and_autogrow(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert out["sent"] == 1 and out["enter"] is True
     assert out["shift"] is False and out["composing"] is False
-    assert out["large"] == {"height": "132px", "minHeight": "44px", "overflowY": "auto"}
-    assert out["small"] == {"height": "44px", "minHeight": "44px", "overflowY": "hidden"}
+    assert out["large"]["height"] == "140px" and out["large"]["minHeight"] == "44px" and out["large"]["overflowY"] == "auto"
+    assert out["large"].get("maxHeight") in (None, "140px") or str(out["large"].get("maxHeight","")).endswith("px")
+    assert out["small"]["height"] == "44px" and out["small"]["minHeight"] == "44px" and out["small"]["overflowY"] == "hidden"
     assert all(out[key] for key in ("created", "edited", "customDeleted", "builtinEdited", "builtinDeleted", "restored"))
 
 

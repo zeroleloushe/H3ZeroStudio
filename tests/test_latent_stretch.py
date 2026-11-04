@@ -14,7 +14,7 @@ def test_latent_stretch_spatial_only():
 
 
 def test_upscale_input_falls_back_to_stretch(monkeypatch):
-    monkeypatch.setattr(upscale, "learned_node", lambda: None)
+    monkeypatch.setattr(upscale, "available_backends", lambda: [])
     monkeypatch.setattr(upscale, "learned_models", lambda: [])
     v = torch.randn(1, 4, 5, 4, 6)
     z, used = upscale.upscale_input(None, v, 192, 128, "learned")
@@ -22,7 +22,7 @@ def test_upscale_input_falls_back_to_stretch(monkeypatch):
 
 
 def test_upscale_input_stretch_when_learned_fails(monkeypatch):
-    monkeypatch.setattr(upscale, "learned_node", lambda: object)
+    monkeypatch.setattr(upscale, "available_backends", lambda: ["lbh"])
     monkeypatch.setattr(upscale, "learned_models", lambda: ["x.safetensors"])
     monkeypatch.setattr(upscale, "learned_upscale", lambda *a, **k: None)
     monkeypatch.setattr(upscale, "handoff", lambda *a, **k: None)
@@ -43,16 +43,20 @@ def test_effective_input_and_env_tag_stretch(monkeypatch):
 
 def test_stretch_warn_constant_and_ui_wiring():
     assert "растянут" in upscale.STRETCH_WARN or "trilinear" in upscale.STRETCH_WARN.lower()
+    assert "PixaromaH3LatentUpscale" in upscale.STRETCH_WARN
+    assert "MiniMaxH3LatentUpscaleWithModel" in upscale.STRETCH_WARN
     import os
     root = os.path.join(os.path.dirname(__file__), "..", "web", "js")
     ed = open(os.path.join(root, "h3s_editor.js"), encoding="utf-8").read()
     assert 'd.event === "warn"' in ed and 'input === "stretch"' in ed
     assert 'upscale_stretch' in ed and '_stretchToast' in ed
     assert 'stretch: T("растяжение латента")' in ed
+    assert "PixaromaH3LatentUpscale" in ed
     up = open(os.path.join(root, "h3s_upscale.js"), encoding="utf-8").read()
     assert "upStretchMode()" in up and "upStretchNote()" in up
     assert 'class: "h3z-note warn"' in up
     assert "upAvail() { return true; }" in up
+    assert "PixaromaH3LatentUpscale" in up
     # methods: latent + tiles only (no RTX)
     core = open(os.path.join(root, "h3s_core.js"), encoding="utf-8").read()
     assert 'SEG_UPSCALE_METHODS = ["latent", "tiles"]' in core

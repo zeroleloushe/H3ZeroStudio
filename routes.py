@@ -192,9 +192,10 @@ def register():
         gen = None
         try:
             try:
-                max_tokens = int(b.get("max_tokens") or 16000)
+                max_tokens = int(b.get("max_tokens") or 32768)
             except (TypeError, ValueError):
-                max_tokens = 16000
+                max_tokens = 32768
+            max_tokens = max(16, min(32768, max_tokens))
             attachments = b.get("attachments") if isinstance(b.get("attachments"), list) else []
             sampling = b.get("sampling") if isinstance(b.get("sampling"), dict) else None
             gen = h3s_llm.stream_chat(messages, number("temperature", 0.7), number("top_p", 0.9),

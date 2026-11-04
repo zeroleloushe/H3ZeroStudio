@@ -1,4 +1,5 @@
 import { T } from "./h3s_i18n.js";
+import { uiLocalPoint, uiLocalDelta, uiLocalSize, uiLocalBounds } from "./h3s_ui_scale.js";
 // Context menus (clips, audio clips, assets) and «Сохранить видео» (server-side export to a chosen folder).
 // labels are text, never HTML: "<Video>" in a label used to become a real <video> element (a big blurred block)
 // a leading glyph/emoji of a label («✎ Черновик», «🔒 Зафиксировать») goes into the icon slot, so all labels line up
@@ -25,18 +26,24 @@ export function installMenus(Editor, { C, h, ICON }) {
     /** Dropdown anchored under a control; matches width; keyboard arrows/Enter/Esc. */
     openAnchoredMenu(anchor, title, entries, opts = {}) {
       const r = anchor.getBoundingClientRect();
+      // Pass viewport coords into openMenu; it converts for the zoomed root.
       const fake = { clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} };
       const m = this.openMenu(fake, title, entries);
       const matchW = opts.matchWidth !== false;
+      const localW = uiLocalSize(r.width);
       if (matchW) {
-        const w = Math.max(r.width, 160);
+        const w = Math.max(localW, 160);
         m.style.minWidth = w + "px";
         m.style.width = w + "px";
       }
+      const bounds = uiLocalBounds(this.root);
       const mr = m.getBoundingClientRect();
-      let left = r.left, top = r.bottom + 4;
-      if (left + mr.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mr.width - 8);
-      if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - mr.height - 4);
+      const mw = uiLocalSize(mr.width), mh = uiLocalSize(mr.height);
+      const below = uiLocalPoint(r.left, r.bottom + 4, this.root);
+      const above = uiLocalPoint(r.left, r.top - 4, this.root);
+      let left = below.x, top = below.y;
+      if (left + mw > bounds.w - 8) left = Math.max(8, bounds.w - mw - 8);
+      if (top + mh > bounds.h - 8) top = Math.max(8, above.y - mh);
       m.style.left = left + "px";
       m.style.top = top + "px";
       const items = [...m.querySelectorAll(":scope > .it:not(.dis)")];
@@ -119,8 +126,14 @@ export function installMenus(Editor, { C, h, ICON }) {
               if (it.dis) return;
               sm = build(it.sub, true); m.append(sm);
               const r = el.getBoundingClientRect(), mr = m.getBoundingClientRect(), sr = sm.getBoundingClientRect();
-              const left = r.right + sr.width + 8 > window.innerWidth ? -sr.width + 2 : mr.width - 2;
-              sm.style.left = left + "px"; sm.style.top = Math.min(r.top - mr.top - 6, window.innerHeight - mr.top - sr.height - 8) + "px";
+              const dRight = uiLocalDelta(r.right - mr.left, 0).x;
+              const dTop = uiLocalDelta(0, r.top - mr.top).y;
+              const sw = uiLocalSize(sr.width), sh = uiLocalSize(sr.height);
+              const bounds = uiLocalBounds(this.root);
+              const menuLocal = uiLocalPoint(mr.left, mr.top, this.root);
+              const left = (uiLocalPoint(r.right, 0, this.root).x + sw + 8 > bounds.w) ? (-sw + 2) : (uiLocalSize(mr.width) - 2);
+              sm.style.left = left + "px";
+              sm.style.top = Math.min(dTop - 6, bounds.h - menuLocal.y - sh - 8) + "px";
             });
           } else if (!it.dis) el.onclick = (ev) => { ev.stopPropagation(); if (!it.keep) this.closeMenu(); it.fn?.(); };
           if (!it.sub) el.addEventListener("pointerenter", () => m.querySelectorAll(":scope > .h3z-menu.sub").forEach((x) => x.remove()));
@@ -134,9 +147,12 @@ export function installMenus(Editor, { C, h, ICON }) {
       };
       const m = this.$.menu = build(entries);
       this.root.append(m);
+      const bounds = uiLocalBounds(this.root);
       const r = m.getBoundingClientRect();
-      m.style.left = Math.min(e.clientX, window.innerWidth - r.width - 8) + "px";
-      m.style.top = Math.max(8, Math.min(e.clientY, window.innerHeight - r.height - 8)) + "px";
+      const mw = uiLocalSize(r.width), mh = uiLocalSize(r.height);
+      const pt = uiLocalPoint(e.clientX, e.clientY, this.root);
+      m.style.left = Math.min(pt.x, bounds.w - mw - 8) + "px";
+      m.style.top = Math.max(8, Math.min(pt.y, bounds.h - mh - 8)) + "px";
       this._menuOff = (ev) => { if (!m.contains(ev.target)) this.closeMenu(); };
       setTimeout(() => window.addEventListener("pointerdown", this._menuOff, true), 0);
       return m;
