@@ -159,13 +159,13 @@ export function installAudio(Editor, { C, h, ICON }) {
       const tip = T("Клипы на дорожках 1–2 — основная композиция: звук фиксируется, видео генерируется под него (ритм, липсинк). ") +
         T("Аудио в референсах отрезка — только подсказка <Audio N>. Дорожка «Музыка» не фиксируется: микшируется поверх звука видео при воспроизведении и сохранении.");
       H.title = tip;
-      H.append(
+      H.append(...[
         row(0, h("i", { html: ICON.audio }), h("span", { class: "nm" }, T("Аудио")),
           lock && linked === false ? h("span", { class: "h3z-warn", title: T("Не подключён вход audio_vae (minimax_h3_audio_vae): без него звук дорожки не фиксируется в генерации, а просто идёт на выход audio.") }, "⚠") : null,
           spk("lock", this.audioMonitor !== false, T("слышать дорожку при воспроизведении (звук готового видео при этом приглушается)")), lane2),
         lanes.includes(1) ? row(1, h("span", { class: "sub" }, "🔒 2")) : null,
         row(MUSIC, h("span", { class: "nm music" }, T("♫ Музыка")),
-          spk("music", this.musicMonitor !== false, T("слышать музыку при воспроизведении") + (music ? "" : T(" (дорожка пуста)")))));
+          spk("music", this.musicMonitor !== false, T("слышать музыку при воспроизведении") + (music ? "" : T(" (дорожка пуста)"))))].filter(Boolean));
     },
 
     /** Inspector card of the selected audio clip (replaces the old left «Аудио» panel). */

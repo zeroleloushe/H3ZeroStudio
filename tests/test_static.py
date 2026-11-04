@@ -693,14 +693,31 @@ def test_workspace_audio_lanes_and_flexible_video_track(tmp_path):
     """Optional lane 2 keeps visible-row drag/drop mapping and existing clips; video shrinks before overflow."""
     js = tmp_path / "workspace.mjs"
     js.write_text(textwrap.dedent(f"""
+        class FakeNode {{
+          constructor(tag = "") {{ this.tag = tag; this.children = []; this.style = {{}}; this.dataset = {{}}; this._text = ""; }}
+          set innerHTML(v) {{ this.children = []; this._html = v; }}
+          set textContent(v) {{ this.children = []; this._text = String(v); }}
+          append(...items) {{ for (const item of items) this.children.push(item instanceof FakeNode ? item : String(item)); }}
+          addEventListener() {{}}
+          setAttribute() {{}}
+          text() {{ return this._text + this.children.map((item) => item instanceof FakeNode ? item.text() : item).join(""); }}
+        }}
+        globalThis.Node = FakeNode;
+        globalThis.document = {{ createElement: (tag) => new FakeNode(tag), createTextNode: (text) => String(text) }};
         const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
         const {{ H3Editor }} = await import({json.dumps(pathlib.Path(JS, "h3s_editor.js").as_uri())});
         const e = Object.create(H3Editor.prototype);
         e.p = C.normalizeProject({{ audio: {{ clips: [] }}, segments: [{{ frames: 124 }}] }});
+        e.host = {{ inputLinked: () => true }};
         e.audioLane2 = false;
         const hidden = {{ lanes: e.audioLanes(), musicRow: e.audioRow(2), drops: [0, 38, 80].map((y) => e.audioLaneAt(y)) }};
+        e.$ = {{ aHead: new FakeNode() }};
+        e.renderAudioHead();
+        const hiddenHead = e.$.aHead.text();
         e.audioLane2 = true;
         const visible = {{ lanes: e.audioLanes(), rows: [0, 1, 2].map((l) => e.audioRow(l)), drops: [0, 38, 80].map((y) => e.audioLaneAt(y)) }};
+        e.renderAudioHead();
+        const visibleHead = e.$.aHead.text();
         e.audioLane2 = false;
         e.p.audio.clips.push({{ id: "lane2", asset: "input", lane: 1, start: 0, in: 0, length: 1, volume: 1, fade_in: 0, fade_out: 0 }});
         const occupied = e.audioLanes();
@@ -711,7 +728,7 @@ def test_workspace_audio_lanes_and_flexible_video_track(tmp_path):
           e.syncTimelineMetrics();
           metrics.push({{ height, video: e.timelineVideoHeight, props }});
         }}
-        console.log(JSON.stringify({{ hidden, visible, occupied, metrics }}));
+        console.log(JSON.stringify({{ hidden, visible, occupied, metrics, hiddenHead, visibleHead }}));
     """), encoding="utf-8")
     r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -719,6 +736,8 @@ def test_workspace_audio_lanes_and_flexible_video_track(tmp_path):
     assert o["hidden"] == {"lanes": [0, 2], "musicRow": 1, "drops": [0, 2, 2]}
     assert o["visible"] == {"lanes": [0, 1, 2], "rows": [0, 1, 2], "drops": [0, 1, 2]}
     assert o["occupied"] == [0, 1, 2]
+    assert "null" not in o["hiddenHead"] and "Аудио" in o["hiddenHead"] and "Музыка" in o["hiddenHead"]
+    assert "null" not in o["visibleHead"] and "🔒 2" in o["visibleHead"]
     assert o["metrics"][0]["video"] == 68 and o["metrics"][0]["props"]["--audio-h"] == "110px"
     assert o["metrics"][1]["video"] == 64 and o["metrics"][1]["props"]["--timeline-min"] == "226px"
 
