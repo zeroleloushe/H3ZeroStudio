@@ -61,6 +61,14 @@ export const CSS = String.raw`
 .h3z-tool:hover { color:var(--txt); background:rgba(148,163,255,.07); }
 .h3z-tool.on { color:#fff; background:linear-gradient(160deg,rgba(139,92,246,.35),rgba(34,211,238,.18)); border-color:rgba(139,92,246,.45); box-shadow:0 6px 18px rgba(139,92,246,.25); }
 .h3z-tools .sp { flex:1; }
+.h3z-socials { display:flex; align-items:center; justify-content:center; gap:6px; padding:2px 0; flex:none; }
+.h3z-social-link { width:26px; height:28px; display:grid; place-items:center; border:1px solid transparent; border-radius:8px; color:var(--mut); }
+.h3z-social-link svg { width:17px; height:17px; display:block; }
+.h3z-social-link:hover { color:var(--txt); background:var(--control); border-color:var(--line); }
+.h3z-support { width:64px; height:32px; display:flex; align-items:center; justify-content:center; gap:4px; flex:none; border:1px solid color-mix(in srgb,#f47b4d 35%,var(--line)); border-radius:9px; background:color-mix(in srgb,#f47b4d 9%,var(--control)); color:var(--txt); text-decoration:none; font-size:12px; font-weight:600; }
+.h3z-support svg { width:14px; height:14px; color:#f47b4d; }
+.h3z-support:hover { background:color-mix(in srgb,#f47b4d 16%,var(--control)); border-color:color-mix(in srgb,#f47b4d 55%,var(--line)); }
+.h3z-social-link:focus-visible, .h3z-support:focus-visible { outline:2px solid var(--a2); outline-offset:2px; }
 .h3z-panel { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
 .h3z-ph { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 14px 10px; }
 .h3z-ph h3 { margin:0; font-size:14px; font-weight:700; letter-spacing:.2px; }

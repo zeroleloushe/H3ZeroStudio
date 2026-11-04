@@ -52,6 +52,9 @@ export const ICON = {
   keys: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
   chars: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14c1.6.7 2.6 2.4 3 5"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>'),
+  youtube: svg('<path d="M21.6 7.2a2.8 2.8 0 0 0-2-2C17.9 4.8 12 4.8 12 4.8s-5.9 0-7.6.4a2.8 2.8 0 0 0-2 2A29 29 0 0 0 2 12a29 29 0 0 0 .4 4.8 2.8 2.8 0 0 0 2 2c1.7.4 7.6.4 7.6.4s5.9 0 7.6-.4a2.8 2.8 0 0 0 2-2A29 29 0 0 0 22 12a29 29 0 0 0-.4-4.8z" fill="currentColor" stroke="none"/><path d="M10 9l5 3-5 3z" fill="var(--panel2)" stroke="none"/>'),
+  github: svg('<path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.2-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.5.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2z" fill="currentColor" stroke="none"/>'),
+  heart: svg('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>'),
   play: svg('<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="none"/>'),
   pause: svg('<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/>'),
   prev: svg('<path d="M19 20L9 12l10-8v16zM5 19V5"/>'), next: svg('<path d="M5 4l10 8-10 8V4zM19 5v14"/>'),
@@ -459,7 +462,11 @@ export class H3Editor {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
     const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
-    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }), tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
+    const social = (href, icon, label) => h("a", { class: "h3z-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
+    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }),
+      h("div", { class: "h3z-socials" }, social("https://www.youtube.com/@zeroleloushe", ICON.youtube, "YouTube"), social("https://github.com/zeroleloushe/H3ZeroStudio", ICON.github, "GitHub")),
+      h("a", { class: "h3z-support", href: "https://boosty.to/zeroleloushe", target: "_blank", rel: "noopener noreferrer", title: "Boosty", "aria-label": "Boosty", html: ICON.heart + "<span>Boosty</span>" }),
+      tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
 
   renderLeft() {

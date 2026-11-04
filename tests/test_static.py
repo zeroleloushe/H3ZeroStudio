@@ -760,6 +760,16 @@ def test_models_tab_uses_single_panel_background():
     assert '.h3z-root:not(.h3z-left-collapsed) .h3z-body.h3z-mtwide' in models
 
 
+def test_author_links_open_in_new_tabs_above_help():
+    editor = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
+    style = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
+    for url in ("https://boosty.to/zeroleloushe", "https://github.com/zeroleloushe/H3ZeroStudio", "https://www.youtube.com/@zeroleloushe"):
+        assert url in editor
+    assert editor.count('target: "_blank", rel: "noopener noreferrer"') == 2
+    assert editor.index('class: "h3z-socials"') < editor.index('class: "h3z-support"') < editor.index('tool("help"')
+    assert '.h3z-social-link:focus-visible, .h3z-support:focus-visible' in style
+
+
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
