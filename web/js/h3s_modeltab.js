@@ -15,7 +15,7 @@ const IC = {
 };
 
 export const MT_CSS = `
-.h3z-mt{overflow:auto;min-height:0;overscroll-behavior:contain}
+.h3z-mt{overflow:auto;min-height:0;flex:1;overscroll-behavior:contain}
 .h3z-root:not(.h3z-left-collapsed) .h3z-body.h3z-mtwide{grid-template-columns:76px var(--left-gap,8px) min(max(var(--lw,272px),860px),44vw) 16px minmax(0,1fr) 16px var(--right-col,372px)}
 .h3z-mt-bar{padding:2px 0 10px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:12px}
 .h3z-mt-barrow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -94,7 +94,7 @@ export function installModelTab(Editor, { C, h }) {
       this.mpStyle();
       if (!document.getElementById("h3z-mt-style")) document.head.append(h("style", { id: "h3z-mt-style" }, MT_CSS));
       this._mtSel = this.sel;
-      L.append(h("div", { class: "h3z-card h3z-glass h3z-mt" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Модели и LoRA")),
+      L.append(h("div", { class: "h3z-card h3z-mt" }, h("div", { class: "h3z-card-h" }, h("h4", null, T("Модели и LoRA")),
         h("em", { class: "h3z-note" }, T("библиотека пресетов — общая для всех проектов"))), this.mpManager()));
     },
     /** LoRA stack of preset pr; ed(fn, msg) edits the library preset. */

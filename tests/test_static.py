@@ -753,6 +753,13 @@ def test_workspace_layout_and_gallery_wiring():
     assert 'class: "gtype"' in gallery and 'T("Стопка · {0} видео"' in gallery and 'T("Видео · {0}"' in gallery
 
 
+def test_models_tab_uses_single_panel_background():
+    models = pathlib.Path(JS, "h3s_modeltab.js").read_text(encoding="utf-8")
+    assert 'class: "h3z-card h3z-mt"' in models
+    assert 'class: "h3z-card h3z-glass h3z-mt"' not in models
+    assert '.h3z-root:not(.h3z-left-collapsed) .h3z-body.h3z-mtwide' in models
+
+
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
