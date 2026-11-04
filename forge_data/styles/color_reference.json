@@ -1,0 +1,14 @@
+{
+  "id": "color_reference",
+  "name": "🎨 Color Reference",
+  "description": "Переносит с референса цветовую палитру, доминирующие оттенки и их баланс, не копируя остальные элементы изображения.",
+  "instructions": [
+    "Use the supplied reference primarily for its color palette and color relationships. Preserve dominant hues, accent colors, tonal balance and overall color harmony without copying unrelated objects."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "rose",
+  "custom": true
+}

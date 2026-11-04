@@ -1,0 +1,14 @@
+{
+    "id": "documentary_observer",
+    "name": "🎥 Documentary / Observational",
+    "description": "Имитация наблюдательной документальной съёмки: живая ручная камера, небольшие колебания и естественная реакция оператора на происходящее.",
+    "instructions": [
+        "Professional documentary camera operated in real time. Natural handheld movement with subtle body sway, small bumps and imperfect framing. The camera reacts to the action rather than predicting it, making small reactive reframing movements and occasionally lagging slightly behind the subject. Moderate realistic shake, natural autofocus and exposure adaptation, authentic motion blur and restrained image processing."
+    ],
+    "priority": 50,
+    "enabled": true,
+    "category": "Камера и композиция",
+    "icon": "camera",
+    "tone": "blue",
+    "custom": true
+}

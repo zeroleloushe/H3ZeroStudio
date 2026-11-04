@@ -1,0 +1,14 @@
+{
+  "id": "analog_vintage",
+  "name": "📼 Analog Vintage",
+  "description": "Винтажная аналоговая картинка с выцветшими оттенками, мягкостью и лёгкими дефектами старой фотоплёнки.",
+  "instructions": [
+    "Vintage analog visual character with organic grain, gentle softness, slightly imperfect exposure and subtle color aging. Authentic photographic imperfections without excessive degradation."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Арт",
+  "icon": "sparkles",
+  "tone": "brown",
+  "custom": true
+}

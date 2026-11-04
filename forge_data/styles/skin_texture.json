@@ -1,0 +1,14 @@
+{
+  "id": "skin_texture",
+  "name": "🧬 Realistic Skin Texture",
+  "description": "Подчёркивает естественную текстуру кожи: поры, мелкие несовершенства и тональные нюансы, избегая пластикового сглаживания.",
+  "instructions": [
+    "Detailed realistic skin with visible natural pores, fine texture, subtle tonal variation, tiny imperfections and believable subsurface light response. Avoid plastic skin or excessive smoothing."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "rose",
+  "custom": true
+}

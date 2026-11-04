@@ -11,7 +11,7 @@ How it works (MiniMax H3, native mechanisms only):
     is denoised. The audio mask is a hard 0/1 boundary at both ends (a fractional hand-off decoded as a dropout).
     The previous sound before the window is also given as clean cond audio (audio_context_sec), as for extensions.
   * Two stages (final from the draft): the window is sampled on the draft canvas from the draft chain, its video
-    latent is upscaled (learned H3 upscaler / RTX VSR) and refined from refine_sigma with the final chain's clean
+    latent is upscaled (learned H3 upscaler) and refined from refine_sigma with the final chain's clean
     head/tail; the draft sound is kept 1:1.
   * Splice: video frame-exact (frames [a, b) are replaced); audio sample-exact on both seams: the offset of the
     decoded window against the video timeline is measured by cross-correlation over the kept head/tail sound, the

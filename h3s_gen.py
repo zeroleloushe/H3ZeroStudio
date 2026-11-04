@@ -736,25 +736,6 @@ def footage_latents(vae, audio_vae, asset, src, frames, w, h, audio_t):
     return v, a[..., :audio_t], px
 
 
-def footage_upscale_direct(vae, asset, seg, frames, v):
-    """«Апскейл отрезка» of footage as is with RTX VSR: the file's own frames (centre-cropped to the clip's
-    aspect) straight to the upscale canvas — downscaled when the file is already that large, else RTX VSR from
-    its native size. No VAE round trip, no refine. None when RTX VSR is unavailable (-> the latent path)."""
-    from . import h3s_upscale as upscale
-    W, H = core.upscale_canvas(int(v.shape[-1]) * 16, int(v.shape[-2]) * 16, seg["upscale"])
-    path = asset_path(asset)
-    info = media.video_info(path)
-    fw, fh = int(info["width"]), int(info["height"])
-    k = min(fw / W, fh / H)
-    if k >= 1.0:   # the file is at least that large: no super-resolution needed
-        return torch.from_numpy(media.load_video_frames(path, seg["source"]["in"], frames, W, H, mode="crop"))
-    if not upscale.rtx_available():
-        return None
-    sw, sh = max(2, int(W * k) // 2 * 2), max(2, int(H * k) // 2 * 2)   # native pixels, the clip's aspect
-    px = torch.from_numpy(media.load_video_frames(path, seg["source"]["in"], frames, sw, sh, mode="crop"))
-    return upscale.rtx_frames(px, W, H, (seg.get("upscale") or {}).get("quality", "ULTRA"))
-
-
 def decode_video(vae, v):
     img = vae.decode(v)
     return img.reshape((-1,) + tuple(img.shape[-3:]))[..., :3].float().cpu()
@@ -865,13 +846,13 @@ def preview_sigma_list(m, p, refine_sigmas_t=None, fresh=False):
 
 
 def upscale_video_latent(vae, v, w, h, method="learned", frames=None, model=None):
-    """Video latent [1,24,T,h',w'] -> the w x h canvas: the learned H3 latent upscaler (default) or RTX VSR ->
-    VAE encode ("rtx"), each the other's fallback; neither = h3s_upscale.UpscaleUnavailable (clear error).
+    """Video latent [1,24,T,h',w'] -> the w x h canvas via the learned H3 latent upscaler;
+    missing model = spatial latent stretch + refine (warn toast; no abort).
     model: which learned upscaler file (settings.upscale_model, "" = the first). Audio is never touched."""
     if tuple(v.shape[-2:]) == (h // 16, w // 16):
         return v
     from . import h3s_upscale
-    return h3s_upscale.upscale_input(vae, v, w, h, "rtx" if method == "rtx" else "learned", frames, model=model)[0]
+    return h3s_upscale.upscale_input(vae, v, w, h, "learned", frames, model=model)[0]
 
 
 # ---------------------------------------------------------------- one segment
@@ -1651,6 +1632,11 @@ def level_lock_joins(images, parts, items, results, n, gaps=(), gap_at=()):
 
 
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None, sampler=None, sigmas=None):
+    from . import h3s_vram
+    try:
+        h3s_vram.acquire("gen", evict=True)
+    except h3s_vram.VramBusy as e:
+        raise RuntimeError(f"VRAM занята ассистентом ({e.holder}) — дождитесь ответа или остановите чат") from e
     assistant = core.normalize_project(project).get("assistant", {}).get("cfg", {})
     if assistant.get("unload_on_generate") and assistant.get("api_model"):
         try:
@@ -1680,6 +1666,11 @@ def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=N
         raise
     finally:
         CUSTOM["sampler"] = CUSTOM["sigmas"] = None   # the next run (or a tool outside a run) never sees these
+        try:
+            from . import h3s_vram
+            h3s_vram.release("gen")
+        except Exception:
+            pass
 
 
 def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None):
@@ -1743,6 +1734,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     def MC_UP(i):
         return MR.upscale_models(UG, i) if UG else MC(i)
     notify = Notifier(node_id)
+    # client_token (from the editor) → this node/run, so Ctrl+F5 can re-attach progress
+    try:
+        from . import h3s_inflight
+        tok = (proj.get("run") or {}).get("client_token") or ""
+        if tok:
+            h3s_inflight.record(tok, node=node_id, run=notify.run_id, project=proj.get("id"))
+    except Exception as e:
+        vlog(f"inflight record skipped: {e}")
+
     by_id = {a["id"]: a for a in proj["assets"]}
     ref_sigs, fsigs = {}, {}
     from . import h3s_store as store
@@ -1786,7 +1786,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     use_cache = bool(s.get("cache", True))
     keys = keys[:len(items)]
     # «Апскейл отрезка»: key of each segment's upscale (None = none); the base latents stay the generation chain
-    up_env = {m: upscale.env_tag("rtx" if m == "rtx" else "learned", s.get("upscale_model") or None) for m in core.SEG_UPSCALE_METHODS
+    up_env = {m: upscale.env_tag("learned", s.get("upscale_model") or None) for m in core.SEG_UPSCALE_METHODS
               if any((sg.get("upscale") or {}).get("method") == m for sg in proj["segments"] + (proj.get("regions") or []))}
     ug_env = h3s_models.upscale_gen_env(s)
     if ug_env:
@@ -1795,8 +1795,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     if any(ukeys):
         caps = upscale.capabilities()
         log(f"segment upscale: {sum(1 for x in ukeys if x)} segment(s); learned latent upscaler "
-            f"{'yes (' + caps['learned_models'][0] + ')' if caps['learned'] else 'NO (' + ('model missing in models/latent_upscale_models' if caps['learned_node'] else 'node MinimaxH3LatentUpscaler3D not installed') + ')'}"
-            f" · RTX VSR {'yes' if caps['rtx'] else 'no'}")
+            f"{'yes (' + caps['learned_models'][0] + ')' if caps['learned'] else 'NO (' + ('model missing in models/latent_upscale_models' if caps['learned_node'] else 'node MinimaxH3LatentUpscaler3D not installed') + ')'}")
     # final from the draft: every segment's draft (same key as a «Черновик» run) is the start of its refine pass
     dparts = []
     dkeys = core.segment_keys(proj, ref_sigs, env, "draft", parts=dparts)[:len(items)] if kind == "refine" else None
@@ -1837,15 +1836,17 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         else:
             pr_ = dict(kparts[i_]) if i_ < len(kparts) and kparts[i_] else {}
             log(f"cache miss: segment {i_ + 1} {k_} — reason: {store.miss_reason(d, proj['segments'][i_]['id'], kind, pr_)}")
-    # an upscale that will really run (final from the draft / «Апскейл отрезка») needs the learned upscaler or
-    # RTX VSR: fail before any sampling with a clear message instead of a silent low-quality fallback
+    # an upscale that will really run: without the learned upscaler the latent is stretched (UI warns)
     need_up = [i for i in range(len(keys)) if not frozen[i]
                and ((kind == "refine" and not cached[i] and not core.is_footage(proj["segments"][i]))
                     or (ukeys[i] and not os.path.isfile(seg_pt_path(d, ukeys[i]))))]
+    stretch_warned = False
     if need_up:
         caps = upscale.capabilities()
-        if not (caps["learned"] or caps["rtx"]):
-            raise upscale.UpscaleUnavailable("H3ZeroStudio: " + upscale.UNAVAILABLE + f" (нужно для отрезков {', '.join(str(i + 1) for i in need_up)})")
+        if not caps["learned"]:
+            log("upscale: " + upscale.STRETCH_WARN + f" (отрезки {', '.join(str(i + 1) for i in need_up)})")
+            stretch_warned = True
+            notify("warn", msg=upscale.STRETCH_WARN, kind="upscale_stretch")
     # "only this segment" (run.only = i): segments before it that are out of date and not needed as its
     # continuity source are left alone; the run starts after the last of them
     only = int((proj.get("run") or {}).get("only", -1))
@@ -2125,25 +2126,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         seg_v.append(v)
         seg_a.append(a)
         uk, rk, rwh, uinfo = ukeys[i], k, [run_w, run_h], None
-        direct = None   # footage + RTX VSR: the upscaled frames themselves (no VAE decode)
         if uk:   # «Апскейл отрезка»: upscale + refine of the finished clip (cached = resume); footage: its encoded frames
             upt = seg_pt_path(d, uk)
-            if not up_cached[i] and core.footage_direct(seg_i):
-                t_up = time.perf_counter()
-                notify("phase", seg=i, phase="up_input", input="rtx")
-                direct = footage_upscale_direct(vae, by_id[seg_i["source"]["asset"]], seg_i, it["frames"], v)
-                if direct is not None:
-                    uv = vae.encode(direct).float().cpu()   # only for the LATENT output / the cache entry
-                    uinfo = {"input": "rtx-direct", "wh": [int(direct.shape[2]), int(direct.shape[1])], "crops": 0, "chunks": 1}
-                    torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
-                    media.replace_file(upt + ".part", upt)
-                    store.save_master(d, uk + k[len(keys[i]):], uv, direct, fps)
-                    hit_up = False
-                    log(f"segment {i + 1}: footage upscaled directly with RTX VSR in {time.perf_counter() - t_up:.1f}s -> "
-                        f"{uinfo['wh'][0]}x{uinfo['wh'][1]} (no refine: the footage stays as it is)")
-            if direct is not None:
-                pass
-            elif up_cached[i]:
+            if up_cached[i]:
                 uv = torch.load(upt, map_location="cpu", weights_only=True)["v"]
                 log(f"segment {i + 1}: upscale from cache {uk}")
                 hit_up = True
@@ -2175,9 +2160,12 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 torch.save({"v": uv, "a": a, "info": uinfo}, upt + ".part")
                 media.replace_file(upt + ".part", upt)
                 log(f"segment {i + 1}: upscale done in {time.perf_counter() - t_up:.1f}s -> {uinfo['wh'][0]}x{uinfo['wh'][1]} ({uinfo['input']})")
+                if uinfo.get("input") == "stretch" and not stretch_warned:
+                    stretch_warned = True
+                    notify("warn", msg=upscale.STRETCH_WARN, kind="upscale_stretch")
             notify("phase", seg=i, phase="decode")
             t_dec = time.perf_counter()
-            frames = direct if direct is not None else take_frames(uk + k[len(keys[i]):], uv, (fresh or not hit_up) and not core.footage_direct(seg_i), i,   # chunk by chunk when chunked
+            frames = take_frames(uk + k[len(keys[i]):], uv, fresh or not hit_up, i,   # chunk by chunk when chunked
                                  lambda: upscale.decode_chunks(vae, uv, upscale.chunk_plan(s, uv.shape[2], a.shape[-1], seg_i["upscale"]["method"])))
             log(f"segment {i + 1}: upscaled clip decoded in {time.perf_counter() - t_dec:.1f}s ({frames.shape[2]}x{frames.shape[1]}, {frames.shape[0]} fr)")
             prev_up = {"v": uv}

@@ -1,5 +1,5 @@
 import { T, langSetting, setLangSetting } from "./h3s_i18n.js";
-import { UI_THEMES, themeSetting, applyTheme } from "./h3s_theme.js";
+import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings } from "./h3s_theme.js";
 // «Настройки»: the rarely changed, set-once settings in their own rail tab — generation stages (1 / 2) with the
 // parameters of each stage, upscale, extension and audio seams, cache, live preview, logging and the status of
 // the models. They are global (stored by the server in output/h3zerostudio/_settings.json and shared by all
@@ -8,6 +8,16 @@ import { UI_THEMES, themeSetting, applyTheme } from "./h3s_theme.js";
 export function installSettings(Editor, { C, h, ICON }) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   Object.assign(Editor.prototype, {
+    /** Build one settings chunk; on failure return an inline error card so the rest of the panel still paints. */
+    _safeSection(label, fn) {
+      try { return fn(); }
+      catch (e) {
+        console.error("[H3ZeroStudio] settings section", label, e);
+        const msg = (e && (e.message || e.stack)) || String(e);
+        return h("div", { class: "h3z-note err", style: { whiteSpace: "pre-wrap", margin: "8px 0" } },
+          T("Секция «{0}» не отрисовалась: {1}", label, msg));
+      }
+    },
     /** Shared leftovers of older versions: preview (count, size, examples), then confirm. */
     async cleanUnused() {
       try {
@@ -90,6 +100,56 @@ export function installSettings(Editor, { C, h, ICON }) {
       this.renderTools(); this.renderLeft();
     },
 
+    accelCaps() { return this.opts?.accel || {}; },
+    accelSection(g, set, det) {
+      const caps = this.accelCaps(), a = C.normalizeAccel(g.accel);
+      const put = (patch) => set("accel", C.normalizeAccel({ ...a, ...patch }));
+      const ATT = [
+        ["kitchen", T("Kitchen attention (Comfy Kitchen)"), !!caps.kitchen, T("Встроено в ComfyUI (comfy_kitchen INT8). По умолчанию, если ядро есть на этой GPU. Тот же бэкенд, что нода «Model Attention Backend» / флаг --use-ck-attention.")],
+        ["sage", "SageAttention", !!caps.sage, T("Пакет sageattention. Недоступно — установите sageattention и перезапустите ComfyUI.")],
+        ["flash", "FlashAttention", !!caps.flash, T("Пакет flash-attn. Недоступно — установите flash-attn и перезапустите ComfyUI.")],
+        ["pytorch", "PyTorch SDPA", true, T("Стандартный scaled_dot_product_attention PyTorch.")],
+      ];
+      const attPills = h("div", { class: "h3z-pills wrap" }, ...ATT.map(([id, label, ok, tip]) =>
+        h("div", { class: "h3z-pill" + (a.attention === id ? " on" : "") + (ok ? "" : " dis"),
+          title: ok ? tip : tip + " " + T("(не установлено)"),
+          role: "button", "aria-disabled": ok ? "false" : "true", "aria-pressed": a.attention === id ? "true" : "false",
+          tabindex: ok ? "0" : "-1",
+          onclick: () => ok && put({ attention: id }),
+          onkeydown: (e) => { if (ok && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); put({ attention: id }); } } },
+          label + (ok ? "" : " ✕"))));
+      const vedaHint = !caps.veda ? T("Установите custom node Veda Sparse Attention (veda-sparse/Veda-on-ComfyUI) и перезапустите ComfyUI.")
+        : !(caps.veda_predictors || []).length ? T("Нет предиктора: положите .safetensors в models/veda/.")
+        : T("Предиктор из models/veda/. Вызов veda_comfy.comfy_patch.apply — без проводов.");
+      const preds = caps.veda_predictors || [];
+      const predSel = this.themedSelect({
+        value: a.veda_predictor || "",
+        disabled: !caps.veda || !preds.length,
+        emptyLabel: T("авто (первый найденный)"),
+        options: [
+          { value: "", label: T("авто (первый найденный)") },
+          ...preds.map((n) => ({ value: n, label: n })),
+        ],
+        onChange: (v) => put({ veda_predictor: v }),
+      });
+      const teaHint = caps.teacache
+        ? T("Таймстеп-кэш H3 (Icyoung/ComfyUI-MiniMaxH3-TeaCache или совместимый). Может чуть снизить детализацию.")
+        : T("Не установлено: поставьте ComfyUI-MiniMaxH3-TeaCache (или совместимый) в custom_nodes.");
+      const cmpHint = caps.compile
+        ? T("torch.compile через comfy_api (как нода TorchCompileModel). Первый проход медленнее.")
+        : T("comfy_api.torch_helpers недоступен в этой сборке ComfyUI.");
+      const thr = h("input", { class: "h3z-in sm", type: "number", step: "0.01", min: "0.05", max: "0.5", value: a.teacache_thresh });
+      thr.onchange = () => put({ teacache_thresh: Number(thr.value) });
+      return det(T("Ускорение (attention / кэш)"),
+        h("div", { class: "h3z-note" }, T("Патчи навешиваются на модель H3 при загрузке (без проводов), в том числе на доработку апскейла. Бэкенды внимания взаимоисключающие.")),
+        this.field(T("Attention"), attPills),
+        this.toggle(T("Veda Sparse Attention (MiniMax H3)"), a.veda, (v) => put({ veda: !!v }), vedaHint, !caps.veda),
+        caps.veda ? this.field(T("Предиктор Veda"), predSel) : null,
+        this.toggle(T("TeaCache (кэш шагов H3)"), a.teacache, (v) => put({ teacache: !!v }), teaHint, !caps.teacache),
+        a.teacache && caps.teacache ? this.field(T("порог TeaCache"), thr) : null,
+        this.toggle(T("torch.compile"), a.compile, (v) => put({ compile: !!v }), cmpHint, !caps.compile));
+    },
+
     // ---------------------------------------------------------------- stages per clip
     stagesTwo() { return this.p.settings.final_mode === "refine"; },
     /** ✎ Черновик / ✦ Чистовик for one clip — the stage settings of «Настройки», whatever the project mode. */
@@ -157,6 +217,156 @@ export function installSettings(Editor, { C, h, ICON }) {
         { label: T("♪ Улучшить звук"), title: T("Дополнительные шаги семплера только по звуку клипа; картинка не меняется"), fn: () => this.audioRefine(i), dis: !st.ok || this.run.active || !this.seg(i)?.result?.video || this.isStale(i) }];
     },
 
+
+    // ---------------------------------------------------------------- model downloads («Загрузка моделей»)
+    openModelDownloads() {
+      this._setTab = "dl";
+      this.openSettings();
+      this.refreshModelDownloads?.();
+    },
+    async refreshModelDownloads() {
+      try {
+        this._mdl = await this.host.get("/h3zero/models/downloads");
+      } catch (e) {
+        this._mdlErr = e.message || String(e);
+        this._mdl = null;
+      }
+      if (this.tool === "settings" && this._setTab === "dl") this.renderLeft();
+    },
+    async pollModelDownloads() {
+      if (this._mdlPoll) return;
+      this._mdlPoll = setInterval(async () => {
+        if (!(this.tool === "settings" && this._setTab === "dl" && this.root)) {
+          clearInterval(this._mdlPoll); this._mdlPoll = null; return;
+        }
+        try {
+          const jobs = await this.host.get("/h3zero/models/downloads/jobs");
+          const running = Object.values(jobs?.jobs || {}).some((j) => j && (j.state === "running" || j.state === "queued" || j.state === "cancelling"));
+          await this.refreshModelDownloads();
+          if (!running && !(this._mdl?.models || []).some((m) => m.job && (m.job.state === "running" || m.job.state === "queued"))) {
+            clearInterval(this._mdlPoll); this._mdlPoll = null;
+          }
+        } catch (_) { /* ignore poll errors */ }
+      }, 800);
+    },
+    fmtBytes(n) {
+      n = Number(n) || 0;
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB";
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
+      if (n >= 1e3) return (n / 1e3).toFixed(0) + " KB";
+      return n + " B";
+    },
+    mdlRow(m) {
+      const st = m.status, job = m.job;
+      const busy = job && (job.state === "running" || job.state === "queued" || job.state === "cancelling");
+      const pct = job && job.total ? Math.min(100, Math.round(100 * (job.downloaded || 0) / job.total)) : (st === "installed" ? 100 : 0);
+      const badge = st === "installed" ? T("установлено") : busy ? T("загрузка…") : st === "partial" ? T("недокачано") : m.verified === false ? T("URL не проверен") : T("нет");
+      const found = m.found_name || (m.path ? String(m.path).split(/[\\/]/).pop() : "");
+      const pathHint = m.status === "installed" && found
+        ? (m.found_alt ? T("найдено: {0}", found) : (m.folder + "/" + found))
+        : (m.folder + "/" + m.filename);
+      const meta = h("div", { class: "h3z-mdl-meta" },
+        h("b", null, m.label),
+        h("small", null, m.size_label || this.fmtBytes(m.size_bytes), " · ", pathHint,
+          m.optional ? " · " + T("опционально") : "",
+          m.verified ? "" : " · " + T("ссылка не проверена — скачивание отключено")));
+      const bar = busy || st === "partial" ? h("div", { class: "h3z-mdl-bar" }, h("i", { style: `width:${pct}%` }),
+        h("span", null, busy ? `${pct}% · ${this.fmtBytes(job.downloaded)} / ${this.fmtBytes(job.total || m.size_bytes)}` + (job.speed ? ` · ${this.fmtBytes(job.speed)}/s` : "")
+          : T("частичный файл · {0}", this.fmtBytes(m.partial?.bytes || 0)))) : null;
+      const err = job?.error ? h("div", { class: "h3z-note err" }, job.error) : null;
+      const btn = busy
+        ? h("button", { class: "h3z-btn sm", onclick: async () => { try { await this.host.call("/h3zero/models/downloads/cancel", { id: m.id }); this.pollModelDownloads(); } catch (e) { this.toast(e.message || e, true); } } }, T("Отмена"))
+        : st === "installed"
+          ? h("span", { class: "h3z-mdl-ok" }, "✓")
+          : h("button", { class: "h3z-btn sm primary", disabled: m.verified === false || undefined,
+              title: m.verified === false ? T("URL не проверен — скачивание отключено") : T("Скачать в {0}", m.folder),
+              onclick: async () => {
+                try { await this.host.call("/h3zero/models/downloads/start", { id: m.id }); this.pollModelDownloads(); await this.refreshModelDownloads(); }
+                catch (e) { this.toast(e.message || e, true); }
+              } }, T("Скачать"));
+      return h("div", { class: "h3z-mdl-row" + (st === "installed" ? " ok" : "") + (m.optional ? " opt" : "") },
+        h("div", { class: "h3z-mdl-ico", "aria-hidden": "true" }, st === "installed" ? "✓" : "⬇"),
+        h("div", { class: "h3z-mdl-body" }, meta, bar, err),
+        h("div", { class: "h3z-mdl-act" }, h("span", { class: "h3z-mdl-badge" }, badge), btn));
+    },
+    mdlDownloadsPanel() {
+      const data = this._mdl, err = this._mdlErr;
+      if (!data && !err) {
+        this.refreshModelDownloads();
+        return h("div", { class: "h3z-note" }, T("Проверка моделей…"));
+      }
+      if (err && !data) return h("div", { class: "h3z-note err" }, T("Не удалось получить список: {0}", err));
+      const c = data.counts || {}, groups = data.groups || [];
+      const head = h("div", { class: "h3z-mdl-head" },
+        h("div", null, h("h4", null, T("⬇ Загрузка моделей")),
+          h("span", { class: "h3z-mdl-count" }, `${c.installed || 0}/${c.total || 0}`)),
+        h("div", { class: "h3z-row" },
+          h("button", { class: "h3z-btn sm icon", title: T("Обновить статусы"), onclick: () => this.refreshModelDownloads() }, "↻"),
+          h("button", { class: "h3z-btn sm primary", title: T("Скачать все обязательные модели (без опциональных)"),
+            onclick: async () => {
+              try { await this.host.call("/h3zero/models/downloads/start", { all: true }); this.pollModelDownloads(); await this.refreshModelDownloads(); }
+              catch (e) { this.toast(e.message || e, true); }
+            } }, T("Скачать все"))));
+      const note = h("div", { class: "h3z-note" },
+        T("Файлы сохраняются в стандартные папки ComfyUI (folder_paths / extra_model_paths.yaml). Загрузка потоковая с докачкой (.part). Опциональные модели «Скачать все» не трогает."));
+      const blocks = groups.map((g) => {
+        const rows = (data.models || []).filter((m) => m.group === g.id);
+        if (!rows.length) return null;
+        return h("div", { class: "h3z-mdl-group" },
+          h("div", { class: "h3z-mdl-gtitle" }, T(g.label)),
+          ...rows.map((m) => this.mdlRow(m)));
+      });
+      // start polling if any job active
+      if ((data.models || []).some((m) => m.job && (m.job.state === "running" || m.job.state === "queued"))) this.pollModelDownloads();
+      return h("div", { class: "h3z-mdl" }, head, note, ...blocks);
+    },
+
+    // ---------------------------------------------------------------- first-run welcome
+    async maybeShowWelcome() {
+      if (this._welcomeChecked || !this.root) return;
+      this._welcomeChecked = true;
+      let ui = {};
+      try { ui = await this.host.get("/h3zero/ui") || {}; } catch (_) { return; }
+      if (ui.welcome_dismissed) return;
+      let scan = null;
+      try { scan = await this.host.get("/h3zero/models/downloads"); } catch (_) {}
+      this.showWelcome(scan);
+    },
+    showWelcome(scan) {
+      this.closeWelcome?.();
+      const c = scan?.counts || {};
+      const miss = c.required_missing ?? null;
+      const status = miss == null ? T("Статус моделей пока неизвестен.")
+        : miss === 0 ? T("Все обязательные модели на месте.")
+        : T("Не хватает обязательных моделей: {0} из {1}.", miss, c.required_total || "?");
+      const close = async (dismiss) => {
+        if (dismiss) {
+          try { await this.host.call("/h3zero/ui", { welcome_dismissed: true }); } catch (_) {}
+        }
+        this.closeWelcome();
+      };
+      const box = h("div", { class: "h3z-welcome h3z-glass" },
+        h("div", { class: "hd" }, h("b", null, T("Добро пожаловать в H3ZeroStudio")), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm icon", onclick: () => close(false) }, "✕")),
+        h("div", { class: "h3z-welcome-body" },
+          h("p", null, T("Таймлайн-редактор для MiniMax H3 в ComfyUI: отрезки, референсы, черновик/чистовик, апскейл и Prompt Studio.")),
+          h("p", { class: "h3z-note" }, status),
+          h("p", { class: "h3z-note" }, T("Скачайте веса на вкладке «Загрузка моделей» в Настройках — без них генерация не запустится."))),
+        h("div", { class: "h3z-row" },
+          h("button", { class: "h3z-btn sm", onclick: () => close(true) }, T("Больше не показывать")),
+          h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm", onclick: () => close(false) }, T("Закрыть")),
+          h("button", { class: "h3z-btn primary sm", onclick: () => { close(false); this.openModelDownloads(); } }, T("Перейти к загрузке"))));
+      const modal = this.$.welcomeModal = h("div", { class: "h3z-modal" }, box);
+      modal.addEventListener("pointerdown", (e) => { if (e.target === modal) close(false); });
+      this.root.append(modal);
+    },
+    closeWelcome() { if (this.$.welcomeModal) { this.$.welcomeModal.remove(); this.$.welcomeModal = null; } },
+    reopenWelcome() {
+      this._welcomeChecked = true;
+      this.host.get("/h3zero/models/downloads").then((s) => this.showWelcome(s)).catch(() => this.showWelcome(null));
+    },
+
     // ---------------------------------------------------------------- the tab
     renderSettings(L) {
       const g = this.p.settings, set = (k, v, opt) => this.setOnce(k, v, opt), glob = this.globScope();
@@ -202,7 +412,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7].map((v) => h("option", { value: v, selected: Math.abs(Number(g.refine_sigma) - v) < 1e-6 }, `σ ${v.toFixed(2)}` + (v === 0.4 ? T(" · рекоменд.") : v > 0.45 ? T(" · сильно") : ""))));
       sig.onchange = () => set("refine_sigma", Number(sig.value));
       const uc = this.upCaps();
-      const up = h("select", { class: "h3z-sel" }, [["learned", T("Обученный латентный апскейлер H3") + (!this.upKnown() || uc.learned ? "" : T(" (нет)"))], ["rtx", T("RTX VSR → VAE энкод (качество)") + (!this.upKnown() || uc.rtx ? "" : T(" (нет)"))]]
+      const up = h("select", { class: "h3z-sel" }, [["learned", T("Обученный латентный апскейлер H3") + (!this.upKnown() || uc.learned ? "" : T(" (нет)"))]]
         .map(([v, l]) => h("option", { value: v, selected: g.upscale_method === v }, l)));
       up.onchange = () => set("upscale_method", up.value);
       const st2 = det(T("Этап 2 · Чистовик"),
@@ -213,7 +423,7 @@ export function installSettings(Editor, { C, h, ICON }) {
             T("как основной · {0}", g.scheduler)))),
         h("div", { class: "h3z-grid2" }, num("refine_cfg", "cfg", 0.1, 0, 30, String(g.cfg)), h("div")),
         this.field(T("Апскейл черновика"), up),
-        !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,
+        this.upStretchNote ? this.upStretchNote() : null,
         h("div", { class: "h3z-note" }, two ? T("Чистовик = апскейл черновика + доработка этим проходом (звук черновика 1:1).") : T("В режиме «1 этап» используется кнопками «✦ Чистовик» / «↑ Финал» на клипах с черновиком.")));
       // extension & audio
       const ovSel = h("select", { class: "h3z-sel" }, Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => h("option", { value: o, selected: Number(g.overlap_blocks) === o }, this.ovLabel(o))));
@@ -269,37 +479,45 @@ export function installSettings(Editor, { C, h, ICON }) {
       const models = det(T("Компоненты и VRAM"),
         row(known ? uc.learned : null, T("Обученный латентный апскейлер H3"), known ? (uc.learned ? uc.learned_models.join(", ") : !uc.learned_node ? T("нет ноды MinimaxH3LatentUpscaler3D") : T("нет модели minimax_h3_latent_upscaler_3d_bf16.safetensors")) : T("проверка…")),
         (paths.latent_upscale_models || []).length ? h("div", { class: "h3z-note mono" }, (paths.latent_upscale_models || []).join("\n")) : null,
-        row(known ? uc.rtx : null, "RTX VSR (nvidia-vfx)", known ? (uc.rtx ? T("доступен · ULTRA, как KJNodes Resize v2") : T("нет пакета nvidia-vfx или видеокарты RTX")) : ""),
         row(this.opts.tiny_vaes ? taeh3 : null, T("taeh3 — живое превью"), taeh3 ? (this.opts.tiny_vaes || []).filter((x) => /taeh3/i.test(x)).join(", ") : T("нет — превью latent2rgb")),
         (paths.vae_approx || []).length ? h("div", { class: "h3z-note mono" }, (paths.vae_approx || []).join("\n")) : null,
         h("div", { class: "h3z-note" }, T("Папки — стандартные ComfyUI (и extra_model_paths.yaml). После установки модели перезапустите ComfyUI.")),
         num("vram_headroom_gb", T("Запас VRAM во время генерации, ГБ"), 0.25, 0, 8),
         h("div", { class: "h3z-note" }, T("Столько видеопамяти ComfyUI оставляет свободной, пока идёт генерация (штатный резерв --reserve-vram, поднимается только на время запуска и никогда не уменьшается). Помогает, когда открыт браузер / запись: иначе Windows выгружает VRAM в RAM и шаги идут в разы медленнее. 1 ГБ — голый рабочий стол, 2–3 ГБ — с браузером. 0 — выключено.")));
-      const upS = this.upscaleSection(g, set);
-      const TABS = [["gen", T("⚙ Генерация"), [stages, st1, st2, models, presetsDet]], ["up", T("↑ Апскейл"), [upS]], ["ext", T("🔗 Продление и звук"), [ext]], ["prev", T("👁 Превью и кэш"), [pv, cache]]];
+      const upS = this._safeSection(T("Апскейл"), () => this.upscaleSection(g, set));
+      const accelS = this._safeSection(T("Ускорение"), () => this.accelSection(g, set, det));
+      const dlPanel = this._safeSection(T("Загрузка моделей"), () => this.mdlDownloadsPanel());
+      const TABS = [["dl", T("⬇ Загрузка моделей"), [dlPanel]], ["gen", T("⚙ Генерация"), [stages, st1, st2, accelS, models, presetsDet]], ["up", T("↑ Апскейл"), [upS]], ["ext", T("🔗 Продление и звук"), [ext]], ["prev", T("👁 Превью и кэш"), [pv, cache]]];
       const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
       if (this._setOpen) { const t = TABS.find(([, , ds]) => ds.some((d) => titleOf(d) === this._setOpen)); if (t) this._setTab = t[0]; }
       const cur = TABS.find((t) => t[0] === this._setTab) || TABS[0];
       this._setTab = cur[0];
       const tabs = h("div", { class: "h3z-settabs" }, ...TABS.map(([id, label]) => h("div", { class: "h3z-settab" + (id === cur[0] ? " on" : ""), onclick: () => { if (this._setTab === id) return; this._setTab = id; this.renderLeft(); } }, label)));
-      cur[2].forEach((d) => { d.open = true; });   // inside a tab the sections start open (a stored collapse still wins)
+      cur[2].forEach((d) => { if (d && d.tagName === "DETAILS") d.open = true; });   // sections start open; download panel is a plain div
       // UI language (global, every project): Auto follows ComfyUI's language (Comfy.Locale); a switch reloads the page
       const lsel = h("select", { class: "h3z-sel sm" }, [["auto", T("Авто (как в ComfyUI)")], ["ru", T("Русский")], ["en", "English"]].map(([v, l]) => h("option", { value: v, selected: langSetting() === v }, l)));
       lsel.onchange = () => { if (setLangSetting(lsel.value)) this.toast(T("Язык сменится после перезагрузки страницы"), false, { label: T("Перезагрузить"), fn: () => location.reload() }); };
       const langRow = h("div", { class: "h3z-langrow" }, h("span", { class: "h3z-lbl" }, "🌐 " + T("Язык интерфейса")), lsel);
-      const themeGrid = h("div", { class: "h3z-themegrid" }, UI_THEMES.map((theme) => h("button", {
-        type: "button", class: "h3z-theme" + (themeSetting() === theme.id ? " on" : ""), title: theme.description,
-        "aria-label": T("Тема: {0}", theme.name), "aria-pressed": themeSetting() === theme.id ? "true" : "false",
-        onclick: () => {
-          applyTheme(theme.id, true);
-          this.drawDyn?.();
-          themeGrid.querySelectorAll(".h3z-theme").forEach((button) => {
-            const on = button.getAttribute("aria-label") === T("Тема: {0}", theme.name);
-            button.classList.toggle("on", on); button.setAttribute("aria-pressed", String(on));
-          });
-        } },
-        h("span", { class: "swatches", "aria-hidden": "true" }, theme.swatches.map((color) => h("i", { style: `background:${color}` }))), theme.name)));
-      const themeRow = h("div", { class: "h3z-themerow" }, h("span", { class: "h3z-lbl" }, T("Тема интерфейса")), themeGrid);
+      const welcomeLink = h("button", { class: "h3z-btn sm", style: "margin-left:8px", title: T("Показать приветствие и статус моделей"),
+        onclick: () => this.reopenWelcome() }, T("Приветствие"));
+      langRow.append(welcomeLink);
+      const themeRow = this._safeSection(T("Тема интерфейса"), () => {
+        const themes = allThemes();
+        const themeGrid = h("div", { class: "h3z-themegrid" }, themes.map((theme) => h("button", {
+          type: "button", class: "h3z-theme" + (themeSetting() === theme.id ? " on" : "") + (theme.plugin ? " plugin" : ""), title: theme.description || theme.name,
+          "aria-label": T("Тема: {0}", theme.name), "aria-pressed": themeSetting() === theme.id ? "true" : "false",
+          onclick: () => {
+            applyTheme(theme.id, true);
+            this.drawDyn?.();
+            themeGrid.querySelectorAll(".h3z-theme").forEach((button) => {
+              const on = button.getAttribute("aria-label") === T("Тема: {0}", theme.name);
+              button.classList.toggle("on", on); button.setAttribute("aria-pressed", String(on));
+            });
+          } },
+          h("span", { class: "swatches", "aria-hidden": "true" }, (theme.swatches || []).map((color) => h("i", { style: `background:${color}` }))), theme.name)));
+        const themeWarn = themeWarnings().length ? h("div", { class: "h3z-note warn" }, T("Темы: {0}", themeWarnings().slice(0, 3).join("; "))) : null;
+        return h("div", { class: "h3z-themerow" }, h("span", { class: "h3z-lbl" }, T("Тема интерфейса"), h("em", null, T("пакеты — после Ctrl+F5"))), themeGrid, themeWarn);
+      });
       const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, scope, tabs, ...cur[2]);
       L.append(head, body);
       this._setOpen = null;

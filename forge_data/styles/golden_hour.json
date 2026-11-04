@@ -1,0 +1,14 @@
+{
+  "id": "golden_hour",
+  "name": "🌅 Golden Hour",
+  "description": "Тёплый свет золотого часа с низким солнцем, мягкими длинными тенями и золотистыми бликами для уютного кинематографичного настроения.",
+  "instructions": [
+    "Warm late-afternoon golden-hour lighting. Low-angle sunlight, long soft shadows, warm highlights and gentle atmospheric diffusion. Natural skin tones with subtle warm rim light and realistic exposure."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "orange",
+  "custom": true
+}

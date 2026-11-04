@@ -1,0 +1,14 @@
+{
+  "id": "surreal",
+  "name": "🌀 Surreal",
+  "description": "Создаёт сюрреалистичный, похожий на сон образ с неожиданными сочетаниями и необычным пространством, сохраняя цельность сцены.",
+  "instructions": [
+    "Surreal artistic treatment with visually unexpected but coherent elements, dreamlike spatial relationships and unusual visual contrasts. Maintain strong composition and internal visual consistency."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Арт",
+  "icon": "sparkles",
+  "tone": "purple",
+  "custom": true
+}

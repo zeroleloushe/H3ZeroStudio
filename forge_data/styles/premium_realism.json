@@ -1,0 +1,14 @@
+{
+  "id": "premium_realism",
+  "name": "◆ Premium Realism",
+  "description": "Утончённый фотореализм с детальными материалами, естественным освещением, тонкими оптическими нюансами и чистым изображением.",
+  "instructions": [
+    "Premium photorealistic rendering with refined natural detail. Realistic materials, physically plausible light response, subtle optical imperfections, believable skin and surface texture, controlled contrast and high image clarity."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Базовые",
+  "icon": "sparkles",
+  "tone": "teal",
+  "custom": true
+}

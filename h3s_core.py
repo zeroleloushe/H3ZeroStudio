@@ -87,11 +87,10 @@ DEFAULT_SETTINGS = {
     "draft_steps": 0,          # 0 = the normal steps
     "refine_sigma": 0.4,      # start sigma of the refine pass (0.25-0.45 keeps the draft, more re-draws it)
     "refine_steps": 0,         # 0 = half of the normal steps (at least 4)
-    # draft -> final upscale: "learned" (H3 latent upscaler model, default; RTX VSR if it is missing) | "rtx"
-    # (RTX VSR -> VAE encode; the learned upscaler if RTX is missing). Neither available = a clear error.
+    # draft -> final upscale: "learned" (H3 latent upscaler model). Missing model = a clear error.
     "upscale_method": "learned",
-    "upscale_rev": 4,
-    # «↑ Апскейл» (header: the whole video, clip: one clip): method / scale / sigma / RTX quality
+    "upscale_rev": 5,
+    # «↑ Апскейл» (header: the whole video, clip: one clip): method / scale / sigma
     "seg_upscale": {"method": "latent", "scale": 2.0},   # legacy multiplier, migrated to a megapixel target ("mp")
     # upscale in temporal chunks (sequential, like ComfyUI-H3-WindowedRefine): approximate chunk length in seconds
     # (snapped to 17k+5 frames; 0 = the whole clip in one piece) and the chunk overlap in H3 blocks (5o+2 latent frames)
@@ -104,6 +103,9 @@ DEFAULT_SETTINGS = {
     "upscale_gen": {"mode": "project", "model": "", "lora": "", "lora_strength": 1.0},
     # the learned H3 latent upscaler model (models/latent_upscale_models); "" = the first found (auto)
     "upscale_model": "",
+    # «Настройки → Ускорение»: dense attention backend + optional Veda / TeaCache / torch.compile (no wires)
+    "accel": {"attention": "kitchen", "veda": False, "veda_predictor": "", "teacache": False,
+              "teacache_thresh": 0.15, "compile": False, "compile_backend": "inductor"},
     # stage parameters ("" / 0 = as the main sampling parameters)
     "draft_sampler": "", "draft_scheduler": "", "draft_cfg": 0.0,
     "refine_sampler": "", "refine_scheduler": "", "refine_cfg": 0.0,
@@ -123,7 +125,7 @@ GLOBAL_KEYS = ("final_mode", "steps", "cfg", "denoise", "sampler", "scheduler", 
                "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
-               "verbose_log")
+               "verbose_log", "accel")
 
 
 def global_settings(values):
@@ -134,29 +136,28 @@ def global_settings(values):
     return {k: st[k] for k in keys}
 DRAFT_SCALES = (0.5, 0.67, 0.75)
 REFINE_SIGMA_RANGE = (0.15, 0.8)
-UPSCALE_METHODS = ("learned", "rtx")   # nearest-exact / VAE-Lanczos were removed (garbage after the refine)
+UPSCALE_METHODS = ("learned",)   # nearest-exact / VAE-Lanczos / RTX VSR removed
 # «Апскейл отрезка»: per-segment upscale + low-strength refine (see h3s_upscale.py)
-SEG_UPSCALE_METHODS = ("latent", "rtx", "tiles")
+SEG_UPSCALE_METHODS = ("latent", "tiles")   # "windows" path = latent+windowed refine; tiles = SyncTile (in-tree)
 SEG_UPSCALE_SCALES = (1.5, 2.0)                       # legacy multipliers (older projects; migrated to "mp")
 SEG_UPSCALE_MP_PRESETS = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)   # «Размер» presets, megapixels of the upscaled frame
 SEG_UPSCALE_MP_RANGE = (0.01, 8.5)
 UPSCALE_CHUNK_SEC_RANGE = (2.0, 30.0)
 UPSCALE_CHUNK_OVERLAP_RANGE = (1, 3)
-SEG_UPSCALE_SIGMA = {"latent": 0.4, "rtx": 0.25, "tiles": 0.6}   # default refine strength (start sigma) per method
+SEG_UPSCALE_SIGMA = {"latent": 0.4, "tiles": 0.6}   # default refine strength (start sigma) per method
 SEG_UPSCALE_SIGMA_RANGE = (0.1, 1.0)
 SEG_UPSCALE_SIGMA_OLD_TILES = 0.35   # the tiles default before upscale_rev 4 (a profile still at it moves to 0.6)
-UPSCALE_REV = 4
-RTX_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA")
+UPSCALE_REV = 5   # rev 5: drop RTX; saved rtx profiles/clips migrate to tiles σ 0.60
 # every upscale method keeps its own profile: switching the method in «Настройки» only selects another profile.
 # The upscale fields (mp, sigma, quality, tile, tile_ov) are what a clip gets; steps / sampler / scheduler of the
 # refine pass ("" / 0 = those of «Этап 2») and the temporal chunks are read by method when the upscale runs.
-UPSCALE_CHUNK_DEFAULT = {"latent": True, "rtx": True, "tiles": False}
-UPSCALE_UP_FIELDS = ("mp", "scale", "sigma", "quality", "tile", "tile_ov")
+UPSCALE_CHUNK_DEFAULT = {"latent": True, "tiles": False}
+UPSCALE_UP_FIELDS = ("mp", "scale", "sigma", "tile", "tile_ov")
 # tiled upscale: tile size in px (multiple of 32; absent = the clip's own canvas) and overlap in latent cells (×16 px;
 # absent = auto, max(4, min(16, tile/3))) — stored only when set, so older upscale keys stay valid
 TILE_PX_RANGE = (256, 2048)
 TILE_OV_RANGE = (2, 32)
-UPSCALE_LABELS_LOG = {"latent": "latent", "rtx": "RTX VSR", "tiles": "tiles"}
+UPSCALE_LABELS_LOG = {"latent": "latent/windows", "tiles": "tiles"}
 AUDIO_XFADE_RANGE = (0.1, 1.0)
 AUDIO_MATCH_RANGE = (0.5, 2.0)    # gain limits of the loudness match (about +-6 dB)
 AUDIO_MATCH_RELEASE = 2.0         # seconds over which the matching gain returns to 1
@@ -183,7 +184,7 @@ DEFAULT_SEGMENT = {
     # footage clip: a video asset on the timeline. denoise 0 = used as is (VAE-encoded, continuity source of the
     # next segment), > 0 = regenerated from it (vid2vid with that denoise, prompt and refs apply)
     "source": None,   # {asset, in (frames into the file), denoise}
-    # «Апскейл отрезка»: {method "latent"|"rtx"|"tiles", scale 1.5|2, sigma, quality (RTX)} or None
+    # «Апскейл отрезка»: {method "latent"|"tiles", mp/scale, sigma, tile, tile_ov} or None
     "upscale": None,
     "approved": False,   # «Одобрен» (for «Апскейл: все одобренные»; a frozen segment counts as approved)
 }
@@ -439,7 +440,7 @@ def _assist_cfg(rc):
             "engine_defaults": rc.get("engine_defaults") is True,
             "show_reasoning": rc.get("show_reasoning") is not False,
             "stream_timeout": int(min(3600, max(30, _num(rc.get("stream_timeout"), 600)))),
-            "unload_on_generate": rc.get("unload_on_generate") is True,
+            "unload_on_generate": rc.get("unload_on_generate") is not False,
             "unload_endpoint": str(rc.get("unload_endpoint") or "")[:500],
             "auto_unload": rc.get("auto_unload") is True,
             "auto_unload_delay": int(min(86400, max(0, _num(rc.get("auto_unload_delay"), 300)))),
@@ -650,7 +651,7 @@ def normalize_project(p):
     st["draft_steps"] = max(0, min(200, int(_num(st.get("draft_steps"), 0))))
     st["refine_steps"] = max(0, min(200, int(_num(st.get("refine_steps"), 0))))
     st["refine_sigma"] = round(max(REFINE_SIGMA_RANGE[0], min(REFINE_SIGMA_RANGE[1], _num(st.get("refine_sigma"), 0.4))), 2)
-    st["upscale_method"] = st.get("upscale_method") if st.get("upscale_method") in UPSCALE_METHODS else "learned"
+    st["upscale_method"] = "learned" if st.get("upscale_method") not in UPSCALE_METHODS else st["upscale_method"]  # "rtx" (removed) -> learned
     raw_st = p.get("settings") if isinstance(p.get("settings"), dict) else {}
     old_rev = _num(raw_st.get("upscale_rev"), 0)   # as stored (the merged defaults already say 4)
     st["upscale_rev"] = UPSCALE_REV   # any older value ("vae", "latent" = nearest-exact, …) became "learned" above
@@ -681,6 +682,8 @@ def normalize_project(p):
                          "model": str(ug.get("model") or "")[:300],
                          "loras": [y for y in map(_lora, _raw) if y][:8]}
     st["upscale_model"] = str(st.get("upscale_model") or "")[:300]
+    from .h3s_accel import normalize_accel
+    st["accel"] = normalize_accel(st.get("accel"))
     if old_rev < 4:   # rev 4: tiles default σ 0.35 -> 0.60 (user-tested); a profile still at the old default follows,
         tp = st["upscale_profiles"]["tiles"]   # a value the user picked stays; clips keep their own σ (cache keys unchanged)
         if abs(tp["sigma"] - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6:
@@ -699,6 +702,9 @@ def normalize_project(p):
     out["run"]["kind"] = rk if rk in RUN_KINDS else ""
     rr = (p.get("run") or {}).get("region") if isinstance(p.get("run"), dict) else None
     out["run"]["region"] = str(rr) if isinstance(rr, str) else ""
+    ct = (p.get("run") or {}).get("client_token") if isinstance(p.get("run"), dict) else None
+    if isinstance(ct, str) and ct.strip():
+        out["run"]["client_token"] = ct.strip()[:80]
     ra = (p.get("run") or {}).get("audio") if isinstance(p.get("run"), dict) else None
     if isinstance(ra, dict):   # «Улучшить звук»: audio-only refine pass over the cached segments
         out["run"]["audio"] = {"steps": int(max(1, min(50, _num(ra.get("steps"), 6)))),
@@ -806,7 +812,13 @@ def normalize_project(p):
 
 
 def normalize_upscale(u):
-    if not isinstance(u, dict) or u.get("method") not in SEG_UPSCALE_METHODS:
+    if not isinstance(u, dict):
+        return None
+    # rev 5: RTX VSR removed — saved projects fall back to tiles at the recommended σ 0.60
+    if u.get("method") == "rtx":
+        u = {**u, "method": "tiles", "sigma": SEG_UPSCALE_SIGMA["tiles"]}
+        u.pop("quality", None)
+    if u.get("method") not in SEG_UPSCALE_METHODS:
         return None
     m = u["method"]
     sg = round(min(SEG_UPSCALE_SIGMA_RANGE[1], max(SEG_UPSCALE_SIGMA_RANGE[0], _num(u.get("sigma"), SEG_UPSCALE_SIGMA[m]))), 3)
@@ -816,9 +828,6 @@ def normalize_upscale(u):
     else:        # legacy multiplier (migrated by normalize_project, where the canvas is known)
         sc = _num(u.get("scale"), 2.0)
         out = {"method": m, "scale": min(SEG_UPSCALE_SCALES, key=lambda x: abs(x - sc)), "sigma": sg}
-    if m == "rtx":
-        q = str(u.get("quality") or "ULTRA").upper()
-        out["quality"] = q if q in RTX_QUALITIES else "ULTRA"
     if m == "tiles":
         t = u.get("tile")
         if isinstance(t, (list, tuple)) and len(t) == 2 and _num(t[0], 0) > 0 and _num(t[1], 0) > 0:
@@ -850,7 +859,7 @@ def normalize_upscale_profiles(st):
     """settings.upscale_profiles = {method: profile}; the selected method's profile is mirrored into seg_upscale
     (the profiles are the source: seg_upscale only selects the method). Older settings had one flat set
     (seg_upscale + upscale_chunk_sec / _overlap): it becomes the profile of the selected method, the other
-    methods get their defaults (same size, own σ, chunks on for latent / RTX, off for tiles)."""
+    methods get their defaults (same size, own σ, chunks on for latent, off for tiles)."""
     su = st["seg_upscale"]
     raw = st.get("upscale_profiles")
     if not isinstance(raw, dict) or not any(isinstance(raw.get(m), dict) for m in SEG_UPSCALE_METHODS):
@@ -872,7 +881,7 @@ def upscale_profile(settings, method):
 
 
 def profile_upscale(settings, method):
-    """The upscale a clip gets from the method's profile: {method, mp, sigma, [quality], [tile, tile_ov]}."""
+    """The upscale a clip gets from the method's profile: {method, mp, sigma, [tile, tile_ov]}."""
     pr = upscale_profile(settings, method)
     return normalize_upscale({**{k: pr[k] for k in UPSCALE_UP_FIELDS if k in pr}, "method": method})
 
@@ -906,14 +915,10 @@ def upscale_pass_params(project, index, method):
 
 def upscalable(seg):
     """The segment's upscale applies: set and not a take frozen after its upscale (freeze.up). Footage as is is
-    upscaled too: its VAE-encoded frames (the clip's cached latent) go through the same mode; RTX VSR upscales
-    its frames directly (no refine)."""
+    upscaled too: its VAE-encoded frames (the clip's cached latent) go through the same latent/tiles mode + refine."""
     return bool(seg.get("upscale")) and not (seg.get("freeze") or {}).get("up")
 
 
-def footage_direct(seg):
-    """Footage as is + RTX VSR: the file's frames are upscaled directly (no VAE round trip, no refine)."""
-    return is_footage(seg) and (seg.get("upscale") or {}).get("method") == "rtx"
 
 
 def _round(x, d):
@@ -1651,7 +1656,7 @@ def refine_extra(s):
 
 def _refine_keys(project, draft_keys, full_keys, up_env="", parts=None, dparts=None):
     """Keys of the final-from-draft pass: footage as is and frozen clips keep their one-pass key (no refine).
-    up_env: what really upscales (backend: learned model name / rtx / vae fallback)."""
+    up_env: what really upscales (backend: learned model name)."""
     s = project["settings"]
     items = plan(project)
     rp = [s.get("refine_sigma"), s.get("upscale_method"), list(resolution(s))] + ([up_env] if up_env else []) + refine_extra(s)

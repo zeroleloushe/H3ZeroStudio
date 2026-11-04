@@ -1,0 +1,14 @@
+{
+  "id": "fashion_character",
+  "name": "👗 Fashion Character",
+  "description": "Подача персонажа в стиле модной съёмки с акцентом на силуэт, позу, одежду, аксессуары и качество материалов.",
+  "instructions": [
+    "Editorial fashion character presentation. Clean silhouette, deliberate posture, refined styling and strong attention to clothing construction, fabric behavior, accessories and overall visual identity."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Персонаж",
+  "icon": "sparkles",
+  "tone": "violet",
+  "custom": true
+}

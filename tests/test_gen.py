@@ -974,17 +974,18 @@ def test_upscale_keys_and_normalize():
         {"id": "s3", "frames": 39, "prompt": "3", "upscale": {"method": "nope"}}]))
     u = [s["upscale"] for s in p["segments"]]
     # legacy multipliers become megapixel targets with exactly the same canvas (96x64 x2 = 192x128)
-    assert u[0] == {"method": "rtx", "mp": 0.025, "sigma": 1.0, "quality": "ULTRA"}
+    assert u[0] == {"method": "tiles", "mp": 0.025, "sigma": 0.6}  # rtx migrated to tiles σ 0.60
     assert u[1] == {"method": "tiles", "mp": 0.025, "sigma": 0.6} and u[2] is None
     assert core.upscale_canvas(96, 64, u[0]) == (192, 128) and core.normalize_project(p) == p, "idempotent"
-    assert core.upscale_key_form(u[0], 96, 64) == {"method": "rtx", "scale": 2.0, "sigma": 1.0, "quality": "ULTRA"}
+    assert core.upscale_key_form(u[0], 96, 64) == {"method": "tiles", "scale": 2.0, "sigma": 0.6}
     base = core.segment_keys(p)
     uk = core.upscale_keys(p, base)
     assert uk[0] and uk[1] and uk[2] is None and len(set(uk[:2])) == 2 and not set(uk[:2]) & set(base)
     # the base chain does not depend on the upscale; the 2nd upscale chains on the 1st (same canvas, extension)
+    # rtx→tiles forces σ 0.60, so a different scale (not the discarded σ) is what changes the key
     p2 = core.normalize_project(project(segments=[
-        {"id": "s1", "frames": 39, "prompt": "one", "upscale": {"method": "rtx", "scale": 2, "sigma": 0.3}},
-        {"id": "s2", "frames": 56, "prompt": "two", "upscale": {"method": "tiles"}},
+        {"id": "s1", "frames": 39, "prompt": "one", "upscale": {"method": "rtx", "scale": 1.5, "sigma": 0.3}},
+        {"id": "s2", "frames": 56, "prompt": "two", "upscale": {"method": "tiles", "scale": 1.5}},
         {"id": "s3", "frames": 39, "prompt": "3"}]))
     assert core.segment_keys(p2) == base
     uk2 = core.upscale_keys(p2, base)
@@ -996,8 +997,8 @@ def test_upscale_keys_and_normalize():
     assert old["settings"]["upscale_method"] == "learned"
     for old_m, rev in (("vae", 2), ("latent", 2), ("latent", 0), ("nearest", 3)):   # removed methods -> learned
         assert core.normalize_project({"settings": {"upscale_method": old_m, "upscale_rev": rev}})["settings"]["upscale_method"] == "learned"
-    assert core.normalize_project({"settings": {"upscale_method": "rtx"}})["settings"]["upscale_method"] == "rtx"
-    assert core.UPSCALE_METHODS == ("learned", "rtx")
+    assert core.normalize_project({"settings": {"upscale_method": "rtx"}})["settings"]["upscale_method"] == "learned"
+    assert core.UPSCALE_METHODS == ("learned",)
 
 
 def _up_project(pid, ups, **kw):
@@ -1043,44 +1044,29 @@ def test_segment_upscale_tiles_keeps_audio_and_seam(patcher, dirs, monkeypatch, 
     assert not seen and "upscale from cache" in capsys.readouterr().out
 
 
-def test_segment_upscale_learned_rtx_mixed(patcher, dirs, monkeypatch, capsys):
-    import sys
-    import types
+def test_segment_upscale_learned_tiles_mixed(patcher, dirs, monkeypatch, capsys):
     calls = []
 
     def fake_learned(v, w, h, model=None):
         calls.append(("learned", w, h))
         return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact")
     monkeypatch.setattr(upscale, "learned_upscale", fake_learned)
-
-    class SR:
-        def __init__(self, q): self.q = q
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def load(self): pass
-        def run(self, x):
-            calls.append(("rtx", self.output_width, self.output_height))
-            o = torch.nn.functional.interpolate(x[None], size=(self.output_height, self.output_width), mode="bilinear")[0]
-            return types.SimpleNamespace(image=o)
-    fake = types.SimpleNamespace(VideoSuperRes=SR, effects=types.SimpleNamespace(QualityLevel=types.SimpleNamespace(ULTRA="U", HIGH="H")))
-    monkeypatch.setitem(sys.modules, "nvvfx", fake)
-    monkeypatch.setattr(upscale, "RTX_DEVICE", "cpu")
-    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
     monkeypatch.setattr(upscale, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])
     monkeypatch.setattr(upscale, "learned_node", lambda: object)
-    p = _up_project("up1", [{"method": "latent", "scale": 2}, {"method": "rtx", "scale": 1.5, "quality": "HIGH"}])
+    # second clip: legacy rtx settings migrate to tiles; both still use the learned upscaler as input
+    p = core.normalize_project(_up_project("up1", [{"method": "latent", "scale": 2}, {"method": "rtx", "scale": 1.5, "quality": "HIGH"}]))
+    assert p["segments"][1]["upscale"]["method"] == "tiles" and abs(p["segments"][1]["upscale"]["sigma"] - 0.6) < 1e-6
     images, _, lat, info = gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE(), None)
     log = capsys.readouterr().out
-    assert ("learned", 192, 128) in calls and any(c[0] == "rtx" and c[1:] == (160, 96) for c in calls), "1.5x of 96x64 snapped to 32: 160x96"
+    assert ("learned", 192, 128) in calls and ("learned", 160, 96) in calls, "1.5x of 96x64 snapped to 32: 160x96"
     assert images.shape[1:] == (128, 192, 3), "mixed canvases: stitched at the largest"
     v, _ = lat["samples"].unbind()
     assert v.shape[-2:] == (4, 6), "mixed canvases: latent output keeps the base latents"
     assert "mixed canvases" in log and "segment learned upscaler" not in log
-    assert [r["up_input"] for r in info["segments"]] == ["learned", "rtx"]
+    assert [r["up_input"] for r in info["segments"]] == ["learned", "learned"]
     assert [r["wh"] for r in info["segments"]] == [[192, 128], [160, 96]]
-    # draft -> final default is the learned upscaler too
     assert core.normalize_project({})["settings"]["upscale_method"] == "learned"
-    assert upscale.env_tag("learned").startswith("learned:") and upscale.env_tag("rtx") == "rtx"
+    assert upscale.env_tag("learned").startswith("learned:")
 
 
 def _seam_env_db(x, sr, t0, t1, w=0.005):
@@ -1130,29 +1116,26 @@ def test_stitch_audio_different_sound_crossfades(h3s):
     assert info[0]["mode"] == "crossfade" and abs(gains[1] - 0.5) < 0.1
 
 
-def test_upscale_unavailable_is_a_clear_error(patcher, dirs, monkeypatch):
-    """No learned upscaler and no RTX VSR: the final from the draft fails before any sampling with a clear
-    message (no silent nearest-exact / Lanczos result)."""
+def test_upscale_missing_model_stretches_not_aborts(patcher, dirs, monkeypatch):
+    """No learned upscaler: spatial trilinear stretch + STRETCH_WARN path, no hard abort."""
     monkeypatch.setattr(upscale, "learned_models", lambda: [])
     monkeypatch.setattr(upscale, "learned_node", lambda: None)
     monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h, model=None: None)
-    monkeypatch.setattr(upscale, "rtx_available", lambda: False)
-    p = project(id="noup")
-    p["settings"].update({"quality": "final", "final_mode": "refine"})
-    with pytest.raises(upscale.UpscaleUnavailable, match="Апскейл недоступен"):
-        gen.run_project(patcher, FakeClip(), FakeVAE(), p, FakeAudioVAE(), None)
-    with pytest.raises(upscale.UpscaleUnavailable):
-        upscale.upscale_input(FakeVAE(), torch.zeros(1, 24, 2, 4, 6), 192, 128)
-    # rtx preferred, learned as its fallback (and vice versa)
+    z, used = upscale.upscale_input(FakeVAE(), torch.zeros(1, 24, 2, 4, 6), 192, 128)
+    assert used == "stretch" and tuple(z.shape) == (1, 24, 2, 8, 12)
+    assert upscale.effective_input("latent") == "stretch"
+    assert upscale.effective_input("tiles") == "stretch"
+    assert upscale.env_tag("latent") == "stretch"
+    assert "растянут" in upscale.STRETCH_WARN and "trilinear" in upscale.STRETCH_WARN.lower()
+    # once the model is present again, preferred path returns
     monkeypatch.setattr(upscale, "learned_models", lambda: ["m.safetensors"])
     monkeypatch.setattr(upscale, "learned_node", lambda: object)
-    assert upscale.effective_input("rtx") == "learned" and upscale.effective_input("learned") == "learned"
-    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
-    assert upscale.effective_input("rtx") == "rtx"
+    assert upscale.effective_input("learned") == "learned"
+    assert upscale.effective_input("tiles") == "learned"
 
 
-def test_rtx_center_crop_like_reference():
-    """RTX VSR path = KJNodes «Resize Image v2» nvidia_rtx_vsr with keep_proportion crop / center."""
+def test_center_crop_to_aspect():
+    """Centre crop helper (kept for VAE resize / aspect matching)."""
     fr = torch.zeros(2, 100, 200, 3)
     fr[:, :, 40:160] = 1.0
     c = upscale.center_crop_to_aspect(fr, 120, 100)   # 1.2 aspect from 2.0: width 120, centred
@@ -1254,29 +1237,27 @@ def test_upscale_temporal_chunks(patcher, dirs, monkeypatch, capsys):
 
 
 def test_upscale_profiles_per_method():
-    """Regression: every upscale method keeps its own profile. Root cause was one shared seg_upscale: switching the method
-    wrote that method's default σ and normalize_upscale dropped quality / tiles of the other method; chunks were global."""
-    # migration: the flat values go into the selected method's profile, the others get their own defaults
+    """Regression: every upscale method keeps its own profile. Legacy RTX settings migrate to tiles σ 0.60."""
+    # migration: flat rtx values become the tiles profile (σ forced to 0.60); latent gets its defaults
     st = core.normalize_project({"settings": {"seg_upscale": {"method": "rtx", "mp": 3, "sigma": 0.33, "quality": "HIGH"},
                                               "upscale_chunk_sec": 6, "upscale_chunk_overlap": 2}})["settings"]
     pr = st["upscale_profiles"]
-    assert pr["rtx"]["sigma"] == 0.33 and pr["rtx"]["quality"] == "HIGH" and pr["rtx"]["mp"] == 3 and pr["rtx"]["chunk"] is True
-    assert pr["rtx"]["chunk_sec"] == 6 and pr["rtx"]["chunk_overlap"] == 2
+    assert st["seg_upscale"]["method"] == "tiles" and abs(st["seg_upscale"]["sigma"] - 0.6) < 1e-6
+    assert "rtx" not in pr
+    # flat upscale_chunk_sec>0 follows the selected method (now tiles after rtx migrate)
+    assert pr["tiles"]["mp"] == 3 and abs(pr["tiles"]["sigma"] - 0.6) < 1e-6 and pr["tiles"]["chunk"] is True
     assert pr["latent"]["sigma"] == core.SEG_UPSCALE_SIGMA["latent"] and pr["latent"]["chunk"] is True
-    assert pr["tiles"]["chunk"] is False                                   # defaults: chunks on for latent / RTX, off for tiles
     assert core.normalize_project({})["settings"]["upscale_profiles"]["tiles"]["chunk"] is False
-    # switching the method only selects another profile: rtx σ / quality survive latent and back
+    # switching the method only selects another profile
     st["upscale_profiles"]["latent"]["sigma"] = 0.5
     st["seg_upscale"] = {"method": "latent"}
     s2 = core.normalize_project({"settings": st})["settings"]
     assert s2["seg_upscale"]["method"] == "latent" and s2["seg_upscale"]["sigma"] == 0.5
-    s2["seg_upscale"] = {"method": "rtx", "sigma": 0.15}                  # a stale mirror never overwrites the profile
+    s2["seg_upscale"] = {"method": "tiles", "sigma": 0.15}                  # a stale mirror never overwrites the profile
     s3 = core.normalize_project({"settings": s2})["settings"]
-    assert s3["seg_upscale"]["sigma"] == 0.33 and s3["seg_upscale"]["quality"] == "HIGH" and s3["upscale_profiles"]["latent"]["sigma"] == 0.5
-    # global settings round-trip keeps all profiles
+    assert abs(s3["seg_upscale"]["sigma"] - 0.6) < 1e-6 and s3["upscale_profiles"]["latent"]["sigma"] == 0.5
     g = core.global_settings({"upscale_profiles": s3["upscale_profiles"], "seg_upscale": s3["seg_upscale"]})
-    assert g["upscale_profiles"]["latent"]["sigma"] == 0.5 and g["upscale_profiles"]["rtx"]["quality"] == "HIGH"
-    # the backend reads chunking / steps / sampler of the clip's method
+    assert g["upscale_profiles"]["latent"]["sigma"] == 0.5 and "rtx" not in g["upscale_profiles"]
     s3["upscale_profiles"]["tiles"].update(chunk=False)
     s3["upscale_profiles"]["latent"].update(chunk=True, chunk_sec=3, steps=7, sampler="euler")
     p = core.normalize_project({"settings": s3, "segments": [{"frames": 362, "upscale": {"method": "tiles", "mp": 3}},
@@ -1287,8 +1268,8 @@ def test_upscale_profiles_per_method():
     assert pp["steps"] == 7 and pp["sampler"] == "euler"
     assert core.upscale_pass_params(p, 0, "tiles")["steps"] == core.pass_params(p, 0, "refine")["steps"]
     keys = core.upscale_keys(p, core.segment_keys(p))
-    p["settings"]["upscale_profiles"]["rtx"]["sigma"] = 0.2               # another method's profile: keys of these clips unchanged
-    assert core.upscale_keys(core.normalize_project(p), core.segment_keys(p)) == keys
+    p["settings"]["upscale_profiles"]["latent"]["sigma"] = 0.2               # other method's profile: tiles keys unchanged
+    assert core.upscale_keys(core.normalize_project(p), core.segment_keys(p))[0] == keys[0]
 
 
 # ---------------------------------------------------------------- stage 2: take store, stable keys, restore
@@ -1410,24 +1391,12 @@ def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
         return torch.nn.functional.interpolate(v.float(), size=(v.shape[2], h // 16, w // 16), mode="nearest-exact")
     monkeypatch.setattr(upscale, "learned_upscale", fake_learned)
 
-    class SR:
-        def __init__(self, q): self.q = q
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def load(self): pass
-        def run(self, x):
-            calls.append(("rtx", tuple(x.shape[1:]), self.output_width, self.output_height))
-            o = torch.nn.functional.interpolate(x[None], size=(self.output_height, self.output_width), mode="bilinear")[0]
-            return types.SimpleNamespace(image=o)
-    monkeypatch.setitem(sys.modules, "nvvfx", types.SimpleNamespace(VideoSuperRes=SR, effects=types.SimpleNamespace(QualityLevel=types.SimpleNamespace(ULTRA="U"))))
-    monkeypatch.setattr(upscale, "RTX_DEVICE", "cpu")
-    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
     monkeypatch.setattr(upscale, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])
     monkeypatch.setattr(upscale, "learned_node", lambda: object)
     sampled = []
     real = gen.comfy.sample.sample
     monkeypatch.setattr(gen.comfy.sample, "sample", lambda *a, **k: (sampled.append(1), real(*a, **k))[1])
-    LAT, RTX = {"method": "latent", "scale": 2}, {"method": "rtx", "scale": 2}
+    LAT, TIL = {"method": "latent", "scale": 2}, {"method": "tiles", "scale": 2}
 
     def proj(u1=None, u2=None, ub=None, takes=None, run=None):
         rg = {"id": "b1", "start": 50, "end": 80, "prompt": "bridge", "seed": 2, "upscale": ub}
@@ -1453,11 +1422,10 @@ def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
     img1, _, _, info1 = gen.run_project(patcher, FakeClip(), vae, proj(u1=LAT, takes=key), avae)
     assert ("learned", 192, 128) in calls and sampled and info1["segments"][0]["wh"] == [192, 128]
     assert info1["segments"][1]["wh"] == [96, 64] and img1.shape[1:3] == (128, 192)
-    # 3) footage 2 alone with RTX VSR: the file's own frames, no refine (no sampling)
+    # 3) footage 2 alone with tiles: VAE-encoded frames -> learned upscaler -> refine (same as latent path for input)
     calls.clear(); sampled.clear()
-    img2, _, _, info2 = gen.run_project(patcher, FakeClip(), vae, proj(u2=RTX, takes=key), avae)
-    assert any(c[0] == "rtx" and c[1] == (72, 108) for c in calls), "RTX from the file's native pixels (cropped to 3:2)"
-    assert not sampled and info2["segments"][1]["up_input"] == "rtx-direct" and info2["segments"][1]["wh"] == [192, 128]
+    img2, _, _, info2 = gen.run_project(patcher, FakeClip(), vae, proj(u2=TIL, takes=key), avae)
+    assert ("learned", 192, 128) in calls and sampled and info2["segments"][1]["wh"] == [192, 128]
     # 4) the bridge alone: its take's window latent upscaled + refined
     calls.clear(); sampled.clear()
     img3, _, _, info3 = gen.run_project(patcher, FakeClip(), vae, proj(ub=LAT, takes=key, run={"region": "b1"}), avae)
@@ -1465,7 +1433,7 @@ def test_footage_and_bridge_upscale_e2e(patcher, dirs, monkeypatch, capsys):
     assert r3["key"] == key and r3["up"] and r3["up"]["wh"] == [192, 128] and ("learned", 192, 128) in calls and sampled
     # 5) the whole timeline: all three, one canvas, both bridge seams rated after the level lock
     calls.clear(); sampled.clear(); capsys.readouterr()
-    img4, _, lat4, info4 = gen.run_project(patcher, FakeClip(), vae, proj(LAT, RTX, LAT, takes=key), avae)
+    img4, _, lat4, info4 = gen.run_project(patcher, FakeClip(), vae, proj(LAT, TIL, LAT, takes=key), avae)
     log = capsys.readouterr().out
     assert img4.shape[1:3] == (128, 192) and not calls and not sampled, "everything from the cache"
     r4 = info4["regions"][0]
@@ -1534,9 +1502,7 @@ def test_vae_decode_oom_goes_tiled(monkeypatch, capsys):
 
 
 def test_upscale_vram_handoff_order(patcher, dirs, monkeypatch, capsys):
-    """Each upscale: unload H3 -> upscaler -> unload upscaler -> the refine samples with H3 again (latent, tiles, RTX)."""
-    import sys
-    import types
+    """Each upscale: unload H3 -> upscaler -> unload upscaler -> the refine samples with H3 again (latent + tiles)."""
     import comfy.sample
     ev = []
     monkeypatch.setattr(upscale, "free_vram", lambda: ev.append("free"))
@@ -1544,21 +1510,9 @@ def test_upscale_vram_handoff_order(patcher, dirs, monkeypatch, capsys):
     monkeypatch.setattr(upscale, "learned_upscale", lambda v, w, h, model=None: (ev.append("upscaler"), fake(v, w, h, model))[1])
     real_sample = comfy.sample.sample
     monkeypatch.setattr(comfy.sample, "sample", lambda *a, **k: (ev.append("sample"), real_sample(*a, **k))[1])
-
-    class SR:
-        def __init__(self, q): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def load(self): pass
-        def run(self, x):
-            ev.append("upscaler")
-            return types.SimpleNamespace(image=torch.nn.functional.interpolate(x[None], size=(self.output_height, self.output_width), mode="bilinear")[0])
-    monkeypatch.setitem(sys.modules, "nvvfx", types.SimpleNamespace(VideoSuperRes=SR, effects=types.SimpleNamespace(QualityLevel=types.SimpleNamespace(ULTRA="U"))))
-    monkeypatch.setattr(upscale, "RTX_DEVICE", "cpu")
-    monkeypatch.setattr(upscale, "rtx_available", lambda: True)
     gen.run_project(patcher, FakeClip(), FakeVAE(), _up_project("vh", [None, None]), FakeAudioVAE(), None)
     ev.clear()
-    gen.run_project(patcher, FakeClip(), FakeVAE(), _up_project("vh", [{"method": "latent", "scale": 2}, {"method": "rtx", "scale": 2}]), FakeAudioVAE(), None)
+    gen.run_project(patcher, FakeClip(), FakeVAE(), _up_project("vh", [{"method": "latent", "scale": 2}, {"method": "tiles", "scale": 2}]), FakeAudioVAE(), None)
     log = capsys.readouterr().out
     ups = [k for k, e in enumerate(ev) if e == "upscaler" and (k == 0 or ev[k - 1] != "upscaler")]
     assert len(ups) == 2, ev
@@ -1589,8 +1543,8 @@ def test_tiles_sigma_default_migration_and_range(patcher):
     """Tiles refine strength: default σ 0.60 (user-tested); a rev-3 profile still at the old default 0.35 follows,
     a picked value stays, clips keep their own σ (cache keys unchanged); σ up to 1.0 is accepted and scheduled."""
     d = core.normalize_project({})["settings"]
-    assert d["upscale_profiles"]["tiles"]["sigma"] == 0.6 and d["upscale_rev"] == 4
-    assert d["upscale_profiles"]["latent"]["sigma"] == 0.4 and d["upscale_profiles"]["rtx"]["sigma"] == 0.25
+    assert d["upscale_profiles"]["tiles"]["sigma"] == 0.6 and d["upscale_rev"] == 5
+    assert d["upscale_profiles"]["latent"]["sigma"] == 0.4 and "rtx" not in d["upscale_profiles"]
 
     def st(sig, rev):
         return {"upscale_rev": rev, "seg_upscale": {"method": "tiles", "mp": 2, "sigma": sig}, "upscale_profiles": {"tiles": {"mp": 2, "sigma": sig}}}
@@ -1607,6 +1561,6 @@ def test_tiles_sigma_default_migration_and_range(patcher):
         assert all(float(sg[k]) > float(sg[k + 1]) for k in range(4)), sg
     # global settings (_settings.json): an old file migrates once; the rev travels with the profiles, so a later pick of 0.35 stays
     g = core.global_settings({"upscale_profiles": {"tiles": {"mp": 2, "sigma": 0.35}}})
-    assert g["upscale_profiles"]["tiles"]["sigma"] == 0.6 and g["upscale_rev"] == 4
+    assert g["upscale_profiles"]["tiles"]["sigma"] == 0.6 and g["upscale_rev"] == 5
     g["upscale_profiles"]["tiles"]["sigma"] = 0.35
     assert core.global_settings(g)["upscale_profiles"]["tiles"]["sigma"] == 0.35

@@ -8,7 +8,7 @@ def model_paths():
     """Folders ComfyUI searches (incl. extra_model_paths.yaml) — shown in «Настройки» → «Модели»."""
     import folder_paths
     out = {}
-    for k in ("latent_upscale_models", "vae_approx"):
+    for k in ("latent_upscale_models", "vae_approx", "diffusion_models", "text_encoders", "vae", "loras", "veda"):
         try:
             out[k] = list(folder_paths.get_folder_paths(k))
         except Exception:
@@ -25,12 +25,23 @@ def tiny_vaes():
 
 
 def upscale_caps():
-    """What «Апскейл отрезка» can use on this machine (learned H3 latent upscaler, RTX VSR)."""
+    """What «Апскейл отрезка» can use on this machine (learned H3 latent upscaler)."""
     try:
         from . import h3s_upscale
         return h3s_upscale.capabilities()
     except Exception as e:
-        return {"learned": False, "learned_models": [], "learned_node": False, "rtx": False, "error": str(e)}
+        return {"learned": False, "learned_models": [], "learned_node": False, "error": str(e)}
+
+
+def accel_caps():
+    """What Settings→Ускорение can use on this machine (no hard deps)."""
+    try:
+        from . import h3s_accel
+        return h3s_accel.capabilities()
+    except Exception as e:
+        return {"kitchen": False, "sage": False, "flash": False, "pytorch": True,
+                "veda": False, "veda_predictors": [], "teacache": False, "compile": False,
+                "attention_backends": ["pytorch"], "error": str(e)}
 
 
 def register():
@@ -49,7 +60,7 @@ def register():
         import comfy.samplers
         return web.json_response({"samplers": list(comfy.samplers.KSampler.SAMPLERS),
                                   "schedulers": list(comfy.samplers.KSampler.SCHEDULERS),
-                                  "tiny_vaes": tiny_vaes(), "upscale": upscale_caps(), "paths": model_paths()})
+                                  "tiny_vaes": tiny_vaes(), "upscale": upscale_caps(), "accel": accel_caps(), "paths": model_paths()})
 
     @routes.get("/h3zero/settings")
     async def settings_get(request):
@@ -61,6 +72,51 @@ def register():
         from . import h3s_library as lib
         b = await request.json()
         return await _json_call(lib.settings_set, b.get("settings") or {}, bool(b.get("replace")))
+
+    # ---- model downloads + welcome prefs
+    @routes.get("/h3zero/models/downloads")
+    async def models_dl_status(request):
+        from . import h3s_models_dl as mdl
+        return await _json_call(mdl.status_scan)
+
+    @routes.get("/h3zero/models/downloads/jobs")
+    async def models_dl_jobs(request):
+        from . import h3s_models_dl as mdl
+        mid = request.query.get("id")
+        return await _json_call(mdl.job_status, mid or None)
+
+    @routes.post("/h3zero/models/downloads/start")
+    async def models_dl_start(request):
+        from . import h3s_models_dl as mdl
+        b = await request.json()
+        if b.get("all"):
+            return await _json_call(mdl.start_all, bool(b.get("optional")))
+        return await _json_call(mdl.start, str(b.get("id") or ""))
+
+    @routes.post("/h3zero/models/downloads/cancel")
+    async def models_dl_cancel(request):
+        from . import h3s_models_dl as mdl
+        b = await request.json()
+        return await _json_call(mdl.cancel, str(b.get("id") or ""))
+
+    @routes.get("/h3zero/ui")
+    async def ui_prefs_get(request):
+        from . import h3s_models_dl as mdl
+        return await _json_call(mdl.ui_prefs_get)
+
+    @routes.get("/h3zero/inflight")
+    async def inflight_get(request):
+        from . import h3s_inflight as inf
+        tok = request.query.get("token", "")
+        def go():
+            return {"inflight": inf.lookup(tok)}
+        return await _json_call(go)
+
+    @routes.post("/h3zero/ui")
+    async def ui_prefs_set(request):
+        from . import h3s_models_dl as mdl
+        b = await request.json()
+        return await _json_call(mdl.ui_prefs_set, b or {})
 
     # ---- model & LoRA presets
     @routes.get("/h3zero/models")
@@ -160,6 +216,10 @@ def register():
         finally:
             if gen is not None:
                 gen.close()
+            try:
+                h3s_llm.release_llm_vram()
+            except Exception:
+                pass
         return resp
 
     @routes.get("/h3zero/runs")
@@ -174,6 +234,23 @@ def register():
             return web.json_response({"status": h3s_gen.run_status(request.query.get("node", ""))})
         except Exception as e:
             return web.json_response({"status": None, "error": str(e)})
+
+    @routes.get("/h3zero/themes")
+    async def themes_list(request):
+        from . import h3s_themes
+        return web.json_response(h3s_themes.list_themes())
+
+    @routes.get("/h3zero/themes/{theme_id}/{path:.+}")
+    async def themes_file(request):
+        from . import h3s_themes
+        theme_id = request.match_info.get("theme_id", "")
+        rel = request.match_info.get("path", "")
+        full = h3s_themes.resolve_file(theme_id, rel)
+        if not full:
+            return web.Response(status=404, text="theme file not found")
+        return web.FileResponse(full, headers={"Content-Type": h3s_themes.content_type(full),
+                                               "Cache-Control": "no-cache"})
+
 
     @routes.get("/h3zero/monitor")
     async def monitor(request):
@@ -228,6 +305,20 @@ def register():
                                       **h3s_chars.status()}})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    @routes.get("/h3zero/lora/preview")
+    async def lora_preview(request):
+        """Serve a LoRA's local preview image/video (only under ComfyUI loras folders)."""
+        from . import h3s_models as hm
+        name = request.query.get("file") or request.query.get("name") or ""
+        try:
+            path = hm.lora_preview_path(name)
+        except Exception:
+            path = None
+        if not path:
+            return web.Response(status=404)
+        # long cache: previews are static beside the weight file
+        return web.FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
     @routes.get("/h3zero/chars/preview")
     async def chars_preview(request):

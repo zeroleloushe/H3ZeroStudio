@@ -109,6 +109,12 @@ function makeHost(node) {
     exportVideo: async (body) => { const r = await api.fetchApi("/h3zero/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
     assetEdit: async (body) => { const r = await api.fetchApi("/h3zero/asset_edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j; },
     freeze: async (id, key) => { const r = await api.fetchApi("/h3zero/freeze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, key }) }); const j = await r.json(); if (!j.ok) throw new Error(tServer(j.error) || r.status); return j.freeze; },
+    getRaw: async (path, params = {}) => {
+      const r = await api.fetchApi(path + "?" + new URLSearchParams(params).toString());
+      if (!r.ok) throw new Error(r.status + " " + r.statusText);
+      const j = await r.json();
+      return j && j.ok === true && j.data !== undefined ? j.data : j;
+    },
     get: async (path, params = {}) => {
       const r = await api.fetchApi(path + "?" + new URLSearchParams(params).toString());
       const j = await r.json().catch(() => ({ ok: false, error: r.status + " " + r.statusText }));

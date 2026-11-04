@@ -10,162 +10,93 @@ Start summary with one bracketed prefix chosen from keyframe completion, referen
 For a voice reference, use the explicit definition <Audio N> is the voice-timbre reference for <Subject N> (Sx). The (Sx) comes from actual target-video vocal-event order and is never independently assigned or renumbered from the audio attachment order. detailed_description follows the shared shot, camera, dialogue, sound, and timing rules, but establishes visual style in 1–2 English sentences before [Shot 1]. Describe each shot's composition, subject appearance and position, environment and lighting, actions and state changes, camera, current sound, and exactly where each reference takes effect. For ordinary generation aim for approximately 350–500 English words without artificially stretching dialogue-dense scenes.`;
 
 const BUILTINS = [
-  { id: "chat", icon: "✦", name: T("Свободный чат"), desc: T("Идеи, разбор сцены и ответы без обязательного шаблона."), suggestions: [T("Помоги придумать сцену для текущего отрезка"), T("Разбери мой промпт и предложи улучшения"), T("Как лучше использовать референсы в этой сцене?")], cfg: { mode: "chat", temperature: 0.7, top_p: 0.9, max_tokens: 1800, sys: `You are an assistant in the H3ZeroStudio video studio. Respond in Russian, clearly and concisely. Help conceive and improve MiniMax H3 scenes using the current segment context and the official H3 distinction between T2VA, keyframe I2VA/FL2VA/L2VA, and six-section Ref2VA workflows. Do not format the response as a finished prompt when the user asks for advice or discussion. If the user requests a finished prompt, ask which mode to use or select one based on the references and task.` } },
-  { id: "t2va", icon: "T", name: T("Текст → видео"), desc: T("Полная сцена из текстового описания без референсов."), suggestions: [T("Напиши промпт: утреннее кафе, бариста готовит кофе, мягкий свет"), T("Придумай динамичную сцену в киберпанк-городе"), T("Сделай спокойный природный кадр без музыки")], cfg: { mode: "t2va", temperature: 0.65, top_p: 0.9, max_tokens: 3000, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nT2VA mode. Build the complete audiovisual timeline from text without an image-alignment instruction. Begin directly with integrated_multimodal_description; do not add subject_definitions or retention_analysis.` } },
-  { id: "ref2va", icon: "◉", name: T("По референсам"), desc: T("Новая сцена с людьми, объектами и локациями из изображений."), suggestions: [T("Напиши промпт по референсам: герой идёт по ночной улице"), T("Сохрани внешность персонажа и добавь спокойное движение камеры"), T("Собери сцену из текущих изображений с естественным звуком")], cfg: { mode: "ref2va", temperature: 0.55, top_p: 0.9, max_tokens: 4200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\n${REF_RULES}\n\nRef2VA full-reference generation mode. Usually use [reference generation], adding keyframe completion, video editing, video continuation, audio reuse, or audio reference only when the actual input roles require them. Retain distinctive identity and appearance details from every supplied visual reference.` } },
-  { id: "i2va", icon: "▶", name: T("Первый кадр"), desc: T("Оживление изображения с развитием действия вперёд."), suggestions: [T("Оживи первый кадр: лёгкий ветер и естественная мимика"), T("Начни с текущего изображения и плавно приблизь камеру"), T("Развивай сцену из первого кадра без смены локации")], cfg: { mode: "i2va", temperature: 0.5, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nI2VA mode. The first line must always be exactly: For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced. Follow it with one blank line before the three core fields. Establish the source image's style, subjects, composition, and scene anchors, then use first-frame anchor → action onset → continuous development → result or reaction. Preserve character identity, clothing, colors, key objects, and spatial relationships.` } },
-  { id: "fl2va", icon: "↔", name: T("Первый + последний"), desc: T("Непрерывный переход между двумя ключевыми кадрами."), suggestions: [T("Соедини первый и последний кадр одним плавным действием"), T("Опиши переход между кадрами без дополнительных монтажных склеек"), T("Сделай непрерывное движение камеры между двумя изображениями")], cfg: { mode: "fl2va", temperature: 0.45, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nFL2VA mode. The first line must be: How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video. Replace N with the actual final shot index and S.SS with the exact duration to two decimal places. Follow it with one blank line before the three core fields. Prefer one continuous shot unless multiple shots are explicitly requested. Describe first-frame state → observable intermediate changes → progressively narrowing differences → last-frame state; the final shot must land exactly on Picture 2 at the end.` } },
-  { id: "l2va", icon: "◀", name: T("Последний кадр"), desc: T("Сцена, которая логично приходит к заданному финалу."), suggestions: [T("Построй действие так, чтобы закончить текущим последним кадром"), T("Придумай плавный подход камеры к финальному изображению"), T("Сделай сцену с точной остановкой на последнем кадре")], cfg: { mode: "l2va", temperature: 0.5, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nL2VA mode. The first line must be: How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video. Replace N with the actual final shot index and S.SS with the exact duration to two decimal places. Follow it with one blank line before the three core fields. Picture 1 belongs only to the final shot, not inherently Shot 1. Construct plausible preceding state → explicit action and transition path → gradual convergence in the final shot → exact last-frame landing on composition, pose, lighting, and object positions.` } },
-  { id: "lipsync", icon: "♪", name: T("Липсинк и диалог"), desc: T("Речь, мимика и голосовые референсы с точными репликами."), suggestions: [T("Напиши сцену с липсинком: герой спокойно представляется зрителю"), T("Используй аудио-референс как тембр голоса персонажа"), T("Сделай короткий диалог двух персонажей с естественной мимикой")], cfg: { mode: "lipsync", temperature: 0.4, top_p: 0.85, max_tokens: 4200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\n${REF_RULES}\n\nLipsync and dialogue mode uses the official Ref2VA structure, not a separate H3 checkpoint. Choose summary task types from the actual task, typically reference generation or video editing plus audio reference for voice timbre, or audio reuse only when the source signal itself is copied. Preserve every line verbatim inside <d>[Language] ...</d>. Describe observable articulation, pauses, breathing, gaze, eyebrows, and head movements in temporal alignment with speech. Do not promise exact lipsync in prose; define the physical sequence instead. Fit speech naturally into the segment duration; silence and pauses take time too.` } },
+  { id: "chat", icon: "", name: T("Свободный чат"), desc: T("Идеи, разбор сцены и ответы без обязательного шаблона."), suggestions: [T("Помоги придумать сцену для текущего отрезка"), T("Разбери мой промпт и предложи улучшения"), T("Как лучше использовать референсы в этой сцене?")], cfg: { mode: "chat", temperature: 0.7, top_p: 0.9, max_tokens: 1800, sys: `You are an assistant in the H3ZeroStudio video studio. Respond in Russian, clearly and concisely. Help conceive and improve MiniMax H3 scenes using the current segment context and the official H3 distinction between T2VA, keyframe I2VA/FL2VA/L2VA, and six-section Ref2VA workflows. Do not format the response as a finished prompt when the user asks for advice or discussion. If the user requests a finished prompt, ask which mode to use or select one based on the references and task.` } },
+  { id: "t2va", icon: "", name: T("Текст → видео"), desc: T("Полная сцена из текстового описания без референсов."), suggestions: [T("Напиши промпт: утреннее кафе, бариста готовит кофе, мягкий свет"), T("Придумай динамичную сцену в киберпанк-городе"), T("Сделай спокойный природный кадр без музыки")], cfg: { mode: "t2va", temperature: 0.65, top_p: 0.9, max_tokens: 3000, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nT2VA mode. Build the complete audiovisual timeline from text without an image-alignment instruction. Begin directly with integrated_multimodal_description; do not add subject_definitions or retention_analysis.` } },
+  { id: "ref2va", icon: "", name: T("По референсам"), desc: T("Новая сцена с людьми, объектами и локациями из изображений."), suggestions: [T("Напиши промпт по референсам: герой идёт по ночной улице"), T("Сохрани внешность персонажа и добавь спокойное движение камеры"), T("Собери сцену из текущих изображений с естественным звуком")], cfg: { mode: "ref2va", temperature: 0.55, top_p: 0.9, max_tokens: 4200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\n${REF_RULES}\n\nRef2VA full-reference generation mode. Usually use [reference generation], adding keyframe completion, video editing, video continuation, audio reuse, or audio reference only when the actual input roles require them. Retain distinctive identity and appearance details from every supplied visual reference.` } },
+  { id: "i2va", icon: "", name: T("Первый кадр"), desc: T("Оживление изображения с развитием действия вперёд."), suggestions: [T("Оживи первый кадр: лёгкий ветер и естественная мимика"), T("Начни с текущего изображения и плавно приблизь камеру"), T("Развивай сцену из первого кадра без смены локации")], cfg: { mode: "i2va", temperature: 0.5, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nI2VA mode. The first line must always be exactly: For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced. Follow it with one blank line before the three core fields. Establish the source image's style, subjects, composition, and scene anchors, then use first-frame anchor → action onset → continuous development → result or reaction. Preserve character identity, clothing, colors, key objects, and spatial relationships.` } },
+  { id: "fl2va", icon: "", name: T("Первый + последний"), desc: T("Непрерывный переход между двумя ключевыми кадрами."), suggestions: [T("Соедини первый и последний кадр одним плавным действием"), T("Опиши переход между кадрами без дополнительных монтажных склеек"), T("Сделай непрерывное движение камеры между двумя изображениями")], cfg: { mode: "fl2va", temperature: 0.45, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nFL2VA mode. The first line must be: How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video. Replace N with the actual final shot index and S.SS with the exact duration to two decimal places. Follow it with one blank line before the three core fields. Prefer one continuous shot unless multiple shots are explicitly requested. Describe first-frame state → observable intermediate changes → progressively narrowing differences → last-frame state; the final shot must land exactly on Picture 2 at the end.` } },
+  { id: "l2va", icon: "", name: T("Последний кадр"), desc: T("Сцена, которая логично приходит к заданному финалу."), suggestions: [T("Построй действие так, чтобы закончить текущим последним кадром"), T("Придумай плавный подход камеры к финальному изображению"), T("Сделай сцену с точной остановкой на последнем кадре")], cfg: { mode: "l2va", temperature: 0.5, top_p: 0.9, max_tokens: 3200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\nL2VA mode. The first line must be: How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video. Replace N with the actual final shot index and S.SS with the exact duration to two decimal places. Follow it with one blank line before the three core fields. Picture 1 belongs only to the final shot, not inherently Shot 1. Construct plausible preceding state → explicit action and transition path → gradual convergence in the final shot → exact last-frame landing on composition, pose, lighting, and object positions.` } },
+  { id: "lipsync", icon: "", name: T("Липсинк и диалог"), desc: T("Речь, мимика и голосовые референсы с точными репликами."), suggestions: [T("Напиши сцену с липсинком: герой спокойно представляется зрителю"), T("Используй аудио-референс как тембр голоса персонажа"), T("Сделай короткий диалог двух персонажей с естественной мимикой")], cfg: { mode: "lipsync", temperature: 0.4, top_p: 0.85, max_tokens: 4200, sys: `${COMMON_RULES}\n\n${BASE_RULES}\n\n${REF_RULES}\n\nLipsync and dialogue mode uses the official Ref2VA structure, not a separate H3 checkpoint. Choose summary task types from the actual task, typically reference generation or video editing plus audio reference for voice timbre, or audio reuse only when the source signal itself is copied. Preserve every line verbatim inside <d>[Language] ...</d>. Describe observable articulation, pauses, breathing, gaze, eyebrows, and head movements in temporal alignment with speech. Do not promise exact lipsync in prose; define the physical sequence instead. Fit speech naturally into the segment duration; silence and pauses take time too.` } },
 ];
 for (const preset of BUILTINS) preset.cfg.max_tokens = 16000;
 
 const MODE_NAMES = { chat: T("Свободный чат"), t2va: T("Текст → видео"), ref2va: T("По референсам"), i2va: T("Первый кадр"), fl2va: T("Первый + последний"), l2va: T("Последний кадр"), lipsync: T("Липсинк и диалог") };
 
-export const ASSIST_CSS = `
-.h3z-ast{position:fixed;inset:0;z-index:100002;display:grid;place-items:center;padding:22px;background:rgba(2,5,14,.72);backdrop-filter:blur(10px)}
-.h3z-ast-box{position:relative;width:min(1180px,100%);height:min(820px,100%);min-height:420px;display:grid;grid-template-rows:64px minmax(0,1fr);overflow:hidden;border-radius:18px;box-shadow:0 28px 90px rgba(0,0,0,.42)}
-.h3z-ast-hd{display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);background:rgba(13,17,32,.82)}
-.h3z-ast-brand{display:flex;align-items:center;gap:10px;min-width:190px}
-.h3z-ast-logo{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:linear-gradient(145deg,#8b5cf6,#4f46e5);color:#fff;box-shadow:0 5px 18px rgba(99,102,241,.25)}
-.h3z-ast-logo svg{width:19px;height:19px}
-.h3z-ast-title{font-size:14px;font-weight:750;line-height:1.2}
-.h3z-ast-sub{font-size:10.5px;color:var(--mut);margin-top:3px}
-.h3z-ast-preset{height:34px;max-width:230px;min-width:150px}
-.h3z-ast-spacer{flex:1}
-.h3z-ast-status{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:rgba(5,9,20,.35);color:var(--mut);font-size:11px;cursor:pointer;white-space:nowrap}
-.h3z-ast-status:hover{border-color:var(--line2);color:var(--txt)}
-.h3z-ast-dot{width:7px;height:7px;border-radius:50%;background:#64748b;flex:none}
-.h3z-ast-status.ok{color:#a7f3d0;border-color:rgba(52,211,153,.25);background:rgba(16,185,129,.08)}
-.h3z-ast-status.ok .h3z-ast-dot{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.1)}
-.h3z-ast-status.err{color:#fda4af;border-color:rgba(251,113,133,.25);background:rgba(244,63,94,.07)}
-.h3z-ast-status.err .h3z-ast-dot{background:#fb7185}
-.h3z-ast-status.busy .h3z-ast-dot{background:#22d3ee;animation:h3zAstPulse 1s infinite alternate}
-@keyframes h3zAstPulse{to{opacity:.35}}
-.h3z-ast-body{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:0}
-.h3z-ast-side{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:rgba(7,11,24,.42)}
-.h3z-ast-sidehd{display:flex;align-items:center;justify-content:space-between;padding:15px 13px 10px;color:var(--mut);font-size:11px;font-weight:650}
-.h3z-ast-new{width:100%;justify-content:center;margin-bottom:8px}
-.h3z-ast-new svg,.h3z-ast-send svg,.h3z-ast-iconbtn svg,.h3z-ast-action svg{width:15px;height:15px}
-.h3z-ast-sidepad{padding:0 11px 10px}
-.h3z-ast-chats{flex:1;overflow:auto;padding:2px 8px 12px;display:flex;flex-direction:column;gap:3px}
-.h3z-ast-chat{position:relative;display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:9px;cursor:pointer;border:1px solid transparent;color:var(--mut)}
-.h3z-ast-chat:hover{background:rgba(148,163,255,.06);color:var(--txt)}
-.h3z-ast-chat.on{border-color:rgba(139,92,246,.26);background:rgba(139,92,246,.12);color:var(--txt)}
-.h3z-ast-chatinfo{flex:1;min-width:0}
-.h3z-ast-chattitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:550}
-.h3z-ast-chatmeta{font-size:10px;color:var(--mut2);margin-top:4px}
-.h3z-ast-chatops{display:none;gap:2px}
-.h3z-ast-chat:hover .h3z-ast-chatops,.h3z-ast-chat.on .h3z-ast-chatops{display:flex}
-.h3z-ast-chat.on .h3z-ast-chattitle{max-width:125px}
-.h3z-ast-x{border:none;background:transparent;color:var(--mut2);cursor:pointer;padding:3px;font-size:11px;border-radius:4px}
-.h3z-ast-x:hover{color:var(--txt);background:rgba(255,255,255,.07)}
-.h3z-ast-main{display:flex;flex-direction:column;min-height:0;min-width:0;background:rgba(10,14,28,.25)}
-.h3z-ast-log{flex:1;overflow:auto;padding:24px clamp(16px,4vw,48px);display:flex;flex-direction:column;gap:20px;min-height:0;scroll-behavior:smooth}
-.h3z-ast-msg{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;max-width:88%;align-self:flex-start}
-.h3z-ast-msg.user{align-self:flex-end;grid-template-columns:minmax(0,1fr) 28px;max-width:78%}
-.h3z-ast-avatar{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.22);color:#c4b5fd;font-size:11px;font-weight:800;margin-top:2px}
-.h3z-ast-msg.user .h3z-ast-avatar{grid-column:2;background:rgba(34,211,238,.1);border-color:rgba(34,211,238,.2);color:#a5f3fc}
-.h3z-ast-msg.user .h3z-ast-content{grid-column:1;grid-row:1}
-.h3z-ast-bubble{padding:12px 15px;border-radius:5px 15px 15px 15px;background:rgba(20,26,46,.82);border:1px solid var(--line);font-size:13px;line-height:1.62;white-space:pre-wrap;word-break:break-word;color:var(--txt)}
-.h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text;cursor:text}
-.h3z-ast-bubble ::selection,.h3z-ast-reasonbody::selection{background:rgba(139,92,246,.35);color:#fff}
-.h3z-ast-msg.user .h3z-ast-bubble{border-radius:15px 5px 15px 15px;background:rgba(91,76,175,.22);border-color:rgba(139,92,246,.28)}
-.h3z-ast-reason{margin:0 0 8px;border-left:2px solid rgba(139,92,246,.34);border-radius:0 9px 9px 0;background:rgba(139,92,246,.045);color:var(--mut)}
-.h3z-ast-reason summary{display:flex;align-items:center;gap:7px;padding:8px 10px;cursor:pointer;list-style:none;font-size:11px;user-select:none}
-.h3z-ast-reason summary::-webkit-details-marker{display:none}
-.h3z-ast-reason summary::after{content:"+";margin-left:auto;color:var(--mut2);font-size:14px}
-.h3z-ast-reason[open] summary::after{content:"−"}
-.h3z-ast-reason summary:focus-visible{outline:2px solid #a78bfa;outline-offset:2px;border-radius:7px}
-.h3z-ast-reasondot{width:6px;height:6px;border-radius:50%;background:#a78bfa;flex:none}
-.h3z-ast-reason[open] .h3z-ast-reasondot{animation:h3zAstPulse .8s infinite alternate}
-.h3z-ast-reasonbody{max-height:250px;overflow:auto;padding:0 12px 11px 23px;white-space:pre-wrap;word-break:break-word;font-size:11.5px;line-height:1.58;color:var(--mut)}
-.h3z-ast-msg.pending .h3z-ast-bubble:empty::after{content:"";display:inline-block;width:18px;height:7px;border-radius:4px;background:rgba(196,181,253,.45);animation:h3zAstPulse .7s infinite alternate}
-.h3z-ast-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
-.h3z-ast-action{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;background:transparent;color:var(--mut);border-radius:7px;padding:5px 7px;font-size:10.5px;cursor:pointer}
-.h3z-ast-action:hover{color:var(--txt);background:rgba(148,163,255,.07);border-color:var(--line)}
-.h3z-ast-empty{margin:auto;max-width:590px;text-align:center;padding:28px 10px}
-.h3z-ast-emptyicon{width:54px;height:54px;margin:0 auto 16px;display:grid;place-items:center;border:1px solid rgba(139,92,246,.25);border-radius:16px;background:rgba(139,92,246,.1);color:#c4b5fd;font-size:24px;font-weight:650}
-.h3z-ast-empty h2{font-size:20px;line-height:1.3;margin:0 0 8px;font-weight:700;letter-spacing:-.02em}
-.h3z-ast-empty p{margin:0 auto;color:var(--mut);font-size:12.5px;line-height:1.6;max-width:480px}
-.h3z-ast-suggest{display:flex;justify-content:center;flex-wrap:wrap;gap:7px;margin-top:20px}
-.h3z-ast-chip{max-width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(18,24,43,.55);color:var(--mut);font-size:11px;line-height:1.4;cursor:pointer;text-align:left}
-.h3z-ast-chip:hover{color:var(--txt);border-color:rgba(139,92,246,.38);background:rgba(139,92,246,.08)}
-.h3z-ast-compose{padding:12px clamp(14px,3vw,32px) 16px;border-top:1px solid var(--line);background:rgba(10,14,27,.8)}
-.h3z-ast-inputbox{display:flex;align-items:center;gap:8px;padding:7px 7px 7px 13px;border:1px solid var(--line2);border-radius:13px;background:rgba(5,9,20,.48);transition:border-color .15s,box-shadow .15s}
-.h3z-ast-inputbox:focus-within{border-color:rgba(139,92,246,.6);box-shadow:0 0 0 3px rgba(139,92,246,.08)}
-.h3z-ast-inputbox textarea{flex:1;box-sizing:border-box;height:38px;min-height:38px;max-height:150px;resize:none;overflow-y:hidden;border:none!important;background:transparent!important;box-shadow:none!important;padding:9px 0!important;font-size:13px;line-height:1.45}
-.h3z-ast-send{height:38px;min-width:98px;justify-content:center;border-radius:9px}
-.h3z-ast-composemeta{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--mut2);font-size:10px}
-.h3z-ast-set{position:absolute;inset:0;z-index:4;display:grid;place-items:center;padding:28px;background:rgba(2,5,14,.7);backdrop-filter:blur(8px)}
-.h3z-ast-setbox{width:min(880px,100%);height:min(690px,100%);display:grid;grid-template-rows:58px 44px minmax(0,1fr);overflow:hidden;border:1px solid var(--line2);border-radius:16px;background:#0e1324;box-shadow:0 24px 70px rgba(0,0,0,.45)}
-.h3z-ast-settabs{display:flex;gap:3px;padding:0 16px;border-bottom:1px solid var(--line)}
-.h3z-ast-settab{position:relative;padding:0 13px;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:12px}
-.h3z-ast-settab:hover{color:var(--txt)}
-.h3z-ast-settab.on{color:#ddd6fe}
-.h3z-ast-settab.on::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;background:#8b5cf6;border-radius:2px}
-.h3z-ast-setbody{overflow:auto;padding:22px;min-height:0}
-.h3z-ast-form{max-width:650px;margin:0 auto;display:flex;flex-direction:column;gap:17px}
-.h3z-ast-formwide{max-width:none}
-.h3z-ast-sectiontitle{font-size:15px;font-weight:700;margin:0}
-.h3z-ast-sectiondesc{font-size:12px;color:var(--mut);line-height:1.65;margin:7px 0 0;max-width:72ch}
-.h3z-ast-conn{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border:1px solid var(--line);border-radius:11px;background:rgba(5,9,20,.35)}
-.h3z-ast-conn .h3z-ast-dot{margin-top:5px}
-.h3z-ast-conn.ok{border-color:rgba(52,211,153,.25);background:rgba(16,185,129,.06)}
-.h3z-ast-conn.ok .h3z-ast-dot{background:#34d399}
-.h3z-ast-conn.err{border-color:rgba(251,113,133,.28);background:rgba(244,63,94,.06)}
-.h3z-ast-conn.err .h3z-ast-dot{background:#fb7185}
-.h3z-ast-conntext{font-size:12px;font-weight:600;line-height:1.45}
-.h3z-ast-conndetail{font-size:11px;color:var(--mut);line-height:1.5;margin-top:3px;word-break:break-word}
-.h3z-ast-modelrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}
-.h3z-ast-buttonrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.h3z-ast-presets{display:grid;grid-template-columns:205px minmax(0,1fr);gap:18px;min-height:100%}
-.h3z-ast-presetlist{display:flex;flex-direction:column;gap:6px;padding-right:14px;border-right:1px solid var(--line)}
-.h3z-ast-presetitem{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:9px 10px;border:1px solid transparent;border-radius:9px;background:rgba(148,163,255,.035);color:var(--mut);font:inherit;cursor:pointer;text-align:left}
-.h3z-ast-presetitem:hover{background:rgba(148,163,255,.09);border-color:var(--line);color:var(--txt)}
-.h3z-ast-presetitem.on{background:rgba(139,92,246,.14);border-color:rgba(139,92,246,.34);color:var(--txt)}
-.h3z-ast-presetitem:focus-visible{outline:2px solid #a78bfa;outline-offset:2px}
-.h3z-ast-preseticon{width:27px;height:27px;display:grid;place-items:center;flex:none;border-radius:7px;background:rgba(139,92,246,.12);color:#c4b5fd;font-size:12px;font-weight:750}
-.h3z-ast-presetname{font-size:12px;font-weight:600;line-height:1.5}
-.h3z-ast-editor{display:flex;flex-direction:column;gap:18px;min-width:0}
-.h3z-ast-editor textarea{min-height:245px;line-height:1.7;font-size:12.5px;padding:13px 14px}
-.h3z-ast-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.h3z-ast-switch{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
-.h3z-ast-switch input{margin-top:3px;accent-color:#8b5cf6}
-.h3z-ast-switchtitle{font-size:12px;font-weight:600}
-.h3z-ast-switchdesc{font-size:10.5px;color:var(--mut);line-height:1.5;margin-top:3px}
-.h3z-ast-stats{display:flex;flex-wrap:wrap;gap:5px 10px;margin-top:7px;color:var(--mut2);font-size:10px;line-height:1.5}
-.h3z-ast-truncated{color:#fbbf24}
-.h3z-ast-tools{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;margin-top:8px}
-.h3z-ast-uploads{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-.h3z-ast-upload{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:rgba(139,92,246,.07);color:var(--mut);font-size:10.5px}
-.h3z-ast-upload span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.h3z-ast-upload button{border:0;background:transparent;color:var(--mut);padding:0;cursor:pointer}
-.h3z-ast-upload button:hover{color:var(--txt)}
-.h3z-ast-attach{flex:none;width:34px;height:34px}
-.h3z-ast-attach svg{width:16px;height:16px}
-.h3z-ast-stylechips{display:flex;gap:5px;flex:1;min-width:0;overflow:auto;scrollbar-width:thin}
-.h3z-ast-stylechip{flex:none;border:1px solid rgba(139,92,246,.24);border-radius:999px;background:rgba(139,92,246,.08);color:#c4b5fd;padding:4px 8px;font-size:10px;cursor:pointer}
-.h3z-ast-stylechip:hover{border-color:rgba(139,92,246,.5);background:rgba(139,92,246,.14)}
-.h3z-ast-stylelayout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:18px;min-height:100%}
-.h3z-ast-stylefilters{display:flex;flex-direction:column;gap:8px}
-.h3z-ast-stylecat{padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--mut);text-align:left;cursor:pointer;font-size:11.5px}
-.h3z-ast-stylecat:hover{background:rgba(148,163,255,.06);color:var(--txt)}
-.h3z-ast-stylecat.on{border-color:rgba(139,92,246,.28);background:rgba(139,92,246,.12);color:#ddd6fe}
-.h3z-ast-stylelist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-content:start}
-.h3z-ast-styleitem{display:flex;align-items:flex-start;gap:9px;padding:11px;border:1px solid var(--line);border-radius:10px;background:rgba(5,9,20,.26);cursor:pointer;min-width:0}
-.h3z-ast-styleitem:hover{border-color:rgba(139,92,246,.35);background:rgba(139,92,246,.055)}
-.h3z-ast-styleitem.on{border-color:rgba(139,92,246,.42);background:rgba(139,92,246,.1)}
-.h3z-ast-styleitem input{margin-top:3px;accent-color:#8b5cf6;flex:none}
-.h3z-ast-stylepick{display:flex;align-items:flex-start;gap:9px;flex:1;min-width:0;cursor:pointer}
-.h3z-ast-styleops{display:flex;gap:1px;flex:none;margin:-5px -5px 0 0}
-.h3z-ast-stylename{display:block;font-size:11.5px;font-weight:650;line-height:1.45;color:var(--txt)}
-.h3z-ast-styledesc{display:block;font-size:10.5px;color:var(--mut);line-height:1.5;margin-top:4px}
-.h3z-ast-styleempty{grid-column:1/-1;padding:32px;text-align:center;color:var(--mut);font-size:12px}
-.h3z-ast-mobilechats{display:none}
-@media(max-width:800px){.h3z-ast{padding:0}.h3z-ast-box{border-radius:0;height:100%;min-height:0}.h3z-ast-brand{min-width:0}.h3z-ast-sub,.h3z-ast-status span{display:none}.h3z-ast-status{padding:0 9px}.h3z-ast-preset{max-width:155px;min-width:100px}.h3z-ast-body{grid-template-columns:1fr}.h3z-ast-side{display:none;position:absolute;z-index:2;inset:64px auto 0 0;width:min(280px,85vw);background:#0c1121;box-shadow:15px 0 40px rgba(0,0,0,.35)}.h3z-ast-side.open{display:flex}.h3z-ast-mobilechats{display:inline-flex}.h3z-ast-set{padding:10px}.h3z-ast-setbox{height:100%}.h3z-ast-presets{grid-template-columns:1fr}.h3z-ast-presetlist{border-right:none;border-bottom:1px solid var(--line);padding:0 0 12px;max-height:190px;overflow:auto}.h3z-ast-grid3{grid-template-columns:1fr}.h3z-ast-stylelayout{grid-template-columns:1fr}.h3z-ast-stylefilters{flex-direction:row;flex-wrap:wrap}.h3z-ast-stylefilters .h3z-in{width:100%}.h3z-ast-stylelist{grid-template-columns:1fr}.h3z-ast-msg,.h3z-ast-msg.user{max-width:96%}.h3z-ast-log{padding:18px 12px}}
-@media(prefers-reduced-motion:reduce){.h3z-ast *{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+const ASSIST_CSS = `
+/* Native H3 assistant — theme vars only; no hover reflow */
+.h3z-ast-panel,.h3z-ast-panel *{box-sizing:border-box}
+.h3z-ast-panel{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;flex:1 1 auto;width:100%;max-width:100%;height:100%;overflow:hidden;padding:0 12px 8px;background:transparent;font-size:12.5px;font-weight:400;box-sizing:border-box}
+.h3z-panel > .h3z-ast-panel{flex:1;min-height:0;min-width:0}
+.h3z-panel .h3z-ast-panel .h3z-scroll,.h3z-ast-panel .h3z-scroll{flex:1 1 auto;min-height:0;min-width:0;width:100%;max-width:100%;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:0;margin:0;border:none;background:transparent;box-shadow:none}
+.h3z-ast-panel .h3z-ph{display:flex;align-items:center;gap:8px;padding:0 0 2px;min-width:0;width:100%}
+.h3z-ast-panel .h3z-ph h3{margin:0;flex:1;min-width:0;font-size:14px;font-weight:700}
+.h3z-ast-titlerow{display:flex;align-items:center;gap:6px;flex:none}
+.h3z-ast-moderow,.h3z-ast-histrow{border:none;box-shadow:none;background:transparent}
+.h3z-ast-moderow{display:flex;align-items:center;gap:8px;min-width:0;width:100%}
+.h3z-ast-moderow .h3z-lbl{flex:none;margin:0;color:var(--mut);font-size:11.5px;font-weight:600}
+.h3z-ast-mode{flex:1;min-width:0;max-width:100%;font-size:12.5px}
+.h3z-ast-histrow .h3z-lbl{flex:none;margin:0;color:var(--mut);font-size:11.5px;font-weight:600}
+.h3z-ast-status{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;max-width:160px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--mut);font:inherit;font-size:11px;font-weight:500;cursor:pointer;margin:0;min-width:0;overflow:hidden}
+.h3z-ast-status > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.h3z-ast-status.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.h3z-ast-status.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 35%,transparent)}
+.h3z-ast-status.busy .h3z-ast-dot{background:var(--a2);animation:h3zAstPulse 1s infinite alternate}
+.h3z-ast-dot{width:7px;height:7px;border-radius:50%;background:var(--mut);flex:none}
+.h3z-ast-status.ok .h3z-ast-dot{background:var(--ok)}
+.h3z-ast-status.err .h3z-ast-dot{background:var(--err)}
+@keyframes h3zAstPulse{from{opacity:.45}to{opacity:1}}
+.h3z-ast-histrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap;min-width:0;width:100%}
+.h3z-ast-histrow .h3z-sel{flex:1 1 110px;min-width:0;height:28px}
+.h3z-ast-histacts{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:none}
+.h3z-ast-histrow .h3z-btn{flex:none;height:28px;font-weight:500}
+.h3z-ast-main,.h3z-root .h3z-ast-main{display:flex;flex-direction:column;min-height:0;min-width:0;flex:1;margin:0;padding:0;border:none;background:transparent;box-shadow:none}
+.h3z-ast-log{flex:1;min-height:0;min-width:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:2px 0;margin:0;border:none;background:transparent;box-shadow:none}
+.h3z-ast-log:has(.h3z-ast-empty){justify-content:stretch}
+.h3z-ast-msg{min-width:0;width:100%;padding:10px;font-size:12.5px}
+.h3z-ast-msg .h3z-card-h h4{font-size:12px;font-weight:650}
+.h3z-ast-msg.user{border-color:color-mix(in srgb,var(--a1) 28%,transparent);background:color-mix(in srgb,var(--a1) 8%,var(--panel))}
+.h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text}
+.h3z-ast-bubble{white-space:pre-wrap;word-break:break-word;font-size:12.5px;font-weight:400;line-height:1.5;min-width:0}
+.h3z-ast-msg .h3z-row{gap:5px;flex-wrap:wrap;margin-top:6px}
+.h3z-ast-msg .h3z-btn{font-weight:500}
+.h3z-ast-empty{flex:1;min-height:0;min-width:0;display:flex;align-items:center;justify-content:center;padding:12px 16px;pointer-events:none}
+.h3z-ast-emptyblurb{max-width:280px;margin:0;text-align:center;font-size:12px;font-weight:400;line-height:1.5;color:var(--mut);white-space:pre-line}
+/* Composer card: textarea full width, toolbar below, never clipped */
+.h3z-ast-compose{flex:none;position:relative;z-index:2;display:flex;flex-direction:column;gap:8px;padding:10px;margin:0 0 8px;min-width:0;width:100%;max-width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow:hidden}
+.h3z-ast-compose textarea.h3z-ast-input,.h3z-ast-compose .h3z-ast-input{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;max-height:132px;resize:none;overflow-y:auto;font-size:12.5px;font-weight:400;line-height:1.4;box-sizing:border-box;margin:0}
+.h3z-ast-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;width:100%}
+.h3z-ast-toolbar .h3z-ast-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;flex:1 1 auto}
+.h3z-ast-toolbar .h3z-ast-send{flex:none;margin-left:auto}
+.h3z-ast-stylechips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
+.h3z-ast-stylechips .h3z-pill{font-size:11px;font-weight:500;padding:3px 8px;flex:none}
+.h3z-ast-neighpill{appearance:none;-webkit-appearance:none;font:inherit;font-size:11px;font-weight:500;padding:3px 8px;flex:none;border:1px solid var(--line);border-radius:999px;background:var(--field);color:var(--mut);cursor:pointer;margin:0}
+.h3z-ast-neighpill.on{color:var(--txt);border-color:color-mix(in srgb,var(--a1) 45%,var(--line));background:color-mix(in srgb,var(--a1) 14%,var(--field))}
+.h3z-ast-uploads{display:flex;flex-wrap:wrap;gap:4px;min-width:0;width:100%}
+.h3z-ast-settings .h3z-settabs{margin-left:-12px;margin-right:-12px}
+.h3z-ast-presetlist{display:flex;flex-direction:column;gap:4px;min-width:0}
+.h3z-ast-styletbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;width:100%;margin:6px 0}
+.h3z-ast-stylelist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;min-width:0;width:100%}
+/* Style cards: reserved corner for ops — opacity only, never display/size changes */
+.h3z-ast-stylecard{position:relative;cursor:pointer;padding:10px 40px 10px 10px;display:flex;flex-direction:column;gap:4px;min-width:0;min-height:72px}
+.h3z-ast-stylecard.on{border-color:color-mix(in srgb,var(--a1) 55%,transparent);background:color-mix(in srgb,var(--a1) 12%,var(--panel))}
+.h3z-ast-stylecard:hover,.h3z-ast-stylecard:focus-within{border-color:color-mix(in srgb,var(--a1) 40%,var(--line))}
+.h3z-ast-stylecard-hd{display:flex;align-items:center;gap:6px;min-width:0;padding-right:0}
+.h3z-ast-styleico{flex:none}
+.h3z-ast-stylecheck{margin-left:auto;color:var(--a1);font-weight:700;font-size:12px;width:14px;text-align:center;flex:none}
+.h3z-ast-styleops{position:absolute;top:6px;right:6px;display:flex;gap:2px;opacity:.35;pointer-events:auto}
+.h3z-ast-stylecard:hover .h3z-ast-styleops,.h3z-ast-stylecard:focus-within .h3z-ast-styleops{opacity:1}
+.h3z-ast-styleops .h3z-btn{width:26px;height:26px;padding:0}
+.h3z-ast-stylename{display:block;font-size:12.5px;font-weight:650;line-height:1.3;word-break:break-word}
+.h3z-ast-styledesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:11px;font-weight:400;line-height:1.35}
+.h3z-ast-reason{margin:0 0 6px;border-left:2px solid color-mix(in srgb,var(--a1) 40%,transparent);padding:4px 0 4px 8px;color:var(--mut);font-size:11px;min-width:0}
+.h3z-ast-reason summary{cursor:pointer;list-style:none}
+.h3z-ast-reasonbody{max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+@media (max-width:360px){.h3z-ast-stylelist{grid-template-columns:1fr}}
 `;
+
+
+
+
 
 export function installAssist(Editor, { C, h, ICON }) {
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -173,23 +104,38 @@ export function installAssist(Editor, { C, h, ICON }) {
 
   Object.assign(Editor.prototype, {
     openAssist() {
-      if (this._ast?.el?.isConnected) return;
       if (!document.getElementById("h3z-ast-style")) document.head.append(h("style", { id: "h3z-ast-style" }, ASSIST_CSS));
-      const el = h("div", { class: "h3z-ast" });
-      el.addEventListener("pointerdown", (e) => { if (e.target === el) this.closeAssist(); });
-      this._ast = { el, busy: false, abort: null, status: { state: "idle", models: [], error: "" }, setOpen: false,
-        setTab: "connection", editPreset: "", presetDraft: null, sideOpen: false, connectSeq: 0,
-        uploads: [], uploading: false, styleQuery: "", styleCategory: "all" };
-      this.root.append(el);
+      if (!this._ast) {
+        this._ast = { el: null, busy: false, abort: null, status: { state: "idle", models: [], error: "" }, setOpen: false,
+          setTab: "connection", editPreset: "", presetDraft: null, sideOpen: false, connectSeq: 0,
+          uploads: [], uploading: false, styleQuery: "", styleCategory: "all" };
+      }
       if (!this.astPreset()) this.astSet((a) => { a.preset = "chat"; });
-      this.renderAssist();
+      if (this.tool === "assist" && this.$.left?.querySelector(".h3z-ast-panel")) {
+        this.astConnect(true);
+        return;
+      }
+      this.tool = "assist";
+      this.renderTools();
+      this.renderLeft();
       this.astConnect(true);
     },
     closeAssist() {
       if (this._ast) this._ast.connectSeq++;
       clearTimeout(this._astCfgT);
+      clearTimeout(this._astUnloadT);
       this._ast?.abort?.abort();
-      this._ast?.el?.remove();
+      this._ast = null;
+      if (this.tool === "assist") {
+        this.tool = "settings";
+        if (this.root) { this.renderTools(); this.renderLeft(); }
+      }
+    },
+    disposeAssist() {
+      if (this._ast) this._ast.connectSeq++;
+      clearTimeout(this._astCfgT);
+      clearTimeout(this._astUnloadT);
+      this._ast?.abort?.abort();
       this._ast = null;
     },
     astSet(fn) {
@@ -374,14 +320,14 @@ export function installAssist(Editor, { C, h, ICON }) {
         const p = this.astPreset() || BUILTINS[0];
         this._ast.editPreset = p.id; this._ast.presetDraft = clone(p);
       }
-      this.renderAssistSettings();
+      this.renderLeft();
     },
 
     astCardLabels(i, s) { return C.cardLabels(this.p, s, i, true, false); },
     astAttachments() {
       const out = [...(this._ast?.uploads || [])];
       const i = this.sel >= 0 && this.seg(this.sel) ? this.sel : 0, s = this.seg(i);
-      if (!s || this.p.assistant.cfg.ctx_refs === false) return out;
+      if (!s) return out;
       out.push(...C.orderedRefs(this.p, s).map((a, n) => ({ kind: "asset", token: `<Picture ${n + 1}>`, label: a.name,
         asset: { file: a.file, subfolder: a.subfolder || "", type: a.type || "input" } })));
       for (const r of this.astCardLabels(i, s)) {
@@ -415,8 +361,9 @@ export function installAssist(Editor, { C, h, ICON }) {
       const i = this.sel >= 0 && this.seg(this.sel) ? this.sel : 0, s = this.seg(i);
       if (!s) return "";
       const g = this.p.settings, [w, hh] = C.resolution(g), cfg = this.p.assistant.cfg;
-      const L = [T("Текущий отрезок {0}{1}: {2} кадров ({3} с), кадр {4}×{5}.", i + 1, s.name ? ` «${s.name}»` : "", s.frames, (s.frames / C.FPS).toFixed(2), w, hh)];
-      if (cfg.ctx_refs !== false) {
+      const L = [T("Текущий отрезок {0}{1}: {2} кадров ({3} с), {4}×{5}, {6} fps.", i + 1, s.name ? ` «${s.name}»` : "", s.frames, (s.frames / C.FPS).toFixed(2), w, hh, C.FPS)];
+      // Selected clip context (refs + characters) is always on.
+      {
         const names = { character: T("персонаж"), location: T("локация"), other: T("другое") };
         const refs = C.orderedRefs(this.p, s).map((a, n) => `<Picture ${n + 1}> — ${a.name} (${names[a.category] || a.category})`);
         const cp = C.continuityPicture(this.p, i);
@@ -440,8 +387,12 @@ export function installAssist(Editor, { C, h, ICON }) {
       if ((g.prompt || "").trim()) L.push(T("Общий промпт проекта: «{0}»", g.prompt.trim()));
       if ((s.prompt || "").trim()) L.push(T("Текущий промпт отрезка: «{0}»", s.prompt.trim()));
       if (cfg.ctx_neighbours) for (const j of [i - 1, i + 1]) {
-        const x = this.seg(j);
-        if (x && (x.prompt || "").trim()) L.push(T("Соседний отрезок {0}: «{1}»", j + 1, x.prompt.trim().slice(0, 500)));
+        const x = this.seg(j); if (!x) continue;
+        const nr = C.orderedRefs(this.p, x).map((a) => a.name);
+        const bits = [];
+        if ((x.prompt || "").trim()) bits.push(T("промпт «{0}»", x.prompt.trim().slice(0, 500)));
+        if (nr.length) bits.push(T("референсы: {0}", nr.join(", ")));
+        if (bits.length) L.push(T("Соседний отрезок {0}: {1}.", j + 1, bits.join("; ")));
       }
       return L.join("\n");
     },
@@ -454,14 +405,14 @@ export function installAssist(Editor, { C, h, ICON }) {
       const A = this._ast; if (!A || A.busy) return;
       if (A.uploading) { this.toast(T("Дождитесь загрузки изображений")); return; }
       clearTimeout(this._astUnloadT);
-      const ta = A.el.querySelector(".h3z-ast-inputbox textarea");
+      const ta = A.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input");
       const text = ta?.value.trim() || (A.uploads.length ? T("Опиши прикреплённые изображения.") : "");
       if (!text) return;
       A.busy = true; this.astPaintComposer();
       if (!this.p.assistant.cfg.api_model) this.astOpenSettings("connection");
       if (!this.p.assistant.cfg.api_model || !(A.status.state === "connected" || await this.astConnect(true))) {
         A.busy = false; this.astPaintComposer();
-        const input = A.el.querySelector(".h3z-ast-inputbox textarea");
+        const input = A.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input");
         if (input) { input.value = text; this.astAutoGrow(input); }
         this.toast(this.p.assistant.cfg.api_model ? T("Сначала подключитесь к API") : T("Выберите модель в настройках API"), true);
         return;
@@ -474,7 +425,7 @@ export function installAssist(Editor, { C, h, ICON }) {
         if (!c.title) c.title = text.slice(0, 60);
         c.msgs.push({ role: "assistant", text: "" });
       });
-      ta.value = ""; ta.style.height = "38px";
+      ta.value = ""; ta.style.height = "44px";
       this.renderAssist();
       const messages = this.astMessages(), cfg = this.p.assistant.cfg, attachments = this.astAttachments();
       A.uploads = [];
@@ -550,17 +501,17 @@ export function installAssist(Editor, { C, h, ICON }) {
       }
     },
     astSuggestion(text) {
-      const ta = this._ast?.el.querySelector(".h3z-ast-inputbox textarea"); if (!ta) return;
+      const ta = this._ast?.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input"); if (!ta) return;
       ta.value = text; ta.focus(); this.astAutoGrow(ta);
     },
     astAutoGrow(ta) {
       ta.style.height = "0px";
-      ta.style.minHeight = "0px";
+      ta.style.minHeight = "0";
       const contentHeight = ta.scrollHeight;
-      const height = Math.min(150, Math.max(38, contentHeight));
+      const height = Math.min(132, Math.max(44, contentHeight));
       ta.style.height = height + "px";
-      ta.style.minHeight = "38px";
-      ta.style.overflowY = contentHeight > 150 ? "auto" : "hidden";
+      ta.style.minHeight = "44px";
+      ta.style.overflowY = contentHeight > 132 ? "auto" : "hidden";
     },
     astCopy(text) { navigator.clipboard?.writeText(text); this.toast(T("Скопировано")); },
     astInsertPrompt(text, generate) {
@@ -571,135 +522,244 @@ export function installAssist(Editor, { C, h, ICON }) {
       this.toast(T("Промпт вставлен в отрезок {0}", i + 1));
       if (generate) { this.closeAssist(); this.generate({ upto: i, only: i }); }
     },
-
     renderAssist() {
-      const A = this._ast; if (!A?.el?.isConnected) return;
-      A.el.replaceChildren(h("div", { class: "h3z-ast-box h3z-glass" }, this.astHead(), this.astBody(), A.setOpen ? this.astSettings() : null));
-      const log = A.el.querySelector(".h3z-ast-log"); if (log) log.scrollTop = log.scrollHeight;
+      if (this.tool !== "assist") return;
+      this.renderLeft();
     },
-    renderAssistHead() { const old = this._ast?.el.querySelector(":scope > .h3z-ast-box > .h3z-ast-hd"); if (old) old.replaceWith(this.astHead()); },
-    renderAssistSettings() {
-      const box = this._ast?.el.querySelector(":scope > .h3z-ast-box"); if (!box) return;
-      box.querySelector(":scope > .h3z-ast-set")?.remove();
-      if (this._ast.setOpen) box.append(this.astSettings());
-    },
+    renderAssistHead() { if (this.tool === "assist") this.renderLeft(); },
+    renderAssistSettings() { if (this.tool === "assist") this.renderLeft(); },
     astStatusView() {
-      const st = this._ast.status, model = this.p.assistant.cfg.api_model;
+      const st = this._ast?.status || { state: "idle" }, model = this.p.assistant.cfg.api_model;
       if (st.state === "connected") return { cls: "ok", text: model || T("API подключён") };
       if (st.state === "checking") return { cls: "busy", text: T("Проверка API…") };
       if (st.state === "error") return { cls: "err", text: T("Нет соединения") };
       return { cls: "", text: T("API не проверен") };
     },
-    astHead() {
-      const st = this.astStatusView(), active = this.p.assistant.preset || "chat";
-      const sel = h("select", { class: "h3z-sel sm h3z-ast-preset", title: T("Режим и пресет ассистента") },
-        h("optgroup", { label: T("Основные режимы") }, BUILTINS.map((p) => h("option", { value: p.id, selected: active === p.id }, `${p.icon} ${T(p.name)}`))),
-        this.p.assistant.presets.length ? h("optgroup", { label: T("Мои пресеты") }, this.p.assistant.presets.map((p) => h("option", { value: p.id, selected: active === p.id }, "✦ " + p.name))) : null);
-      sel.onchange = () => this.astApplyPreset(sel.value);
-      return h("div", { class: "h3z-ast-hd" },
-        h("button", { class: "h3z-btn sm icon h3z-ast-mobilechats", title: T("Диалоги"), html: ICON.menu || "☰", onclick: () => { this._ast.sideOpen = !this._ast.sideOpen; this._ast.el.querySelector(".h3z-ast-side")?.classList.toggle("open", this._ast.sideOpen); } }),
-        h("div", { class: "h3z-ast-brand" }, h("div", { class: "h3z-ast-logo", html: ICON.spark }), h("div", null, h("div", { class: "h3z-ast-title" }, T("Ассистент")), h("div", { class: "h3z-ast-sub" }, "MiniMax H3 · API"))),
-        sel, h("div", { class: "h3z-ast-spacer" }),
-        h("button", { class: `h3z-ast-status ${st.cls}`, title: T("Открыть настройки подключения"), onclick: () => this.astOpenSettings("connection") }, h("i", { class: "h3z-ast-dot" }), h("span", null, st.text)),
-        h("button", { class: "h3z-btn sm icon", title: T("Настройки ассистента"), html: ICON.settings, onclick: () => this.astOpenSettings() }),
-        h("button", { class: "h3z-btn sm icon", title: T("Закрыть (Esc)"), html: ICON.close, onclick: () => this.closeAssist() }));
+    /** Native H3 left-panel tool (chat or settings view). */
+    renderAssistPanel(L) {
+      if (!document.getElementById("h3z-ast-style")) document.head.append(h("style", { id: "h3z-ast-style" }, ASSIST_CSS));
+      if (!this._ast) {
+        this._ast = { el: null, busy: false, abort: null, status: { state: "idle", models: [], error: "" }, setOpen: false,
+          setTab: "connection", editPreset: "", presetDraft: null, sideOpen: false, connectSeq: 0,
+          uploads: [], uploading: false, styleQuery: "", styleCategory: "all", styleDraft: null };
+      }
+      if (!this.astPreset()) this.astSet((a) => { a.preset = "chat"; });
+      if (this._ast.setOpen) return this.renderAssistSettingsView(L);
+      const panel = h("div", { class: "h3z-ast-panel" },
+        this.astModeRow(),
+        h("div", { class: "h3z-scroll" }, this.astHistoryRow(), this.astMain()),
+        this.astComposer());
+      this._ast.el = panel;
+      L.append(h("div", { class: "h3z-ph" }, h("h3", null, T("Ассистент")), this.astTitleControls()), panel);
+      const log = panel.querySelector(".h3z-ast-log"); if (log) log.scrollTop = log.scrollHeight;
     },
-    astBody() { return h("div", { class: "h3z-ast-body" }, this.astChatsSide(), this.astMain()); },
-    astChatsSide() {
-      const active = this.p.assistant.active;
-      return h("div", { class: "h3z-ast-side" + (this._ast.sideOpen ? " open" : "") },
-        h("div", { class: "h3z-ast-sidehd" }, h("span", null, T("Диалоги")), h("span", null, String(this.p.assistant.chats.length))),
-        h("div", { class: "h3z-ast-sidepad" }, h("button", { class: "h3z-btn sm primary h3z-ast-new", html: ICON.plus + `<span>${T("Новый чат")}</span>`, onclick: () => this.astNewChat() })),
-        h("div", { class: "h3z-ast-chats" }, this.p.assistant.chats.length ? this.p.assistant.chats.map((c) => h("div", { class: "h3z-ast-chat" + (c.id === active ? " on" : ""), onclick: () => this.astSelectChat(c.id) },
-          h("div", { class: "h3z-ast-chatinfo" }, h("div", { class: "h3z-ast-chattitle" }, c.title || T("Новый чат")), h("div", { class: "h3z-ast-chatmeta" }, T("{0} сообщений", c.msgs.length))),
-          h("div", { class: "h3z-ast-chatops" },
-            h("button", { class: "h3z-ast-x", title: T("Переименовать"), onclick: (e) => { e.stopPropagation(); this.astRenameChat(c.id); } }, "✎"),
-            h("button", { class: "h3z-ast-x", title: T("Удалить чат"), onclick: (e) => { e.stopPropagation(); this.astDeleteChat(c.id); } }, "×")))) : h("div", { class: "h3z-note" }, T("Здесь появятся ваши диалоги"))));
+    renderAssistSettingsView(L) {
+      const A = this._ast;
+      const close = () => { A.setOpen = false; A.styleDraft = null; this.renderLeft(); };
+      const tab = (key, label) => h("div", { class: "h3z-settab" + (A.setTab === key ? " on" : ""), onclick: () => {
+        A.setTab = key;
+        if (key === "presets" && !A.presetDraft) {
+          const p = this.astPreset() || BUILTINS[0];
+          A.editPreset = p.id; A.presetDraft = clone(p);
+        }
+        this.renderLeft();
+      } }, label);
+      const body = A.setTab === "connection" ? this.astSetConnection()
+        : A.setTab === "presets" ? this.astSetPresets()
+        : A.setTab === "styles" ? this.astSetStyles()
+        : A.setTab === "generation" ? this.astSetGeneration()
+        : this.astSetContext();
+      const panel = h("div", { class: "h3z-ast-panel h3z-ast-settings" },
+        h("div", { class: "h3z-settabs" }, tab("connection", T("Подключение")), tab("presets", T("Пресеты")), tab("styles", T("Стили")), tab("generation", T("Генерация")), tab("context", T("Контекст"))),
+        h("div", { class: "h3z-scroll h3z-setbody" }, body));
+      this._ast.el = panel;
+      L.append(
+        h("div", { class: "h3z-ph" },
+          h("button", { class: "h3z-btn sm icon", title: T("Назад"), onclick: close }, "←"),
+          h("h3", null, T("Настройки ассистента"))),
+        panel);
     },
+    astTitleControls() {
+      const st = this.astStatusView();
+      return h("div", { class: "h3z-ast-titlerow" },
+        h("button", { class: "h3z-ast-status " + st.cls, title: T("Настройки ассистента"), onclick: () => this.astOpenSettings("connection") },
+          h("i", { class: "h3z-ast-dot" }), h("span", null, st.text)),
+        h("button", { class: "h3z-btn sm icon", title: T("Настройки ассистента"), html: ICON.settings, onclick: () => this.astOpenSettings("connection") }));
+    },
+    astHead() { return this.astTitleControls(); },
+    astModeRow() {
+      const active = this.p.assistant.preset || "chat";
+      const groups = [
+        { label: T("Основные режимы"), options: BUILTINS.map((p) => ({ value: p.id, label: T(p.name) })) },
+      ];
+      if (this.p.assistant.presets.length) {
+        groups.push({ label: T("Мои пресеты"), options: this.p.assistant.presets.map((p) => ({ value: p.id, label: p.name })) });
+      }
+      const sel = this.themedSelect({
+        value: active, groups,
+        title: T("Режим ассистента: под какую задачу писать промпт"),
+        className: "h3z-ast-mode",
+        onChange: (v) => this.astApplyPreset(v),
+      });
+      return h("div", { class: "h3z-ast-moderow" },
+        h("span", { class: "h3z-lbl" }, T("Режим")),
+        sel);
+    },
+    astContextCard() { return null; },
+    /** Compact neighbor pill for the composer toolbar (off by default via normalize). */
+    astNeighPill() {
+      const on = !!this.p.assistant.cfg.ctx_neighbours;
+      return h("button", {
+        type: "button",
+        class: "h3z-pill h3z-ast-neighpill" + (on ? " on" : ""),
+        title: T("Промпты и референсы предыдущего и следующего отрезков — удобно при продлении клипа."),
+        "aria-pressed": on ? "true" : "false",
+        onclick: () => { this.astApplyCfg({ ctx_neighbours: !on }); this.astPaintComposer(); },
+      }, T("Соседние отрезки"));
+    },
+    astStylesRow() { return null; },
+    astToggleStyle(sid) {
+      const cur = new Set(this.p.assistant.cfg.styles || []);
+      if (cur.has(sid)) cur.delete(sid); else cur.add(sid);
+      this.astApplyCfg({ styles: [...cur] });
+      this.astPaintComposer();
+      if (this._ast?.setOpen) this.astPaintStyleList();
+    },
+    astSysCollapsible() { return null; },
+    astHistoryRow() {
+      const chats = this.p.assistant.chats || [], active = this.p.assistant.active;
+      const sel = this.themedSelect({
+        value: active || "",
+        sm: true,
+        title: T("Диалог с ассистентом"),
+        emptyLabel: T("Новый диалог"),
+        options: chats.length
+          ? chats.map((c) => ({ value: c.id, label: c.title || T("Диалог") }))
+          : [{ value: "", label: T("Новый диалог"), dis: true }],
+        onChange: (v) => { if (v) this.astSelectChat(v); },
+      });
+      return h("div", { class: "h3z-ast-histrow" },
+        h("span", { class: "h3z-lbl" }, T("Диалог")),
+        sel,
+        h("div", { class: "h3z-ast-histacts" },
+          h("button", { class: "h3z-btn sm", title: T("Новый чат"), onclick: () => this.astNewChat() }, T("Новый")),
+          h("button", { class: "h3z-btn sm", title: T("Показать версии промпта этого чата"), onclick: () => this.astShowVersions() }, T("Версии")),
+          h("button", { class: "h3z-btn sm", title: T("Перевести последний ответ ассистента на русский (кратко)"), onclick: () => this.astTranslateLast() }, T("Перевод"))));
+    },
+    astBody() { return this.astMain(); },
+    astStudioRail() { return null; },
+    astAutofillBrief() {},
+    async astTranslateLast() {
+      const chat = this.astChat(); const last = [...(chat?.msgs || [])].reverse().find((m) => m.role === "assistant" && m.text?.trim());
+      if (!last) { this.toast(T("Нет ответа для перевода"), true); return; }
+      const ta = this._ast?.el.querySelector(".h3z-ast-inputbox textarea, textarea.h3z-ast-input"); if (!ta) return;
+      ta.value = T("Переведи на русский кратко, без правок смысла:\n\n") + last.text.trim();
+      this.astAutoGrow(ta); ta.focus();
+      this.toast(T("Запрос перевода в поле ввода — нажмите Отправить"));
+    },
+    astShowVersions() {
+      const chat = this.astChat();
+      const vers = (chat?.msgs || []).filter((m) => m.role === "assistant" && m.text?.trim());
+      if (vers.length < 1) { this.toast(T("Пока нет версий промпта"), true); return; }
+      const a = vers[vers.length - 1]?.text || "", b = vers[vers.length - 2]?.text || "";
+      const body = h("div", { class: "h3z-ast-diff" },
+        h("div", { class: "h3z-lbl" }, T("Версия {0} (последняя)", vers.length)),
+        h("pre", { class: "h3z-note" }, a),
+        b ? h("div", { class: "h3z-lbl" }, T("Предыдущая · простой diff")) : null,
+        b ? h("pre", { class: "h3z-note" }, this.astSimpleDiff(b, a)) : h("div", { class: "h3z-note" }, T("Это первая версия в чате")));
+      const close = () => modal.remove();
+      const modal = h("div", { class: "h3z-modal" }, h("div", { class: "h3z-save h3z-glass" },
+        h("div", { class: "hd" }, h("b", null, T("Версии промпта")), h("div", { class: "grow" }), h("button", { class: "h3z-btn sm icon", onclick: close }, "✕")),
+        body,
+        h("div", { class: "h3z-row", style: { justifyContent: "flex-end" } },
+          h("button", { class: "h3z-btn sm primary", onclick: () => { this.astInsertPrompt(a, false); close(); } }, T("Вставить последнюю")),
+          h("button", { class: "h3z-btn sm", onclick: close }, T("Закрыть")))));
+      modal.addEventListener("pointerdown", (e) => { if (e.target === modal) close(); });
+      document.body.append(modal);
+    },
+    astSimpleDiff(oldT, newT) {
+      const oa = oldT.split(/\s+/), na = newT.split(/\s+/);
+      const os = new Set(oa);
+      return na.map((w) => (os.has(w) ? w : `⟦${w}⟧`)).join(" ");
+    },
+    astChatsSide() { return null; },
     astMain() {
       const chat = this.astChat(), preset = this.astPresetView(this.astPreset() || BUILTINS[0]);
       return h("div", { class: "h3z-ast-main" },
-        h("div", { class: "h3z-ast-log" }, chat?.msgs.length ? chat.msgs.map((m, i, all) => this.astMessage(m, i === all.length - 1 && this._ast.busy)) : this.astEmpty(preset)),
-        this.astComposer());
+        h("div", { class: "h3z-ast-log" }, chat?.msgs.length ? chat.msgs.map((m, i, all) => this.astMessage(m, i === all.length - 1 && this._ast.busy)) : this.astEmpty(preset)));
     },
     astEmpty(preset) {
-      return h("div", { class: "h3z-ast-empty" }, h("div", { class: "h3z-ast-emptyicon" }, preset.icon || "✦"),
-        h("h2", null, preset.name), h("p", null, preset.desc),
-        h("div", { class: "h3z-ast-suggest" }, preset.suggestions.map((s) => h("button", { class: "h3z-ast-chip", onclick: () => this.astSuggestion(s) }, s))));
+      return h("div", { class: "h3z-ast-empty" },
+        h("p", { class: "h3z-ast-emptyblurb" },
+          [T("Ассистент видит текущий отрезок, референсы и выбранный режим."),
+            T("Опишите сцену или задайте вопрос ниже."),
+            T("Стили — через «＋ Стили».")].join("\n")));
     },
+    astSuggestBlock() { return null; },
     astMessage(m, pending) {
       const user = m.role === "user";
-      const stats = !user && m.stats ? h("div", { class: "h3z-ast-stats" },
-        h("span", null, T("{0} → {1} ток.", m.stats.prompt, m.stats.completion)),
-        m.stats.tps ? h("span", null, T("{0} ток/с", m.stats.tps)) : null,
-        m.stats.elapsed ? h("span", null, T("{0} с", m.stats.elapsed)) : null,
-        m.stats.finish === "length" ? h("span", { class: "h3z-ast-truncated" }, T("Ответ обрезан по лимиту токенов")) : null) : null;
-      const content = h("div", { class: "h3z-ast-content" }, !user && m.reasoning && this.p.assistant.cfg.show_reasoning ? this.astReasoning(m.reasoning, pending && !m.text) : null,
-        h("div", { class: "h3z-ast-bubble" }, h("span", { class: "tx" }, m.text)), stats,
-        !user && m.text ? h("div", { class: "h3z-ast-acts" },
-          h("button", { class: "h3z-ast-action", html: ICON.copy + `<span>${T("Копировать")}</span>`, onclick: () => this.astCopy(m.text) }),
-          h("button", { class: "h3z-ast-action", onclick: () => this.astInsertPrompt(m.text, false) }, T("Вставить в промпт")),
-          h("button", { class: "h3z-ast-action", onclick: () => this.astInsertPrompt(m.text, true) }, T("Вставить и сгенерировать"))) : null);
-      return h("div", { class: `h3z-ast-msg ${user ? "user" : "as"}${pending ? " pending" : ""}` },
-        user ? [content, h("div", { class: "h3z-ast-avatar" }, T("Вы"))] : [h("div", { class: "h3z-ast-avatar" }, "H3"), content]);
+      const stats = !user && m.stats ? h("div", { class: "h3z-note" },
+        T("{0} → {1} ток.", m.stats.prompt, m.stats.completion),
+        m.stats.tps ? " · " + T("{0} ток/с", m.stats.tps) : "",
+        m.stats.ttft != null ? " · " + T("TTFT {0} с", m.stats.ttft) : "",
+        m.stats.elapsed ? " · " + T("{0} с", m.stats.elapsed) : "",
+        m.stats.finish === "length" ? " · " + T("Ответ обрезан по лимиту токенов") : "") : null;
+      const acts = !user && m.text ? h("div", { class: "h3z-row" },
+        h("button", { class: "h3z-btn sm", onclick: () => this.astCopy(m.text) }, T("Копировать")),
+        h("button", { class: "h3z-btn sm primary", onclick: () => this.astInsertPrompt(m.text, false) }, T("Применить к отрезку")),
+        h("button", { class: "h3z-btn sm", onclick: () => this.astInsertPrompt(m.text, true) }, T("Вставить и сгенерировать"))) : null;
+      return h("div", { class: "h3z-card h3z-glass h3z-ast-msg" + (user ? " user" : "") + (pending ? " pending" : "") },
+        h("div", { class: "h3z-card-h" }, h("h4", null, user ? T("Вы") : "H3")),
+        !user && m.reasoning && this.p.assistant.cfg.show_reasoning ? this.astReasoning(m.reasoning, pending && !m.text) : null,
+        h("div", { class: "h3z-ast-bubble tx" }, m.text), stats, acts);
     },
     astComposer() {
-      const A = this._ast, preset = this.astPreset(), cfg = this.p.assistant.cfg;
-      const ta = h("textarea", { class: "h3z-ta", rows: "1", placeholder: T("Опишите сцену или задайте вопрос…"), spellcheck: "false" });
+      const A = this._ast, cfg = this.p.assistant.cfg;
+      const ta = h("textarea", { class: "h3z-ta h3z-ast-input", rows: "2",
+        placeholder: T("Опишите сцену или задайте вопрос…"),
+        title: T("Enter — отправить · Shift+Enter — новая строка"), spellcheck: "false" });
       ta.addEventListener("input", () => this.astAutoGrow(ta));
       ta.addEventListener("keydown", (e) => e.stopPropagation());
       const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: true, style: "display:none" });
       file.onchange = () => { this.astAddImages([...file.files]); file.value = ""; };
-      const send = A.busy ? h("button", { class: "h3z-btn danger h3z-ast-send", html: ICON.stop + `<span>${T("Стоп")}</span>`, onclick: () => this.astStop() })
-        : h("button", { class: "h3z-btn primary h3z-ast-send", disabled: A.uploading || undefined, html: `<span>${A.uploading ? T("Загрузка…") : T("Отправить")}</span>`, onclick: () => this.astSend() });
+      const send = A.busy
+        ? h("button", { class: "h3z-btn sm danger h3z-ast-send", html: ICON.stop + `<span>${T("Стоп")}</span>`, onclick: () => this.astStop() })
+        : h("button", { class: "h3z-btn sm primary h3z-ast-send", disabled: A.uploading || undefined, html: `<span>${A.uploading ? T("Загрузка…") : T("Отправить")}</span>`, onclick: () => this.astSend() });
       const styles = this.astStyles().filter((s) => cfg.styles.includes(s.id));
+      const tools = h("div", { class: "h3z-ast-tools" },
+        h("button", { class: "h3z-btn sm icon", title: T("Прикрепить изображения"), disabled: A.busy || A.uploading || undefined, html: ICON.upload, onclick: () => file.click() }),
+        h("button", { class: "h3z-pill", title: T("Выбрать стили промпта"), onclick: () => this.astOpenSettings("styles") }, T("＋ Стили")),
+        ...styles.map((s) => h("button", { class: "h3z-pill on", title: s.description || s.name, onclick: () => this.astOpenSettings("styles") },
+          s.name,
+          " ",
+          h("span", { title: T("Убрать стиль"), onclick: (e) => { e.stopPropagation(); this.astToggleStyle(s.id); } }, "×"))),
+        this.astNeighPill());
       const compose = h("div", { class: "h3z-ast-compose" },
-        A.uploads.length ? h("div", { class: "h3z-ast-uploads" }, A.uploads.map((u, i) => h("span", { class: "h3z-ast-upload" },
-          h("span", { title: u.label }, u.label), h("button", { title: T("Убрать изображение"), onclick: () => { A.uploads.splice(i, 1); this.astPaintComposer(); } }, "×")))) : null,
-        h("div", { class: "h3z-ast-inputbox" },
-          h("button", { class: "h3z-btn sm icon h3z-ast-attach", title: T("Прикрепить изображения"), disabled: A.busy || A.uploading || undefined, html: ICON.upload, onclick: () => file.click() }), ta, send),
-        h("div", { class: "h3z-ast-tools" }, h("div", { class: "h3z-ast-stylechips" },
-          styles.slice(0, 4).map((s) => h("button", { class: "h3z-ast-stylechip", title: s.description || s.name, onclick: () => this.astOpenSettings("styles") }, s.name)),
-          styles.length > 4 ? h("button", { class: "h3z-ast-stylechip", onclick: () => this.astOpenSettings("styles") }, "+" + (styles.length - 4)) : null,
-          h("button", { class: "h3z-ast-stylechip", title: T("Выбрать стили промпта"), onclick: () => this.astOpenSettings("styles") }, styles.length ? T("Изменить") : T("＋ Стили")))),
-        h("div", { class: "h3z-ast-composemeta" }, h("span", null, T("Enter — отправить · Shift+Enter — новая строка")), h("span", null, T(MODE_NAMES[preset?.cfg.mode] || T("Пользовательский пресет")))), file);
+        A.uploads.length ? h("div", { class: "h3z-ast-uploads" }, A.uploads.map((u, i) => h("span", { class: "h3z-chip" },
+          h("span", { title: u.label }, u.label),
+          h("button", { class: "h3z-btn sm icon", title: T("Убрать изображение"), onclick: () => { A.uploads.splice(i, 1); this.astPaintComposer(); } }, "×")))) : null,
+        ta,
+        h("div", { class: "h3z-ast-toolbar" }, tools, send),
+        file);
       compose.addEventListener("dragover", (e) => { if (e.dataTransfer?.files?.length) e.preventDefault(); });
       compose.addEventListener("drop", (e) => { const files = [...(e.dataTransfer?.files || [])]; if (files.length) { e.preventDefault(); this.astAddImages(files); } });
       return compose;
     },
     astPaintComposer() {
-      const old = this._ast?.el.querySelector(".h3z-ast-compose"); if (!old) return;
+      const old = this._ast?.el?.querySelector(".h3z-ast-compose"); if (!old) return;
       const input = old.querySelector("textarea"), text = input?.value || "", focused = document.activeElement === input;
       old.replaceWith(this.astComposer());
       const next = this._ast.el.querySelector(".h3z-ast-compose textarea");
       if (next && text) { next.value = text; this.astAutoGrow(next); }
       if (next && focused) next.focus();
     },
-
-    astSettings() {
-      const A = this._ast;
-      const close = () => { A.setOpen = false; this.renderAssistSettings(); };
-      const tab = (key, label) => h("button", { class: "h3z-ast-settab" + (A.setTab === key ? " on" : ""), onclick: () => {
-        A.setTab = key;
-        if (key === "presets" && !A.presetDraft) {
-          const p = this.astPreset() || BUILTINS[0];
-          A.editPreset = p.id; A.presetDraft = clone(p);
-        }
-        this.renderAssistSettings();
-      } }, label);
-      const overlay = h("div", { class: "h3z-ast-set" },
-        h("div", { class: "h3z-ast-setbox" },
-          h("div", { class: "h3z-ast-hd" }, h("div", { class: "h3z-ast-title" }, T("Настройки ассистента")), h("div", { class: "h3z-ast-spacer" }), h("button", { class: "h3z-btn sm icon", html: ICON.close, title: T("Закрыть настройки"), onclick: close })),
-          h("div", { class: "h3z-ast-settabs" }, tab("connection", T("Подключение")), tab("presets", T("Пресеты")), tab("styles", T("Стили")), tab("generation", T("Генерация")), tab("context", T("Контекст"))),
-          h("div", { class: "h3z-ast-setbody" }, A.setTab === "connection" ? this.astSetConnection() : A.setTab === "presets" ? this.astSetPresets() : A.setTab === "styles" ? this.astSetStyles() : A.setTab === "generation" ? this.astSetGeneration() : this.astSetContext())));
-      overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
-      return overlay;
-    },
+    astSettings() { return null; },
     astConnectionState() {
-      const st = this._ast.status, cls = st.state === "connected" ? "ok" : st.state === "error" ? "err" : st.state === "checking" ? "busy" : "";
+      const st = this._ast.status;
       const title = st.state === "connected" ? T("Подключено к API") : st.state === "checking" ? T("Проверяем соединение…") : st.state === "error" ? T("Не удалось подключиться") : T("Соединение ещё не проверено");
       const detail = st.state === "connected" ? T("Список моделей получен: {0}", st.models.length) : st.error || T("Нажмите «Подключить». Адрес и ключ будут проверены через GET /models.");
-      return h("div", { class: `h3z-ast-conn ${cls}` }, h("i", { class: "h3z-ast-dot" }), h("div", null, h("div", { class: "h3z-ast-conntext" }, title), h("div", { class: "h3z-ast-conndetail" }, detail)));
+      const cls = st.state === "error" ? "warn" : st.state === "connected" ? "ok" : "";
+      return h("div", { class: "h3z-note" + (cls ? " " + cls : "") }, h("b", null, title), h("div", null, detail));
     },
     astSetConnection() {
       const cfg = this.p.assistant.cfg, st = this._ast.status;
@@ -709,26 +769,31 @@ export function installAssist(Editor, { C, h, ICON }) {
       key.oninput = () => this.astText("api_key", key, true);
       const show = h("button", { class: "h3z-btn sm", type: "button", onclick: () => { key.type = key.type === "password" ? "text" : "password"; show.textContent = key.type === "password" ? T("Показать") : T("Скрыть"); } }, T("Показать"));
       const models = st.models || [];
-      const model = h("select", { class: "h3z-sel" },
-        h("option", { value: "", selected: !cfg.api_model }, models.length ? T("— выберите модель —") : T("— сначала подключитесь —")),
-        models.map((m) => h("option", { value: m, selected: cfg.api_model === m }, m)),
-        cfg.api_model && !models.includes(cfg.api_model) ? h("option", { value: cfg.api_model, selected: true }, cfg.api_model) : null);
-      model.onchange = () => { this.astApplyCfg({ api_model: model.value }); this.renderAssistHead(); };
+      const modelOpts = [
+        { value: "", label: models.length ? T("— выберите модель —") : T("— сначала подключитесь —") },
+        ...models.map((m) => ({ value: m, label: m })),
+      ];
+      if (cfg.api_model && !models.includes(cfg.api_model)) modelOpts.push({ value: cfg.api_model, label: cfg.api_model });
+      const model = this.themedSelect({
+        value: cfg.api_model || "",
+        options: modelOpts,
+        emptyLabel: models.length ? T("— выберите модель —") : T("— сначала подключитесь —"),
+        onChange: (v) => { this.astApplyCfg({ api_model: v }); this.renderAssistHead(); },
+      });
       const timeout = h("input", { class: "h3z-in", type: "number", value: cfg.stream_timeout, min: 30, max: 3600, step: 30 });
       timeout.onchange = () => this.astApplyCfg({ stream_timeout: Math.max(30, Math.min(3600, Number(timeout.value) || 600)) });
       const endpoint = h("input", { class: "h3z-in", value: cfg.unload_endpoint, placeholder: "/api/v1/models/unload", spellcheck: "false", "data-ast-cfg": "unload_endpoint" });
       endpoint.oninput = () => this.astText("unload_endpoint", endpoint);
-      return h("div", { class: "h3z-ast-form" },
-        h("h3", { class: "h3z-ast-sectiontitle" }, T("OpenAI-совместимый API")),
-        h("p", { class: "h3z-ast-sectiondesc" }, T("Поддерживаются LM Studio, Ollama, llama-server, vLLM, OpenAI и другие серверы с endpoints /models и /chat/completions.")),
+      return h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+        h("div", { class: "h3z-card-h" }, h("h4", null, T("OpenAI-совместимый API"))),
+        h("div", { class: "h3z-note" }, T("Поддерживаются LM Studio, Ollama, llama-server, vLLM, OpenAI и другие серверы с endpoints /models и /chat/completions.")),
         this.astConnectionState(),
         this.field(T("Адрес API"), base),
         h("div", null, h("div", { class: "h3z-lbl" }, T("Ключ API")), h("div", { class: "h3z-row" }, key, show), h("div", { class: "h3z-note" }, T("Для локальных серверов ключ обычно не нужен. Ключ хранится в данных проекта — не публикуйте проект с секретным ключом."))),
-        h("div", null, h("div", { class: "h3z-lbl" }, T("Модель")), h("div", { class: "h3z-ast-modelrow" }, model,
+        h("div", null, h("div", { class: "h3z-lbl" }, T("Модель")), h("div", { class: "h3z-row" }, model,
           h("button", { class: "h3z-btn sm", disabled: st.state === "checking" || undefined, onclick: () => this.astConnect() }, st.state === "checking" ? T("Обновление…") : T("Обновить")))),
         h("div", { class: "h3z-grid2" }, this.field(T("Таймаут ответа, сек"), timeout), this.field(T("Endpoint выгрузки (необязательно)"), endpoint)),
-        h("div", { class: "h3z-note" }, T("Если автоматическая выгрузка не поддерживается сервером, укажите его POST endpoint. Относительный путь использует хост API.")),
-        h("div", { class: "h3z-ast-buttonrow" },
+        h("div", { class: "h3z-row" },
           h("button", { class: "h3z-btn primary", disabled: st.state === "checking" || undefined, onclick: () => this.astConnect() }, st.state === "checking" ? T("Подключение…") : T("Подключить")),
           h("button", { class: "h3z-btn", disabled: !cfg.api_model || this._ast.busy || this._ast.unloading || undefined,
             title: T("Выгрузить модель LLM из памяти сервера"), onclick: () => this.astUnload() }, this._ast.unloading ? T("Выгрузка…") : T("Выгрузить LLM"))),
@@ -744,69 +809,79 @@ export function installAssist(Editor, { C, h, ICON }) {
       const tokens = h("input", { class: "h3z-in", type: "number", value: cfg.max_tokens, step: 50, min: 16, max: 16000, disabled: disabled || undefined });
       tokens.onchange = () => onTokens(Math.max(16, Math.min(16000, Number(tokens.value) || 16)));
       return h("div", null,
-        h("h3", { class: "h3z-ast-sectiontitle" }, cfg.thinking ? T("Параметры режима мышления") : T("Параметры обычного режима")),
-        h("p", { class: "h3z-ast-sectiondesc" }, T("Два профиля хранятся независимо: переключение мышления не изменяет их значения.")),
-        h("div", { class: "h3z-ast-grid3" },
+        h("div", { class: "h3z-lbl" }, cfg.thinking ? T("Параметры режима мышления") : T("Параметры обычного режима")),
+        h("div", { class: "h3z-note" }, T("Два профиля хранятся независимо: переключение мышления не изменяет их значения.")),
+        h("div", { class: "h3z-grid3" },
           num("temperature", T("Температура"), 0.05, 0, 2), num("top_p", "Top P", 0.05, 0, 1), num("top_k", "Top K", 1, 0, 200)),
-        h("div", { class: "h3z-ast-grid3" },
+        h("div", { class: "h3z-grid3" },
           num("min_p", "Min P", 0.01, 0, 1), num("presence_penalty", "Presence Penalty", 0.1, -2, 2), num("repetition_penalty", "Repetition Penalty", 0.05, 0, 2)),
-        h("div", { class: "h3z-ast-grid3" }, this.field(T("Макс. токенов"), tokens)),
-        h("div", { class: "h3z-note" }, T("Общий лимит — до 16 000 токенов на готовый промпт и размышления модели.")));
+        this.field(T("Макс. токенов"), tokens));
     },
     astSetPresets() {
       const A = this._ast, d = A.presetDraft;
-      const item = (p) => h("button", { class: "h3z-ast-presetitem" + (A.editPreset === p.id ? " on" : ""), onclick: () => this.astEditPreset(p.id) },
-        h("span", { class: "h3z-ast-preseticon" }, p.icon || "✦"), h("span", { class: "h3z-ast-presetname" }, T(p.name)));
-      if (!d) return h("div", null);
+      const item = (p) => h("button", { class: "h3z-btn sm" + (A.editPreset === p.id ? " primary" : ""), style: "justify-content:flex-start;width:100%", onclick: () => this.astEditPreset(p.id) },
+        T(p.name));
+      if (!d) return h("div", { class: "h3z-note" }, T("Выберите пресет"));
       d.cfg = C.normalizeAssistCfg(d.cfg);
       const builtin = BUILTINS.some((p) => p.id === d.id);
       const name = h("input", { class: "h3z-in", value: d.name });
       name.oninput = () => this.astPresetDraftValue("name", name.value);
-      const mode = h("select", { class: "h3z-sel" }, Object.entries(MODE_NAMES).map(([k, v]) => h("option", { value: k, selected: d.cfg.mode === k }, T(v))));
-      mode.onchange = () => this.astPresetDraftValue("mode", mode.value);
+      const mode = this.themedSelect({
+        value: d.cfg.mode,
+        options: Object.entries(MODE_NAMES).map(([k, v]) => ({ value: k, label: T(v) })),
+        onChange: (v) => this.astPresetDraftValue("mode", v),
+      });
       const sys = h("textarea", { class: "h3z-ta", value: d.cfg.sys || "", spellcheck: "false" });
       sys.oninput = () => this.astPresetDraftValue("sys", sys.value);
-      const thinking = h("input", { type: "checkbox", checked: d.cfg.thinking || undefined });
-      thinking.onchange = () => { d.cfg.thinking = thinking.checked; this.renderAssistSettings(); };
-      return h("div", { class: "h3z-ast-presets" },
-        h("div", null, h("div", { class: "h3z-ast-presetlist" }, BUILTINS.map(item), this.p.assistant.presets.map(item)),
+      return h("div", null,
+        h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+          h("div", { class: "h3z-card-h" }, h("h4", null, T("Пресеты"))),
+          h("div", { class: "h3z-ast-presetlist" }, BUILTINS.map(item), this.p.assistant.presets.map(item)),
           h("button", { class: "h3z-btn sm", style: "width:100%;justify-content:center;margin-top:8px", onclick: () => this.astNewPreset() }, T("＋ Новый пресет"))),
-        h("div", { class: "h3z-ast-editor" },
-          h("div", null, h("h3", { class: "h3z-ast-sectiontitle" }, builtin ? T("Встроенный режим") : T("Редактор пресета")), h("p", { class: "h3z-ast-sectiondesc" }, builtin ? T("Измените поля черновика и нажмите «Сохранить как копию». Стандартный режим останется без изменений.") : T("Настройте собственный сценарий работы ассистента."))),
+        h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+          h("div", { class: "h3z-card-h" }, h("h4", null, builtin ? T("Встроенный режим") : T("Редактор пресета"))),
+          h("div", { class: "h3z-note" }, builtin ? T("Измените поля черновика и нажмите «Сохранить как копию». Стандартный режим останется без изменений.") : T("Настройте собственный сценарий работы ассистента.")),
           h("div", { class: "h3z-grid2" }, this.field(T("Название"), name), this.field(T("Режим"), mode)),
           h("div", null, h("div", { class: "h3z-lbl" }, T("Системный промпт")), sys),
-          h("label", { class: "h3z-ast-switch" }, thinking, h("span", null,
-            h("span", { class: "h3z-ast-switchtitle" }, T("Режим мышления")),
-            h("div", { class: "h3z-ast-switchdesc" }, T("Включать рассуждения модели и использовать отдельный профиль генерации.")))),
+          this.toggle(T("Режим мышления"), !!d.cfg.thinking, (v) => { d.cfg.thinking = !!v; this.renderAssistSettings(); }, T("Включать рассуждения модели и использовать отдельный профиль генерации.")),
           this.astSamplingControls(d.cfg,
             (profile) => { d.cfg.sampling = { ...d.cfg.sampling, [d.cfg.thinking ? "thinking" : "plain"]: profile }; },
             (value) => { d.cfg.max_tokens = value; }),
-          h("div", { class: "h3z-ast-buttonrow" },
+          h("div", { class: "h3z-row" },
             h("button", { class: "h3z-btn primary", onclick: () => this.astSavePreset() }, builtin ? T("Сохранить как копию") : T("Сохранить пресет")),
             h("button", { class: "h3z-btn", onclick: () => this.astApplyPreset(d.id || this.p.assistant.preset) }, T("Применить")),
             !builtin && d.id ? h("button", { class: "h3z-btn danger", onclick: () => this.astDeletePreset(d.id) }, T("Удалить")) : null)));
+    },
+    astStyleIcon(style) {
+      const map = { camera: "📷", clapperboard: "🎬", film: "🎞️", image: "🖼️", sparkles: "✨", wand: "🪄" };
+      return map[style.icon] || "✦";
+    },
+    astCatLabel(c) {
+      if (!c || c === "other") return T("Другое");
+      return c;
     },
     astStyleList() {
       const A = this._ast, cfg = this.p.assistant.cfg, query = A.styleQuery.trim().toLowerCase();
       const styles = this.astStyles().filter((s) => (A.styleCategory === "all" || String(s.category || "other") === A.styleCategory) &&
         (!query || `${s.name} ${s.description || ""} ${s.category || ""}`.toLowerCase().includes(query)));
       return h("div", { class: "h3z-ast-stylelist" }, styles.length ? styles.map((style) => {
-        const on = cfg.styles.includes(style.id), check = h("input", { type: "checkbox", checked: on || undefined });
-        check.onchange = () => {
-          const selected = new Set(this.p.assistant.cfg.styles);
-          if (check.checked) selected.add(style.id); else selected.delete(style.id);
-          this.astApplyCfg({ styles: [...selected] }); this.astPaintStyleList(); this.astPaintComposer();
-        };
-        return h("div", { class: "h3z-ast-styleitem" + (on ? " on" : "") },
-          h("label", { class: "h3z-ast-stylepick" }, check, h("span", null,
-            h("span", { class: "h3z-ast-stylename" }, style.name), h("span", { class: "h3z-ast-styledesc" }, style.description || T("Без описания")))),
+        const on = cfg.styles.includes(style.id);
+        return h("div", { class: "h3z-card h3z-glass h3z-ast-stylecard" + (on ? " on" : ""), role: "button", tabindex: "0",
+          "aria-pressed": on ? "true" : "false",
+          onclick: () => this.astToggleStyle(style.id),
+          onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.astToggleStyle(style.id); } } },
+          h("div", { class: "h3z-ast-stylecard-hd" },
+            h("span", { class: "h3z-ast-styleico" }, this.astStyleIcon(style)),
+            h("span", { class: "h3z-ast-stylecheck", "aria-hidden": "true" }, on ? "✓" : "")),
           h("div", { class: "h3z-ast-styleops" },
-            h("button", { class: "h3z-ast-x", title: T("Редактировать стиль"), onclick: () => this.astEditStyle(style.id) }, "✎"),
-            h("button", { class: "h3z-ast-x", title: T("Удалить стиль"), onclick: () => this.astDeleteStyle(style.id) }, "×")));
-      }) : h("div", { class: "h3z-ast-styleempty" }, T("Ничего не найдено")));
+            h("button", { class: "h3z-btn sm icon", title: T("Редактировать стиль"), onclick: (e) => { e.stopPropagation(); this.astEditStyle(style.id); } }, "✎"),
+            h("button", { class: "h3z-btn sm icon", title: T("Удалить стиль"), onclick: (e) => { e.stopPropagation(); this.astDeleteStyle(style.id); } }, "×")),
+          h("b", { class: "h3z-ast-stylename" }, style.name),
+          h("div", { class: "h3z-note h3z-ast-styledesc" }, style.description || T("Без описания")));
+      }) : h("div", { class: "h3z-note" }, T("Ничего не найдено")));
     },
     astPaintStyleList() {
-      const A = this._ast; if (!A) return;
+      const A = this._ast; if (!A?.el) return;
       A.el.querySelector(".h3z-ast-stylelist")?.replaceWith(this.astStyleList());
       const count = A.el.querySelector(".h3z-ast-stylecount"); if (count) count.textContent = T("Выбрано: {0}", this.p.assistant.cfg.styles.length);
     },
@@ -860,14 +935,14 @@ export function installAssist(Editor, { C, h, ICON }) {
       };
       const instructions = h("textarea", { class: "h3z-ta", style: "min-height:180px;line-height:1.6", value: (Array.isArray(d.instructions) ? d.instructions : String(d.instructions || "").split("\n")).join("\n"), placeholder: T("По одной инструкции на строку") });
       instructions.oninput = () => { d.instructions = instructions.value; };
-      return h("div", { class: "h3z-ast-form" },
-        h("div", null, h("h3", { class: "h3z-ast-sectiontitle" }, d.id ? T("Редактирование стиля") : T("Новый стиль")),
-          h("p", { class: "h3z-ast-sectiondesc" }, T("Название и описание помогают выбрать стиль. В готовый системный промпт попадают его инструкции и приоритет."))),
+      return h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+        h("div", { class: "h3z-card-h" }, h("h4", null, d.id ? T("Редактирование стиля") : T("Новый стиль"))),
+        h("div", { class: "h3z-note" }, T("Название и описание помогают выбрать стиль. В готовый системный промпт попадают его инструкции и приоритет.")),
         this.field(T("Название"), input("name")), this.field(T("Описание"), input("description")),
-        h("div", { class: "h3z-ast-grid3" }, this.field(T("Категория"), input("category")), this.field(T("Иконка"), input("icon")), this.field(T("Приоритет"), input("priority", "number"))),
+        h("div", { class: "h3z-grid3" }, this.field(T("Категория"), input("category")), this.field(T("Иконка"), input("icon")), this.field(T("Приоритет"), input("priority", "number"))),
         h("div", null, h("div", { class: "h3z-lbl" }, T("Инструкции")), instructions,
           h("div", { class: "h3z-note" }, T("Приоритет 0–100: при конфликте инструкций выше приоритет стиля с большим числом."))),
-        h("div", { class: "h3z-ast-buttonrow" }, h("button", { class: "h3z-btn primary", onclick: () => this.astSaveStyle() }, T("Сохранить стиль")),
+        h("div", { class: "h3z-row" }, h("button", { class: "h3z-btn primary", onclick: () => this.astSaveStyle() }, T("Сохранить стиль")),
           h("button", { class: "h3z-btn", onclick: () => { this._ast.styleDraft = null; this.renderAssistSettings(); } }, T("Отмена"))));
     },
     astSetStyles() {
@@ -875,61 +950,51 @@ export function installAssist(Editor, { C, h, ICON }) {
       const search = h("input", { class: "h3z-in", type: "search", value: A.styleQuery, placeholder: T("Поиск стилей…") });
       search.oninput = () => { A.styleQuery = search.value; this.astPaintStyleList(); };
       const all = this.astStyles(), categories = [...new Set(all.map((s) => String(s.category || "other")))].sort();
-      const cat = (value, label) => h("button", { class: "h3z-ast-stylecat" + (A.styleCategory === value ? " on" : ""), onclick: () => { A.styleCategory = value; this.renderAssistSettings(); } }, label);
+      const cat = (value, label) => h("div", { class: "h3z-pill" + (A.styleCategory === value ? " on" : ""), onclick: () => { A.styleCategory = value; this.renderAssistSettings(); } }, label);
       const changed = this.p.assistant.style_deleted.length || this.p.assistant.style_defs.some((s) => PROMPT_STYLES.some((base) => base.id === s.id));
-      return h("div", null,
-        h("div", null, h("h3", { class: "h3z-ast-sectiontitle" }, T("Стили генерации промпта")),
-          h("p", { class: "h3z-ast-sectiondesc" }, T("Создавайте и редактируйте стили. Выбранные стили добавляются в системный промпт в порядке приоритета и сохраняются в пресетах."))),
-        h("div", { class: "h3z-ast-stylelayout", style: "margin-top:18px" },
-          h("div", { class: "h3z-ast-stylefilters" }, search, cat("all", T("Все стили")), categories.map((c) => cat(c, c))),
-          h("div", null, h("div", { class: "h3z-ast-buttonrow", style: "justify-content:space-between;margin-bottom:10px" },
-            h("span", { class: "h3z-note h3z-ast-stylecount" }, T("Выбрано: {0}", this.p.assistant.cfg.styles.length)),
-            h("button", { class: "h3z-btn sm primary", onclick: () => this.astEditStyle() }, T("＋ Новый стиль")),
-            changed ? h("button", { class: "h3z-btn sm", onclick: () => this.astResetStyles() }, T("Восстановить стандартные")) : null,
-            h("button", { class: "h3z-btn sm", disabled: !this.p.assistant.cfg.styles.length || undefined, onclick: () => { this.astApplyCfg({ styles: [] }); this.astPaintStyleList(); this.astPaintComposer(); } }, T("Сбросить выбор"))), this.astStyleList())));
+      return h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+        h("div", { class: "h3z-card-h" }, h("h4", null, T("Стили генерации промпта"))),
+        h("div", { class: "h3z-note" }, T("Создавайте и редактируйте стили. Выбранные стили добавляются в системный промпт в порядке приоритета и сохраняются в пресетах.")),
+        search,
+        h("div", { class: "h3z-pills wrap" }, cat("all", T("Все стили")), categories.map((c) => cat(c, this.astCatLabel(c)))),
+        h("div", { class: "h3z-ast-styletbar" },
+          h("span", { class: "h3z-note h3z-ast-stylecount" }, T("Выбрано: {0}", this.p.assistant.cfg.styles.length)),
+          h("div", { class: "grow" }),
+          h("button", { class: "h3z-btn sm", disabled: !this.p.assistant.cfg.styles.length || undefined, onclick: () => { this.astApplyCfg({ styles: [] }); this.astPaintStyleList(); this.astPaintComposer(); } }, T("Сбросить")),
+          changed ? h("button", { class: "h3z-btn sm", onclick: () => this.astResetStyles() }, T("Восстановить")) : null,
+          h("button", { class: "h3z-btn sm primary", onclick: () => this.astEditStyle() }, T("＋ Новый"))),
+        this.astStyleList());
     },
     astSetGeneration() {
       const cfg = this.p.assistant.cfg;
-      const check = (key, title, desc) => {
-        const input = h("input", { type: "checkbox", checked: cfg[key] || undefined });
-        input.onchange = () => {
-          this.astApplyCfg({ [key]: input.checked });
-          if (key === "auto_unload" && !input.checked) clearTimeout(this._astUnloadT);
-          this.renderAssistSettings();
-        };
-        return h("label", { class: "h3z-ast-switch" }, input, h("span", null, h("span", { class: "h3z-ast-switchtitle" }, title), h("div", { class: "h3z-ast-switchdesc" }, desc)));
-      };
       const delay = h("input", { class: "h3z-in", type: "number", value: cfg.auto_unload_delay, min: 0, max: 86400, step: 30, disabled: !cfg.auto_unload || undefined });
       delay.onchange = () => { this.astApplyCfg({ auto_unload_delay: Math.max(0, Math.min(86400, Number(delay.value) || 0)) }); this.astScheduleUnload(); };
-      return h("div", { class: "h3z-ast-form" }, h("h3", { class: "h3z-ast-sectiontitle" }, T("Параметры текущего чата")),
-        h("p", { class: "h3z-ast-sectiondesc" }, T("Эти значения применяются сразу. Чтобы сохранить их в пресет, откройте вкладку «Пресеты» и сохраните копию.")),
-        check("thinking", T("Режим мышления"), T("Включать рассуждения модели и использовать отдельный профиль генерации.")),
-        check("show_reasoning", T("Показывать размышления"), T("Показывать reasoning под складной шторкой. Модель продолжит мыслить независимо от отображения.")),
-        check("engine_defaults", T("Использовать настройки модели по умолчанию"), T("Не отправлять параметры сэмплирования и лимит токенов — сервер LLM применит собственные значения.")),
+      return h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+        h("div", { class: "h3z-card-h" }, h("h4", null, T("Параметры текущего чата"))),
+        h("div", { class: "h3z-note" }, T("Эти значения применяются сразу. Чтобы сохранить их в пресет, откройте вкладку «Пресеты» и сохраните копию.")),
+        this.toggle(T("Режим мышления"), !!cfg.thinking, (v) => { this.astApplyCfg({ thinking: !!v }); this.renderAssistSettings(); }, T("Включать рассуждения модели и использовать отдельный профиль генерации.")),
+        this.toggle(T("Показывать размышления"), !!cfg.show_reasoning, (v) => { this.astApplyCfg({ show_reasoning: !!v }); this.renderAssistSettings(); }, T("Показывать reasoning под складной шторкой. Модель продолжит мыслить независимо от отображения.")),
+        this.toggle(T("Использовать настройки модели по умолчанию"), !!cfg.engine_defaults, (v) => { this.astApplyCfg({ engine_defaults: !!v }); this.renderAssistSettings(); }, T("Не отправлять параметры сэмплирования и лимит токенов — сервер LLM применит собственные значения.")),
         this.astSamplingControls(cfg,
           (profile) => this.astApplyCfg({ sampling: { ...cfg.sampling, [cfg.thinking ? "thinking" : "plain"]: profile } }),
           (value) => this.astApplyCfg({ max_tokens: value }), cfg.engine_defaults),
-        h("h3", { class: "h3z-ast-sectiontitle" }, T("Память")),
-        check("unload_on_generate", T("Выгружать LLM перед видеогенерацией"), T("Освобождать память LLM при каждом запуске H3. Перед запросом к LLM модели ComfyUI выгружаются автоматически.")),
-        check("auto_unload", T("Автовыгрузка после ответа"), T("Выгружать LLM после паузы. Новая отправка сбрасывает таймер.")),
+        h("div", { class: "h3z-lbl" }, T("Память")),
+        this.toggle(T("Выгружать LLM перед видеогенерацией"), !!cfg.unload_on_generate, (v) => { this.astApplyCfg({ unload_on_generate: !!v }); this.renderAssistSettings(); }, T("Освобождать память LLM при каждом запуске H3. Перед запросом к LLM модели ComfyUI выгружаются автоматически.")),
+        this.toggle(T("Автовыгрузка после ответа"), !!cfg.auto_unload, (v) => { this.astApplyCfg({ auto_unload: !!v }); if (!v) clearTimeout(this._astUnloadT); this.renderAssistSettings(); }, T("Выгружать LLM после паузы. Новая отправка сбрасывает таймер.")),
         this.field(T("Задержка автовыгрузки, сек"), delay));
     },
     astSetContext() {
       const cfg = this.p.assistant.cfg;
-      const check = (key, title, desc) => {
-        const input = h("input", { type: "checkbox", checked: cfg[key] || undefined });
-        input.onchange = () => this.astApplyCfg({ [key]: input.checked });
-        return h("label", { class: "h3z-ast-switch" }, input, h("span", null, h("span", { class: "h3z-ast-switchtitle" }, title), h("div", { class: "h3z-ast-switchdesc" }, desc)));
-      };
       const sys = h("textarea", { class: "h3z-ta", style: "min-height:210px", value: cfg.sys || "", placeholder: T("Пусто — использовать системный промпт выбранного пресета"), spellcheck: "false" });
       sys.oninput = () => this.astText("sys", sys);
-      return h("div", { class: "h3z-ast-form" }, h("h3", { class: "h3z-ast-sectiontitle" }, T("Что ассистент знает о сцене")),
-        h("p", { class: "h3z-ast-sectiondesc" }, T("Контекст текущего отрезка добавляется к системному сообщению при каждой отправке.")),
-        check("ctx_refs", T("Референсы и персонажи"), T("Изображения, видео, аудио и включённые карточки персонажей текущего отрезка.")),
-        check("ctx_neighbours", T("Соседние отрезки"), T("Промпты предыдущего и следующего отрезков для связности истории.")),
+      return h("div", { class: "h3z-card h3z-glass h3z-insp-block" },
+        h("div", { class: "h3z-card-h" }, h("h4", null, T("Что ассистент знает о сцене"))),
+        h("div", { class: "h3z-note" }, T("Контекст выбранного отрезка (длина, разрешение, fps, промпт, референсы и персонажи) всегда добавляется к системному сообщению.")),
+        h("div", { class: "h3z-note" }, T("Референсы и персонажи текущего отрезка включены всегда.")),
+        this.toggle(T("Соседние отрезки"), !!cfg.ctx_neighbours, (v) => { this.astApplyCfg({ ctx_neighbours: !!v }); this.renderAssistSettings(); }, T("Промпты и референсы предыдущего и следующего отрезков — удобно при продлении клипа.")),
         h("div", null, h("div", { class: "h3z-lbl" }, T("Системный промпт для этого чата")), sys,
           h("div", { class: "h3z-note" }, T("Переопределение не меняет пресет. Очистите поле, чтобы снова использовать промпт пресета."))),
-        h("button", { class: "h3z-btn sm", style: "align-self:flex-start", onclick: () => { this.astApplyCfg({ sys: "" }); this.renderAssistSettings(); } }, T("Сбросить переопределение")));
+        h("button", { class: "h3z-btn sm", onclick: () => { this.astApplyCfg({ sys: "" }); this.renderAssistSettings(); } }, T("Сбросить переопределение")));
     },
   });
 }

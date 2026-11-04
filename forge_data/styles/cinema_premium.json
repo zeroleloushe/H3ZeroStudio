@@ -1,0 +1,14 @@
+{
+  "id": "cinema_premium",
+  "name": "🎞️ Premium Cinema",
+  "description": "Премиальная кинематографичная подача с плавной работой камеры, выразительной глубиной резкости, широким динамическим диапазоном и тонкой плёночной фактурой.",
+  "instructions": [
+    "High-end cinematic camera aesthetic. Deliberate, physically controlled camera movement with natural inertia, precise framing and elegant pacing. Smooth focus pulls, realistic depth of field, natural motion blur and subtle optical imperfections. Rich dynamic range, detailed highlights and shadows, refined lens rendering and fine organic film grain."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Кинематографичный",
+  "icon": "clapperboard",
+  "tone": "gold",
+  "custom": true
+}

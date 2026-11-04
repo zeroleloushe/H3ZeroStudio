@@ -1,0 +1,14 @@
+{
+  "id": "composition_reference",
+  "name": "📐 Composition Reference",
+  "description": "Использует референс для сохранения композиции: кадрирования, расположения объектов, перспективы и свободного пространства.",
+  "instructions": [
+    "Use the supplied reference as a composition guide. Preserve its framing logic, subject placement, scale relationships, perspective and negative-space structure while adapting the actual subject matter."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "indigo",
+  "custom": true
+}

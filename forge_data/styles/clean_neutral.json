@@ -1,0 +1,14 @@
+{
+  "id": "clean_neutral",
+  "name": "◻️ Clean Neutral",
+  "description": "Чистое нейтральное изображение с естественными цветами и сбалансированным контрастом, без сильных фильтров и лишних эффектов.",
+  "instructions": [
+    "Clean neutral visual presentation. Balanced contrast, natural colors, clear subject separation and restrained processing. No strong stylistic filter, exaggerated grain, artificial glow or extreme color grading."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Базовые",
+  "icon": "sparkles",
+  "tone": "cyan",
+  "custom": true
+}

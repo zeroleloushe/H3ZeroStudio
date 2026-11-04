@@ -1,0 +1,14 @@
+{
+  "id": "natural_motion",
+  "name": "〰️ Natural Motion",
+  "description": "Делает движения физически правдоподобными: учитывает вес, инерцию, контакт объектов и естественный темп взаимодействий.",
+  "instructions": [
+    "Physically believable motion and interactions. Objects maintain realistic inertia, weight, contact, deformation and timing. Avoid unnatural floating, snapping or overly perfect movement."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Базовые",
+  "icon": "sparkles",
+  "tone": "blue",
+  "custom": true
+}

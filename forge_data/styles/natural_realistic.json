@@ -1,0 +1,14 @@
+{
+  "id": "natural_realistic",
+  "name": "◼️ Natural Realistic",
+  "description": "Стремится к естественному реализму в пропорциях, материалах, освещении и движении, избегая лишней стилизации и искусственных эффектов.",
+  "instructions": [
+    "Natural realistic visual rendering with physically believable proportions, materials, lighting response and motion. Avoid exaggerated stylization, artificial effects and unnecessary visual embellishment."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Базовые",
+  "icon": "sparkles",
+  "tone": "gray",
+  "custom": true
+}

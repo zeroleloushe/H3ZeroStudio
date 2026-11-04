@@ -1,0 +1,14 @@
+{
+  "id": "photorealistic",
+  "name": "📷 Photorealistic",
+  "description": "Фотореалистичная подача с правдоподобными материалами, естественным светом, реалистичными пропорциями и фотографической глубиной.",
+  "instructions": [
+    "Photorealistic visual treatment with physically believable materials, natural light interaction, realistic proportions, authentic surface imperfections and photographic depth."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Арт",
+  "icon": "sparkles",
+  "tone": "slate",
+  "custom": true
+}

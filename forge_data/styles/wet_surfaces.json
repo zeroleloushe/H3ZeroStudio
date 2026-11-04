@@ -1,0 +1,14 @@
+{
+  "id": "wet_surfaces",
+  "name": "💧 Wet Surface Detail",
+  "description": "Добавляет реалистичные следы влаги: капли, тонкую водяную плёнку, потёки и отражающие блики на мокрых поверхностях.",
+  "instructions": [
+    "Realistic wet materials with visible droplets, thin water films, reflective highlights, small streams and physically believable surface tension."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "blue",
+  "custom": true
+}

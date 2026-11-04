@@ -1,0 +1,14 @@
+{
+  "id": "dark_atmospheric",
+  "name": "🌑 Dark Atmospheric",
+  "description": "Создаёт мрачную атмосферу за счёт глубоких теней, приглушённых тонов и сдержанных бликов, сохраняя детали в темноте.",
+  "instructions": [
+    "Dark atmospheric artistic treatment with restrained highlights, deep environmental tones, layered shadows and strong mood. Preserve readable subject detail and believable light behavior."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Арт",
+  "icon": "sparkles",
+  "tone": "slate",
+  "custom": true
+}

@@ -4,7 +4,7 @@ import { T } from "./h3s_i18n.js";
 // default) and refined by a short H3 pass; the draft's sound is kept 1:1. Technically it is the project mode
 // a run of kind "refine" for the chosen segments (run.kind override; the project mode is not changed).
 export function installFinal(Editor, { C, h }) {
-  const TIP = T("Финал из черновика: выбранный дубль-черновик увеличивается до финального размера (обученный латентный апскейлер H3; без модели — RTX VSR) и дорабатывается коротким проходом H3 с тем же промптом и референсами. Композиция, движение и звук черновика сохраняются.");
+  const TIP = T("Финал из черновика: выбранный дубль-черновик увеличивается до финального размера обученным латентным апскейлером H3 и дорабатывается коротким проходом H3 с тем же промптом и референсами. Композиция, движение и звук черновика сохраняются.");
   Object.assign(Editor.prototype, {
     /** Segment i has a draft take (active or among its takes). */
     hasDraft(i) {
@@ -23,7 +23,6 @@ export function installFinal(Editor, { C, h }) {
     /** Start «final from draft» for the given segments (null = all with a draft). */
     finalFromDraft(list = null) {
       if (this.run.active) { this.toast(T("Сейчас идёт генерация — дождитесь окончания"), true); return; }
-      if (this.upAvail && !this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
       const todo = (list || this.finalCandidates()).filter((i) => this.hasDraft(i) && !this.finalDone(i));
       if (!todo.length) { this.toast(list && list.length === 1 && this.finalDone(list[0]) ? T("Отрезок {0}: финал уже готов", list[0] + 1) : T("Нет черновиков для финала — сначала сделайте черновик (кнопка «✎ Черновик» вверху)"), true); return; }
       // the draft the final is made from: the active take if it is a draft, else the newest draft take

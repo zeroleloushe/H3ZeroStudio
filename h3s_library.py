@@ -106,6 +106,16 @@ def region_entry(pid, pname, res, region, seg, index, base_key=None):
             "base_key": base_key, "created": res.get("created"), "models": res.get("models")}
 
 
+def latest_final(pid):
+    """Newest full-timeline render in the project gallery (kind=final, has video), or None.
+
+    Used by «Сохранить видео» when result.full is marked stale/incomplete but the gallery
+    still holds the last stitched mp4.
+    """
+    items = [e for e in gallery_list(pid) if e.get("kind") == "final" and e.get("video")]
+    return items[0] if items else None
+
+
 def final_entry(pid, pname, full, poster, prompt):
     return {"id": f"full_{full['key']}", "pid": pid, "project": pname, "kind": "final", "key": full["key"],
             "video": full.get("video"), "poster": poster, "frames": full.get("frames"), "count": full.get("count"),
@@ -221,10 +231,14 @@ def settings_get():
 
 def settings_set(values, replace=False):
     from . import h3s_core as core
-    cur = {} if replace else (_read_json(settings_path(), {}).get("settings") or {})
+    raw = {} if replace else _read_json(settings_path(), {})
+    cur = {} if replace else (raw.get("settings") or {})
     cur.update(values or {})
     cur = core.global_settings(cur)
-    _write_json(settings_path(), {"v": 1, "settings": cur, "updated": int(time.time())})
+    out = {"v": 1, "settings": cur, "updated": int(time.time())}
+    if isinstance(raw.get("ui"), dict):
+        out["ui"] = raw["ui"]   # preserve welcome / UI prefs
+    _write_json(settings_path(), out)
     return {"settings": cur}
 
 

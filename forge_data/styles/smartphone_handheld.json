@@ -1,0 +1,14 @@
+{
+    "id": "smartphone_handheld",
+    "name": "📱 Smartphone / Handheld",
+    "description": "Имитирует видео со смартфона в руках: мелкую тряску, небольшие перекосы, работу автофокуса и характерную цифровую обработку.",
+    "instructions": [
+        "Handheld smartphone camera footage. Natural human hand movement with subtle irregular shaking, small accidental tilts and micro-jitters. Slight walking bounce when the camera operator moves. Imperfect framing and occasional small readjustments, but the subject remains readable. Autofocus gently hunts and occasionally shifts, with realistic smartphone exposure adaptation. Slight digital stabilization artifacts, mild rolling-shutter distortion during fast movement. Sharp but slightly over-processed smartphone image, moderate HDR, compressed dynamic range, natural skin texture, mild digital noise in low light. No cinematic camera movement, no perfectly smooth motion."
+    ],
+    "priority": 50,
+    "enabled": false,
+    "category": "Камера и композиция",
+    "icon": "camera",
+    "tone": "teal",
+    "custom": true
+}

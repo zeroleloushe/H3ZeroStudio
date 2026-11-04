@@ -22,6 +22,83 @@ export function installMenus(Editor, { C, h, ICON }) {
       return h("div", { class: "h3z-row", style: { gap: "6px" } }, input, btn);
     },
 
+    /** Dropdown anchored under a control; matches width; keyboard arrows/Enter/Esc. */
+    openAnchoredMenu(anchor, title, entries, opts = {}) {
+      const r = anchor.getBoundingClientRect();
+      const fake = { clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} };
+      const m = this.openMenu(fake, title, entries);
+      const matchW = opts.matchWidth !== false;
+      if (matchW) {
+        const w = Math.max(r.width, 160);
+        m.style.minWidth = w + "px";
+        m.style.width = w + "px";
+      }
+      const mr = m.getBoundingClientRect();
+      let left = r.left, top = r.bottom + 4;
+      if (left + mr.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mr.width - 8);
+      if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - mr.height - 4);
+      m.style.left = left + "px";
+      m.style.top = top + "px";
+      const items = [...m.querySelectorAll(":scope > .it:not(.dis)")];
+      let idx = Math.max(0, items.findIndex((el) => el.classList.contains("on")));
+      const focusItem = (i) => {
+        items.forEach((el) => el.classList.remove("kb"));
+        if (!items.length) return;
+        idx = (i + items.length) % items.length;
+        items[idx].classList.add("kb");
+        items[idx].scrollIntoView({ block: "nearest" });
+      };
+      if (items.length) focusItem(idx);
+      const onKey = (e) => {
+        if (!this.$.menu) { window.removeEventListener("keydown", onKey, true); return; }
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.closeMenu(); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); focusItem(idx + 1); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); focusItem(idx - 1); return; }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); items[idx]?.click(); }
+      };
+      this._menuKeyOff = onKey;
+      window.addEventListener("keydown", onKey, true);
+      return m;
+    },
+
+    /** Themed select: button.h3z-sel opening h3z-menu (groups via .hd, check via .on). */
+    themedSelect({ value, options, groups, title, className, sm, disabled, emptyLabel, onChange } = {}) {
+      const flat = groups
+        ? groups.flatMap((g) => (g.options || []).map((o) => ({ ...o, _g: g.label })))
+        : (options || []);
+      const cur = flat.find((o) => String(o.value) === String(value));
+      const lab = cur ? cur.label : (emptyLabel != null ? emptyLabel : (flat[0]?.label ?? "—"));
+      const cls = "h3z-sel" + (sm ? " sm" : "") + (className ? " " + className : "");
+      const btn = h("button", { type: "button", class: cls, title: title || "", disabled: disabled || undefined },
+        h("span", { class: "h3z-dd-lab" }, lab));
+      const open = (e) => {
+        if (disabled) return;
+        e?.preventDefault?.(); e?.stopPropagation?.();
+        if (this.$.menu && this._ddAnchor === btn) { this.closeMenu(); return; }
+        this._ddAnchor = btn;
+        const entries = [];
+        const pushOpt = (o) => entries.push({
+          label: o.label, on: String(o.value) === String(value), dis: !!o.dis,
+          fn: () => { onChange?.(o.value); },
+        });
+        if (groups) {
+          for (const g of groups) {
+            if (g.label) entries.push({ el: h("div", { class: "hd" }, g.label) });
+            for (const o of (g.options || [])) pushOpt(o);
+          }
+        } else {
+          for (const o of (options || [])) pushOpt(o);
+        }
+        this.openAnchoredMenu(btn, null, entries);
+      };
+      btn.onclick = open;
+      btn.onkeydown = (e) => {
+        if (disabled) return;
+        if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") { e.preventDefault(); open(e); }
+      };
+      return btn;
+    },
+
     openMenu(e, title, entries) {
       e.preventDefault(); e.stopPropagation();
       this.closeMenu();
@@ -100,6 +177,8 @@ export function installMenus(Editor, { C, h, ICON }) {
         { label: T("💾 Сохранить фрагмент (этот отрезок)…"), fn: () => this.saveDialog({ mode: "clip", i }), dis: !s.result?.video },
         { label: T("▶ Открыть в плеере"), fn: () => { this.sel = i; this.pvMode = "segment"; this.playhead = it.start + (i ? it.overlap : 0); this.renderAll(); this.scrollToPlayhead?.(); } },
         "sep",
+        s.result || (s.takes || []).length ? { label: T("ℹ Параметры генерации"), title: T("Промпт, модель, LoRA, сид, шаги, апскейл — как было при генерации"), fn: () => this.openGenMeta({ segIndex: i }) } : null,
+        s.result || (s.takes || []).length ? { label: T("↺ Повторить"), title: T("Восстановить промпт, референсы, пресет и настройки этого дубля"), fn: () => this.repeatFromMeta(this.genMetaOf(i)) } : null,
         { icon: ICON.copy, label: T("Копировать промпт и референсы"), fn: () => this.copySegSpec(i) },
         { label: T("📋 Вставить промпт и референсы"), fn: () => this.pasteSegSpec(i), dis: !this._segClip, title: this._segClip ? T("Из «{0}»", this._segClip.from) : T("Сначала скопируйте у другого отрезка") },
         "sep",
@@ -191,6 +270,14 @@ export function installMenus(Editor, { C, h, ICON }) {
     },
 
     // ---------------------------------------------------------------- «Сохранить видео»
+    /** Newest gallery final for this project (kind=final with a video), or null. */
+    async latestGalleryFinal() {
+      try {
+        const items = await this.host.get("/h3zero/gallery", { id: this.p.id });
+        const list = Array.isArray(items) ? items : [];
+        return list.find((e) => e && e.kind === "final" && e.video) || null;
+      } catch (_) { return null; }
+    },
     /** opt.mode: "all" | "range" | "clip" (opt.i). */
     saveDialog(opt = {}) {
       this.closeSaveDialog();
@@ -198,11 +285,12 @@ export function installMenus(Editor, { C, h, ICON }) {
       let mode = opt.mode || (fullOk ? "all" : this.seg()?.result?.video ? "clip" : "all");
       const its = this.items();
       let ci = opt.i ?? Math.max(0, this.sel);
+      let galleryFinal = null;   // filled async: last stitched timeline mp4 when result.full is stale
       const ld = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } };
-      const folder = h("input", { class: "h3z-in", value: ld("h3zs.exportDir", ""), placeholder: T("по умолчанию: ComfyUI/output/h3zerostudio/export"), title: T("Папка на компьютере, где запущен ComfyUI (например D:\\\\Видео\\\\H3). Относительный путь — внутри ComfyUI/output") });
+      const folder = h("input", { class: "h3z-in", value: ld("h3zs.exportDir", ""), placeholder: T("по умолчанию: ComfyUI/output/h3zerostudio/export"), title: T("Папка на компьютере, где запущен ComfyUI (например D:\\Видео\\H3). Относительный путь — внутри ComfyUI/output") });
       const d = new Date(), z = (x) => String(x).padStart(2, "0");   // local time (toISOString would be UTC)
       const stamp = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}`;
-      const name = h("input", { class: "h3z-in", value: `${(this.p.name || "h3").replace(/[\\\\/:*?"<>|]/g, "_")}_${stamp}` });
+      const name = h("input", { class: "h3z-in", value: `${(this.p.name || "h3").replace(/[\\/:*?"<>|]/g, "_")}_${stamp}` });
       const vEnd = this.totalFrames();
       const fIn = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0, value: ((this._rangeIn ?? 0) / C.FPS).toFixed(2) });
       const fOut = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0, value: ((this._rangeOut ?? vEnd) / C.FPS).toFixed(2) });
@@ -217,18 +305,27 @@ export function installMenus(Editor, { C, h, ICON }) {
       const rowR = h("div", { class: "h3z-row" }, h("span", null, T("с")), fIn, phBtn(fIn, T("Начало = плейхед")), h("span", null, T("по")), fOut, phBtn(fOut, T("Конец = плейхед")));
       const rowC = h("div", { class: "h3z-row" }, segSel);
       const go = h("button", { class: "h3z-btn primary", html: (ICON.save || "💾") + T("<span>Сохранить</span>") });
+      /** Prefer the live current final; else the newest gallery final; else the on-project full file. */
+      const timelineSource = () => {
+        if (fullOk && full?.video) return { video: full.video, frames: full.frames || 0, via: "current" };
+        if (galleryFinal?.video) return { video: galleryFinal.video, frames: galleryFinal.frames || full?.frames || 0, via: "gallery" };
+        if (full?.video) return { video: full.video, frames: full.frames || 0, via: "stored" };
+        return null;
+      };
       const src = () => {
         if (mode === "clip") {
           const s = this.p.segments[ci], it = its[ci];
-          if (fullOk && it) { const ov = ci ? it.overlap : 0; return { source: full.video, range: [it.start + ov, Math.min(it.end, vEnd)], tl: 0, why: "" }; }
+          const tl = timelineSource();
+          if (tl && fullOk && it) { const ov = ci ? it.overlap : 0; return { source: tl.video, range: [it.start + ov, Math.min(it.end, vEnd)], tl: 0, why: "", via: tl.via }; }
           if (s?.result?.video && !this.isStale(ci)) return { source: s.result.video, range: null, tl: it?.start || 0, why: "" };
           return { why: T("Отрезок не сгенерирован (или изменён) — сначала «Сгенерировать»") };
         }
-        if (!fullOk) return { why: full?.video ? T("Итоговое видео устарело или неполное — запустите «Сгенерировать» для всего ролика") : T("Ролик ещё не сгенерирован") };
-        if (mode === "all") return { source: full.video, range: null, tl: 0, why: "" };
+        const tl = timelineSource();
+        if (!tl) return { why: T("Ролик ещё не сгенерирован") };
+        if (mode === "all") return { source: tl.video, range: null, tl: 0, why: "", via: tl.via, frames: tl.frames };
         const a = Math.round(Number(fIn.value) * C.FPS), b = Math.round(Number(fOut.value) * C.FPS);
         if (!(b > a)) return { why: T("Конец фрагмента должен быть позже начала") };
-        return { source: full.video, range: [Math.max(0, a), Math.min(b, full.frames || b)], tl: 0, why: "" };
+        return { source: tl.video, range: [Math.max(0, a), Math.min(b, tl.frames || b)], tl: 0, why: "", via: tl.via };
       };
       const upd = () => {
         pills.innerHTML = "";
@@ -236,8 +333,9 @@ export function installMenus(Editor, { C, h, ICON }) {
         rowR.style.display = mode === "range" ? "" : "none"; rowC.style.display = mode === "clip" ? "" : "none";
         const x = src();
         go.disabled = !!x.why;
-        const len = x.range ? (x.range[1] - x.range[0]) / C.FPS : mode === "all" ? (full?.frames || 0) / C.FPS : (its[ci]?.frames || 0) / C.FPS;
-        info.textContent = x.why || T("≈ {0} с · mp4 H.264 + AAC · файл не перезаписывается (добавится _2, _3…)", len.toFixed(2));
+        const len = x.range ? (x.range[1] - x.range[0]) / C.FPS : mode === "all" ? (x.frames || full?.frames || galleryFinal?.frames || 0) / C.FPS : (its[ci]?.frames || 0) / C.FPS;
+        const note = x.via === "gallery" ? T(" · из галереи (последний итог; текущий ролик помечен устаревшим)") : x.via === "stored" ? T(" · прошлый итог проекта (таймлайн изменился)") : "";
+        info.textContent = x.why || T("≈ {0} с · mp4 H.264 + AAC · файл не перезаписывается (добавится _2, _3…)", len.toFixed(2)) + note;
         info.classList.toggle("err", !!x.why);
       };
       go.onclick = async () => {
@@ -245,8 +343,12 @@ export function installMenus(Editor, { C, h, ICON }) {
         go.disabled = true; go.classList.add("busy");
         try { localStorage.setItem("h3zs.exportDir", folder.value.trim()); } catch (e) {}
         try {
-          const r = await this.host.exportVideo({ project: this.p.id, source: x.source, range: x.range, folder: folder.value.trim(), name: name.value.trim() + (mode === "clip" ? T("_отрезок{0}", ci + 1) : mode === "range" ? `_${fIn.value}-${fOut.value}s` : ""),
-            project: music && this._exportMix !== false ? this.p : null, timeline_start: x.tl });
+          const body = { source: x.source, range: x.range, folder: folder.value.trim(),
+            name: name.value.trim() + (mode === "clip" ? T("_отрезок{0}", ci + 1) : mode === "range" ? `_${fIn.value}-${fOut.value}s` : ""),
+            timeline_start: x.tl };
+          if (music && this._exportMix !== false) body.project = this.p;
+          else body.project = this.p.id;
+          const r = await this.host.exportVideo(body);
           this.lastExport = r;
           this.toast(T("Сохранено: {0} ({1} с)", r.path, r.seconds.toFixed(2)));
           info.textContent = `✓ ${r.path}`; info.classList.remove("err");
@@ -269,6 +371,13 @@ export function installMenus(Editor, { C, h, ICON }) {
       this.root.append(modal);
       upd();
       name.focus(); name.select();
+      if (!fullOk) {
+        this.latestGalleryFinal().then((e) => {
+          if (!this.$?.saveModal) return;
+          galleryFinal = e;
+          upd();
+        });
+      }
     },
     closeSaveDialog() { if (this.$?.saveModal) { this.$.saveModal.remove(); this.$.saveModal = null; this.focusSink?.(); } },
   });

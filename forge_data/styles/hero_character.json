@@ -1,0 +1,14 @@
+{
+  "id": "hero_character",
+  "name": "🦸 Hero Character",
+  "description": "Делает персонажа визуально героическим: подчёркивает уверенную позу, выразительный силуэт, черты лица и детали костюма.",
+  "instructions": [
+    "Strong hero character presentation with confident posture, clear silhouette and visually readable facial features. Emphasize distinctive character traits, costume details and presence while maintaining believable anatomy."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Персонаж",
+  "icon": "sparkles",
+  "tone": "gold",
+  "custom": true
+}

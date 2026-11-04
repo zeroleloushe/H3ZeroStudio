@@ -1,0 +1,14 @@
+{
+  "id": "fabric_texture",
+  "name": "🧵 Rich Fabric Detail",
+  "description": "Подчёркивает реалистичную фактуру ткани: переплетение нитей, волокна, швы, складки и естественные заломы.",
+  "instructions": [
+    "Highly readable fabric construction with visible weave, fibers, folds, seams and realistic material response. Preserve natural wrinkles and tension points."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "amber",
+  "custom": true
+}

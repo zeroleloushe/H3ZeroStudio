@@ -132,16 +132,15 @@ export const HELP_EN = [
   ["upscale", "↑ Upscale", `
 <ul><li><b>↑ Upscale in the header</b>: the whole video. Each segment is upscaled in its own window and refined by a short H3 pass; the sound stays 1:1. Finished parts come from the cache and an interrupted run resumes. Right-click for a different method or size this time.</li>
 <li><b>↑ Upscale segment</b> (the ↑ button on a clip, the clip menu, the card): this clip only. The result is a new take; the old one can be restored.</li>
-<li><b>Footage “as is”</b> is upscaled too: its frames are VAE-encoded and go through the chosen method + refine (fine details may change slightly); with <b>RTX VSR</b> the file's frames are upscaled directly, without VAE or refine. The sound is untouched.</li>
+<li><b>Footage “as is”</b> is upscaled too: its frames are VAE-encoded and go through the chosen method + refine (fine details may change slightly); The sound is untouched.</li>
 <li><b>↑ Upscale span</b> (right-click a ✂ bridge / prologue / span, or the span card): the span take is upscaled in its own window + refine, with the same method and profile; the result is cached with the take, and both seams are re-matched after upscaling. “↑ Upscale” in the header covers clips, footage and applied spans.</li>
-<li><b>Each method has its own profile</b>: size, refine σ and steps, sampler, RTX quality, tiles and time chunks (on/off, length, overlap). Switching the method only shows its profile and resets nothing. The upscale menus in the header and on clips use the selected method's profile. By default chunks are on for latent and RTX, off for tiles.</li>
+<li><b>Each method has its own profile</b>: size, refine σ and steps, sampler, tiles and time chunks (on/off, length, overlap). Switching the method only shows its profile and resets nothing. The upscale menus in the header and on clips use the selected method's profile. By default chunks are on for latent, off for tiles.</li>
 <li>Methods (choose in “Settings” → “Upscale”):
 <ul><li><b>Latent + refine</b>: H3's trained latent upscaler, the default — fast, no decode/encode.</li>
-<li><b>RTX VSR → refine</b>: frame-by-frame NVIDIA RTX Video Super Resolution, “quality” preset. Also the fallback when the upscaler model is missing.</li>
 <li><b>Tiles (SyncTile)</b>: after upscaling, refine with synchronized tiles; each sees the segment's prompt and references. Set tile size and overlap; the resulting grid (e.g. 3×3) is shown right away. Default refine strength is <b>σ 0.60</b> (recommended): lower values hardly affect the picture, 0.60 keeps consistency very well and barely changes details; the list goes up to σ 1.00.</li></ul></li>
 <li><b>Size</b> is in megapixels: presets 1.0–4.0 MP or a “custom size”. The resulting W×H is shown next to it (project aspect ratio, multiples of 32). The same choice is in the header's and clip's “↑ Upscale” menus (method ▸ size). Old ×1.5 / ×2 values were converted to MP with the same size; finished upscales stayed cached.</li>
 <li><b>Time chunks</b> keep VRAM in check (e.g. 12 GB): a long clip is upscaled in chunks of ≈ N seconds (5 s = 124 frames by default, snapped to the H3 grid) with overlap (22 frames by default). Chunks run one by one, each with its own upscale and refine (tiles work inside a chunk); memory is freed between chunks. Each chunk continues the clean tail of the previous one, as in a continuation; frames blend smoothly at the joint. The number of chunks is automatic (“whole clip in one chunk” turns it off). Status and console show chunk i/N, step, tile and percent.</li>
-<li>If neither the upscaler nor RTX VSR is available, the run stops with a clear error (see “Models”).</li></ul>`],
+<li>If the trained upscaler is not available, the run stops with a clear error (see “Models”).</li></ul>`],
   ["live", "Live preview and progress", `
 <ul><li>While generating, the player shows the predicted frame of each step. With <b>taeh3</b> in <code>models/vae_approx</code> the preview is full resolution; without it, rough latent→RGB colors.</li>
 <li>Under the player, “Sampling dynamics”: σ and Δ per step and step time.</li>
@@ -234,7 +233,7 @@ export const HELP_EN = [
 <li><b>Audio VAE</b> (<code>minimax_h3_audio_vae</code>) → the <code>audio_vae</code> input: no sound without it.</li>
 <li><b>taeh3.safetensors</b> → <code>models/vae_approx</code>: full-resolution live preview (optional).</li>
 <li><b>Trained latent upscaler</b>: the <code>MinimaxH3LatentUpscaler3D</code> node and the <code>minimax_h3_latent_upscaler_3d_bf16.safetensors</code> model → <code>models/latent_upscale_models</code> (folders from <code>extra_model_paths.yaml</code> work too).</li>
-<li><b>RTX VSR</b>: the <code>nvidia-vfx</code> Python package and an NVIDIA RTX GPU.</li></ul>
+</ul>
 <p>What was found and what is missing is shown in “Settings” → “Models”, along with the folder paths. After installing a model or node, restart ComfyUI.</p>`],
   ["faq", "Questions and problems", `
 <dl>
@@ -249,7 +248,7 @@ export const HELP_EN = [
 <dt>“Whole video” doesn't play what I expected</dt>
 <dd>It always shows the current timeline: ungenerated parts as placeholders, changed ones with their earlier takes. The old file is available only in the “Previous result” tab.</dd>
 <dt>“Upscale unavailable”</dt>
-<dd>Neither the trained upscaler model nor RTX VSR is present — see “Models”. Restart ComfyUI after installing.</dd>
+<dd>The trained upscaler model is missing — see “Models”. Restart ComfyUI after installing.</dd>
 <dt>No sound</dt>
 <dd>Connect <code>audio_vae</code>. Check the player's sound button: if the browser muted autoplay, it is highlighted and the first click turns sound on.</dd>
 <dt>Generation is slow</dt>

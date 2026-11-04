@@ -1,0 +1,14 @@
+{
+  "id": "film_noir",
+  "name": "🕶️ Film Noir",
+  "description": "Классический нуарный образ с выразительными тенями, контрастным светом и сдержанной монохромной или приглушённой палитрой.",
+  "instructions": [
+    "Classic film-noir cinematic treatment with dramatic tonal separation, expressive shadows, controlled highlights and a sophisticated monochromatic or restrained-color photographic character. Strong visual atmosphere with natural optical texture."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Кинематографичный",
+  "icon": "clapperboard",
+  "tone": "slate",
+  "custom": true
+}

@@ -30,7 +30,7 @@ export const DEFAULT_SETTINGS = {
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 4, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
+  quality: "final", final_mode: "full", draft_scale: 0.5, draft_steps: 0, refine_sigma: 0.4, refine_steps: 0, upscale_method: "learned", upscale_rev: 5, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
   // «custom SIGMAS» schedules (with the scheduler of the same level): "1.0, 0.5, 0.0" — the exact list
   // replaces the model's curve, the step count is len − 1
@@ -40,12 +40,13 @@ export const DEFAULT_SETTINGS = {
   upscale_gen: { mode: "project", model: "", loras: [], lora_strength: 1 },
   // the learned H3 latent upscaler model (models/latent_upscale_models); "" = the first found (auto)
   upscale_model: "",
+  accel: { attention: "kitchen", veda: false, veda_predictor: "", teacache: false, teacache_thresh: 0.15, compile: false, compile_backend: "inductor" },
 };
 export const DRAFT_SCALES = [0.5, 0.67, 0.75];
 export const REFINE_SIGMA_RANGE = [0.15, 0.8];
-export const UPSCALE_METHODS = ["learned", "rtx"];   // nearest-exact / VAE-Lanczos removed
+export const UPSCALE_METHODS = ["learned"];   // nearest-exact / VAE-Lanczos / RTX removed
 // «Апскейл отрезка» (see h3s_upscale.py)
-export const SEG_UPSCALE_METHODS = ["latent", "rtx", "tiles"];
+export const SEG_UPSCALE_METHODS = ["latent", "tiles"];
 export const SEG_UPSCALE_SCALES = [1.5, 2.0];   // legacy multipliers (migrated to "mp")
 export const SEG_UPSCALE_MP_PRESETS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0];
 export const SEG_UPSCALE_MP_RANGE = [0.01, 8.5];
@@ -53,24 +54,38 @@ export const UPSCALE_CHUNK_SEC_RANGE = [2.0, 30.0];
 export const UPSCALE_CHUNK_OVERLAP_RANGE = [1, 3];
 /** Half-up rounding (mirror of h3s_core._round). */
 export const roundHalf = (x, d) => Math.floor(Number(x) * 10 ** d + 0.5) / 10 ** d;
-export const SEG_UPSCALE_SIGMA = { latent: 0.4, rtx: 0.25, tiles: 0.6 };
+export const SEG_UPSCALE_SIGMA = { latent: 0.4, tiles: 0.6 };
 export const SEG_UPSCALE_SIGMA_RANGE = [0.1, 1.0];
 export const SEG_UPSCALE_SIGMA_OLD_TILES = 0.35;   // the tiles default before upscale_rev 4
-export const UPSCALE_REV = 4;
+export const UPSCALE_REV = 5;
+
+export function normalizeAccel(raw) {
+  const d = { attention: "kitchen", veda: false, veda_predictor: "", teacache: false, teacache_thresh: 0.15, compile: false, compile_backend: "inductor" };
+  raw = raw && typeof raw === "object" ? raw : {};
+  const att = String(raw.attention || d.attention).toLowerCase();
+  d.attention = ["kitchen", "sage", "flash", "pytorch"].includes(att) ? att : "kitchen";
+  d.veda = !!raw.veda; d.veda_predictor = String(raw.veda_predictor || "").slice(0, 300);
+  d.teacache = !!raw.teacache;
+  const thr = Number(raw.teacache_thresh); d.teacache_thresh = Math.round(Math.min(0.5, Math.max(0.05, Number.isFinite(thr) ? thr : 0.15)) * 1000) / 1000;
+  d.compile = !!raw.compile; d.compile_backend = raw.compile_backend === "cudagraphs" ? "cudagraphs" : "inductor";
+  return d;
+}
+
 // «Сила доработки» choices of the upscale profiles; RECOMMENDED marks the user-tested value of a method
 export const SEG_UPSCALE_SIGMA_CHOICES = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0];
 export const SEG_UPSCALE_SIGMA_RECOMMENDED = { tiles: 0.6 };
-export const RTX_QUALITIES = ["LOW", "MEDIUM", "HIGH", "ULTRA"];
-export const UPSCALE_LABELS = { latent: T("Латент + доработка"), rtx: T("RTX VSR → доработка"), tiles: T("Плитки (SyncTile)") };
+export const UPSCALE_LABELS = { latent: T("Окна (латент + доработка)"), tiles: T("Плитки (SyncTile)") };
 export function normalizeUpscale(u) {
-  if (!u || typeof u !== "object" || !SEG_UPSCALE_METHODS.includes(u.method)) return null;
+  if (!u || typeof u !== "object") return null;
+  // rev 5: RTX removed — migrate saved projects to tiles at σ 0.60
+  if (u.method === "rtx") { u = { ...u, method: "tiles", sigma: SEG_UPSCALE_SIGMA.tiles }; delete u.quality; }
+  if (!SEG_UPSCALE_METHODS.includes(u.method)) return null;
   const m = u.method;
   const sg = Math.round(Math.min(SEG_UPSCALE_SIGMA_RANGE[1], Math.max(SEG_UPSCALE_SIGMA_RANGE[0], num(u.sigma, SEG_UPSCALE_SIGMA[m]))) * 1000) / 1000;
   const mp = num(u.mp, 0);
   let out;
   if (mp > 0) out = { method: m, mp: roundHalf(Math.min(SEG_UPSCALE_MP_RANGE[1], Math.max(SEG_UPSCALE_MP_RANGE[0], mp)), 4), sigma: sg };
   else { const sc0 = num(u.scale, 2.0); out = { method: m, scale: SEG_UPSCALE_SCALES.reduce((a, b) => (Math.abs(b - sc0) < Math.abs(a - sc0) ? b : a)), sigma: sg }; }
-  if (m === "rtx") { const q = String(u.quality || "ULTRA").toUpperCase(); out.quality = RTX_QUALITIES.includes(q) ? q : "ULTRA"; }
   if (m === "tiles") {
     const t = u.tile;
     if (Array.isArray(t) && t.length === 2 && num(t[0], 0) > 0 && num(t[1], 0) > 0) out.tile = t.map((x) => Math.trunc(Math.min(TILE_PX_RANGE[1], Math.max(TILE_PX_RANGE[0], snap32(num(x, 0))))));
@@ -141,8 +156,8 @@ export function upscaleChunking(s, frames, method = null) {
   return [frames > cf + 34 ? chunkStarts(k, m, o).length : 1, cf, o];
 }
 // every upscale method keeps its own profile (mirror of h3s_core.normalize_upscale_profile & co)
-export const UPSCALE_CHUNK_DEFAULT = { latent: true, rtx: true, tiles: false };
-export const UPSCALE_UP_FIELDS = ["mp", "scale", "sigma", "quality", "tile", "tile_ov"];
+export const UPSCALE_CHUNK_DEFAULT = { latent: true, tiles: false };
+export const UPSCALE_UP_FIELDS = ["mp", "scale", "sigma", "tile", "tile_ov"];
 const pick = (o, keys) => { const r = {}; for (const k of keys) if (o && k in o) r[k] = o[k]; return r; };
 export function normalizeUpscaleProfile(m, p) {
   p = p && typeof p === "object" ? p : {};
@@ -213,9 +228,8 @@ export function upscalePassParams(project, index, method) {
   return p;
 }
 /** The segment's upscale applies: set and not a take frozen after its upscale (freeze.up). Footage as is too:
- *  its VAE-encoded frames go through the same mode; RTX VSR upscales the file's frames directly (no refine). */
+ *  its VAE-encoded frames go through the same latent/tiles mode + refine. */
 export const upscalable = (seg) => !!seg.upscale && !(seg.freeze && seg.freeze.up);
-export const footageDirect = (seg) => isFootage(seg) && seg.upscale?.method === "rtx";
 export const STAGE_KEYS = ["draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg"];
 export const RUN_KINDS = ["draft", "refine", "full"];
 /** «Настройки»: set-once settings shared by all projects (mirror of h3s_core.GLOBAL_KEYS). */
@@ -226,7 +240,7 @@ export const GLOBAL_KEYS = ["final_mode", "steps", "cfg", "denoise", "sampler", 
                "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "lock_overlap", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
-               "verbose_log"];
+               "verbose_log", "accel"];
 /** Refine-stage sampler / scheduler / cfg in the sigs — only when set (mirror of h3s_core.refine_extra). */
 export function refineExtra(s) { const x = [s.refine_sampler || "", s.refine_scheduler || "", Number(s.refine_cfg || 0)]; return x.some(Boolean) ? [["rx", ...x]] : []; }
 export const runKind = (s) => (s.quality === "draft" ? "draft" : s.final_mode === "refine" ? "refine" : "full");
@@ -307,7 +321,7 @@ export function normalizeAssistCfg(rc) {
     engine_defaults: rc.engine_defaults === true,
     show_reasoning: rc.show_reasoning !== false,
     stream_timeout: Math.trunc(Math.min(3600, Math.max(30, num(rc.stream_timeout, 600)))),
-    unload_on_generate: rc.unload_on_generate === true,
+    unload_on_generate: rc.unload_on_generate !== false,
     unload_endpoint: String(rc.unload_endpoint || "").slice(0, 500),
     auto_unload: rc.auto_unload === true,
     auto_unload_delay: Math.trunc(Math.min(86400, Math.max(0, num(rc.auto_unload_delay, 300)))),
@@ -491,7 +505,7 @@ export function normalizeProject(p) {
     st.refine_steps = Math.max(0, Math.min(200, Math.trunc(num(st.refine_steps, 0))));
     st.refine_sigma = Math.round(Math.max(REFINE_SIGMA_RANGE[0], Math.min(REFINE_SIGMA_RANGE[1], num(st.refine_sigma, 0.4))) * 100) / 100;
     st.upscale_method = UPSCALE_METHODS.includes(st.upscale_method) ? st.upscale_method : "learned";
-    const oldRev = num(p.settings && typeof p.settings === "object" ? p.settings.upscale_rev : 0, 0);   // as stored (the merged defaults already say 4)
+    const oldRev = num(p.settings && typeof p.settings === "object" ? p.settings.upscale_rev : 0, 0);   // as stored (the merged defaults already say 5)
     st.upscale_rev = UPSCALE_REV;
     st.seg_upscale = normalizeUpscale(st.seg_upscale) || normalizeUpscale({ method: "latent", scale: 2 });
     { const cs = num(st.upscale_chunk_sec, 5.0); st.upscale_chunk_sec = cs <= 0 ? 0 : roundHalf(Math.min(UPSCALE_CHUNK_SEC_RANGE[1], Math.max(UPSCALE_CHUNK_SEC_RANGE[0], cs)), 1);
@@ -499,6 +513,7 @@ export function normalizeProject(p) {
     normalizeUpscaleProfiles(st);
     st.upscale_gen = normalizeUpscaleGen(st.upscale_gen);
     st.upscale_model = String(st.upscale_model || "").slice(0, 300);
+    st.accel = normalizeAccel(st.accel);
     if (oldRev < 4) {   // rev 4: tiles default σ 0.35 -> 0.60; a profile still at the old default follows (picked values stay)
       const tp = st.upscale_profiles.tiles;
       if (Math.abs(tp.sigma - SEG_UPSCALE_SIGMA_OLD_TILES) < 1e-6) { tp.sigma = SEG_UPSCALE_SIGMA.tiles; st.seg_upscale = profileUpscale(st, st.seg_upscale.method); }

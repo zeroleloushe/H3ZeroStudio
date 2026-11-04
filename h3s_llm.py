@@ -144,21 +144,37 @@ def connect(base, api_key=""):
 
 
 def release_comfy_models(wait_timeout=600):
-    """Wait for the active H3 job, then free ComfyUI's models before an LLM request."""
-    from . import h3s_gen, h3s_models
+    """Wait for the active H3 job, then free ComfyUI's models before an LLM request.
+    Takes the VRAM arbiter as `llm` (mutual exclusion with generation)."""
+    from . import h3s_gen, h3s_models, h3s_vram
+    try:
+        h3s_vram.acquire("llm", wait_s=min(float(wait_timeout), h3s_vram.LOCK_WAIT_S), evict=True)
+    except h3s_vram.VramBusy as e:
+        raise ApiError(f"VRAM занята генерацией ({e.holder}) — подождите или остановите ролик") from e
     deadline = time.monotonic() + max(0.0, float(wait_timeout))
     while any(st.get("active") for st in list(h3s_gen.STATUS.values())):
         if time.monotonic() >= deadline:
+            h3s_vram.release("llm")
             raise ApiError("Видеогенерация не завершилась за отведённое время")
         time.sleep(0.5)
     h3s_models.release_all()
     import comfy.model_management as mm
     mm.unload_all_models()
     mm.soft_empty_cache()
-    return {"released": True}
+    return {"released": True, "vram": h3s_vram.status(), "mem": h3s_vram.memory_snapshot()}
+
+
+def release_llm_vram():
+    """Drop the LLM side of the VRAM arbiter (call when the chat stream ends)."""
+    try:
+        from . import h3s_vram
+        return h3s_vram.release("llm")
+    except Exception:
+        return None
 
 
 def unload(base, api_key="", api_model="", unload_endpoint=""):
+
     """Unload through the selected engine's native API (not part of OpenAI compatibility)."""
     model = str(api_model or "").strip()
     if not model:
@@ -299,18 +315,22 @@ def _finish(part):
     return ""
 
 
-def _stats(usage, finish, started, chars):
+def _stats(usage, finish, started, chars, first_token_at=None):
     if not usage and not finish:
         return None
     elapsed = max(0.001, time.monotonic() - started)
     completion = usage.get("completion") or (max(1, int(chars / 3.2)) if chars else 0)
-    return {"prompt": usage.get("prompt", 0), "completion": completion,
-            "tps": round(usage.get("tps") or completion / elapsed, 1), "elapsed": round(elapsed, 2), "finish": finish}
+    out = {"prompt": usage.get("prompt", 0), "completion": completion,
+           "tps": round(usage.get("tps") or completion / elapsed, 1), "elapsed": round(elapsed, 2), "finish": finish}
+    if first_token_at is not None:
+        out["ttft"] = round(max(0.0, first_token_at - started), 3)
+    return out
 
 
 def _stream_once(base, api_key, body, stream_timeout):
     started = time.monotonic()
     usage, finish, chars = {}, "", 0
+    first_token_at = None
     think = ThinkFilter(lambda text: side.append(text))
     side = []
     with _request(base, "/chat/completions", api_key, body, timeout=stream_timeout) as resp:
@@ -326,6 +346,8 @@ def _stream_once(base, api_key, body, stream_timeout):
             for thought in side:
                 yield "reasoning", thought
             if text:
+                if first_token_at is None:
+                    first_token_at = time.monotonic()
                 chars += len(text)
                 yield "token", text
             usage, finish = _usage(part), _finish(part)
@@ -350,6 +372,8 @@ def _stream_once(base, api_key, body, stream_timeout):
                     if thought:
                         yield "reasoning", thought
                 if text:
+                    if first_token_at is None:
+                        first_token_at = time.monotonic()
                     chars += len(text)
                     yield "token", text
                 usage.update(_usage(part))
@@ -360,9 +384,11 @@ def _stream_once(base, api_key, body, stream_timeout):
                 if thought:
                     yield "reasoning", thought
             if text:
+                if first_token_at is None:
+                    first_token_at = time.monotonic()
                 chars += len(text)
                 yield "token", text
-    stats = _stats(usage, finish, started, chars)
+    stats = _stats(usage, finish, started, chars, first_token_at)
     if stats:
         yield "stats", stats
 

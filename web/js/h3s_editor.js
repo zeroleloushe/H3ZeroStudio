@@ -2,6 +2,8 @@
 import * as C from "./h3s_core.js";
 import { injectStyle } from "./h3s_style.js";
 import { installTakes, installRestore } from "./h3s_takes.js";
+import { installGenMeta } from "./h3s_genmeta.js";
+import { loadPluginThemes, applyTheme } from "./h3s_theme.js";
 import { installMarkers } from "./h3s_markers.js";
 import { installAudio } from "./h3s_audio.js";
 import { installPolish } from "./h3s_polish.js";
@@ -149,6 +151,13 @@ export class H3Editor {
     this.timerSync?.();
     this.monitorStart?.();
     requestAnimationFrame(() => { if (this.root) { this.renderTimeline(); this.layoutStage(); } });
+    this.reattachInflight?.();
+    setTimeout(() => this.maybeShowWelcome?.(), 400);
+    (this.host.getRaw || this.host.get)?.("/h3zero/themes").then((data) => loadPluginThemes(() => data).then(({ warnings }) => {
+      if (warnings?.length) this.toast?.(T("Темы: {0}", warnings.slice(0, 2).join("; ")), true);
+      applyTheme(undefined, false);
+      if (this.tool === "settings" && this.root) this.renderLeft();
+    })).catch(() => {});
   }
 
   close() {
@@ -156,6 +165,7 @@ export class H3Editor {
     this.flushSave();
     this.stopPlayback();
     this.monitorStop?.();
+    this.disposeAssist?.();
     this.unbindGlobal();
     this.root.remove();
     this.root = null;
@@ -413,7 +423,6 @@ export class H3Editor {
     const history = h("div", { class: "h3z-head-group" }, undo, redo);
     const actions = h("div", { class: "h3z-head-group h3z-head-actions" },
       h("button", { class: "h3z-btn", html: ICON.broom + T("<span>Очистить память</span>"), title: T("Выгрузить все модели из видеопамяти и ОЗУ (ComfyUI освободит память после текущей задачи)"), onclick: (e) => this.freeMemory(e.currentTarget) }),
-      h("button", { class: "h3z-btn", html: "✨ " + T("<span>Ассистент</span>"), title: T("LLM-ассистент: чаты и пресеты промптов MiniMax H3 через API"), onclick: () => this.openAssist() }),
       ...action.filter(Boolean),
       h("button", { class: "h3z-btn icon", title: T("Свернуть (Esc)"), html: ICON.close, onclick: () => this.close() }));
     $.head.append(
@@ -461,9 +470,11 @@ export class H3Editor {
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
-    const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { this.tool = id; this.renderTools(); this.renderLeft(); } });
+    const tool = (id, icon, label) => h("div", { class: "h3z-tool" + (this.tool === id ? " on" : ""), html: icon + `<span>${label}</span>`, onclick: () => { if (id === "assist") this.openAssist(); else { this.tool = id; this.renderTools(); this.renderLeft(); } } });
     const social = (href, icon, label) => h("a", { class: "h3z-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
-    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")), h("div", { class: "sp" }),
+    t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")),
+      tool("assist", ICON.spark, T("Ассистент")),
+      h("div", { class: "sp" }),
       h("div", { class: "h3z-socials" }, social("https://www.youtube.com/@zeroleloushe", ICON.youtube, "YouTube"), social("https://github.com/zeroleloushe/H3ZeroStudio", ICON.github, "GitHub")),
       h("a", { class: "h3z-support", href: "https://boosty.to/zeroleloushe", target: "_blank", rel: "noopener noreferrer", title: "Boosty", "aria-label": "Boosty", html: ICON.heart + "<span>Boosty</span>" }),
       tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
@@ -475,7 +486,16 @@ export class H3Editor {
     const snap = this._leftTool === this.tool ? this.uiSnap(L) : null; this._leftTool = this.tool;
     L.innerHTML = "";
     L.closest(".h3z-body")?.classList.toggle("h3z-mtwide", this.tool === "models");
-    try { this.renderLeftTool(L); } finally { this._leftSnap = snap ? { snap, t: Date.now() } : null; if (snap) this.uiRestore(L, snap); }
+    try {
+      this.renderLeftTool(L);
+    } catch (e) {
+      console.error("[H3ZeroStudio] renderLeft", this.tool, e);
+      const msg = (e && (e.message || e.stack)) || String(e);
+      try {
+        L.append(h("div", { class: "h3z-ph" }, h("h3", null, T("Ошибка панели"))),
+          h("div", { class: "h3z-note err", style: { whiteSpace: "pre-wrap" } }, T("Не удалось отрисовать «{0}»: {1}", this.tool || "?", msg)));
+      } catch (_) { L.textContent = "render error: " + msg; }
+    } finally { this._leftSnap = snap ? { snap, t: Date.now() } : null; if (snap) this.uiRestore(L, snap); }
   }
   /** Async panels (gallery / projects lists) call this after filling, so the old scroll fits the new content. */
   leftRestore() {
@@ -521,6 +541,7 @@ export class H3Editor {
     if (this.tool === "settings") return this.renderSettings(L);
     if (this.tool === "help") return this.renderHelp(L);
     if (this.tool === "keys") return this.renderKeys(L);
+    if (this.tool === "assist") return this.renderAssistPanel(L);
     return this.renderAbout(L);
   }
 
@@ -692,33 +713,46 @@ export class H3Editor {
     return box;
   }
 
-  toggle(label, on, cb, title) {
-    const t = h("div", { class: "h3z-tog" + (on ? " on" : ""), title }, h("span", null, label), h("i"));
-    t.onclick = () => cb(!on);
+  toggle(label, on, cb, title, disabled = false) {
+    const t = h("div", { class: "h3z-tog" + (on ? " on" : "") + (disabled ? " off" : ""), title: title || "",
+      style: disabled ? { opacity: "0.55", pointerEvents: "none" } : null }, h("span", null, label), h("i"));
+    if (!disabled) t.onclick = () => cb(!on);
     return t;
   }
 
+  /** One themed inspector card (same shell as «Ролик»). */
+  inspCard(...kids) {
+    const card = h("div", { class: "h3z-card h3z-glass h3z-insp-block" });
+    for (const k of kids) if (k) card.append(k);
+    return card;
+  }
+
   segmentCard() {
+    // Split the old flat list into card blocks (same glass shell as «Ролик»), header stays on top.
     const i = this.sel, s = this.seg(), it = this.items()[i], pal = PALETTE[s.color % PALETTE.length];
-    const card = h("div", { class: "h3z-card h3z-glass" });
+    const frag = document.createDocumentFragment();
+
+    // —— header: name / colors / delete ——
     const name = h("input", { class: "h3z-in", value: s.name, placeholder: T("Отрезок {0}", i + 1), style: { padding: "6px 9px", fontWeight: 600 } });
     name.oninput = () => this.mutate((p) => { p.segments[i].name = name.value; }, { coalesce: "name" + s.id, render: "light" });
     const colors = h("div", { class: "h3z-colors" }, PALETTE.slice(0, 6).map((c, ci) => h("span", { class: s.color % PALETTE.length === ci ? "on" : "", style: { background: `linear-gradient(135deg,${c[0]},${c[1]})` }, onclick: () => this.mutate((p) => { p.segments[i].color = ci; }) })));
-    card.append(h("div", { class: "h3z-card-h" },
+    frag.append(this.inspCard(h("div", { class: "h3z-card-h" },
       h("span", { class: "h3z-num", style: { background: `linear-gradient(135deg,${pal[0]},${pal[1]})` } }, i + 1), name, colors,
-      h("button", { class: "h3z-btn sm icon danger", title: T("Удалить отрезок (Del)"), html: ICON.trash, onclick: () => this.deleteSeg(i) })));
-    // link
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Связь с предыдущим"), h("em", null, s.gap ? T("промежуток {0} кадр. — новая сцена", s.gap) : i === 0 ? T("первый отрезок") : s.link === "extend" ? (it.overlap ? T("перекрытие {0} кадр.", it.overlap) : T("только последний кадр")) : T("монтажная склейка"))),
+      h("button", { class: "h3z-btn sm icon danger", title: T("Удалить отрезок (Del)"), html: ICON.trash, onclick: () => this.deleteSeg(i) }))));
+
+    // —— 1) link + duration + resolution + seed ——
+    const basics = [];
+    basics.push(h("div", null, h("div", { class: "h3z-lbl" }, T("Связь с предыдущим"), h("em", null, s.gap ? T("промежуток {0} кадр. — новая сцена", s.gap) : i === 0 ? T("первый отрезок") : s.link === "extend" ? (it.overlap ? T("перекрытие {0} кадр.", it.overlap) : T("только последний кадр")) : T("монтажная склейка"))),
       h("div", { class: "h3z-pills" },
         h("div", { class: "h3z-pill" + (i > 0 && s.link === "extend" && !s.gap ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "extend"; p.segments[i].gap = 0; }), title: T("Продолжить предыдущий отрезок: перекрытие + последний кадр как референс") + (s.gap ? T(" (промежуток будет убран)") : "") }, T("⟶ Продление")),
         h("div", { class: "h3z-pill" + (i > 0 && (s.link === "cut" || s.gap) ? " on" : "") + (i === 0 ? " dis" : ""), onclick: () => this.mutate((p) => { p.segments[i].link = "cut"; }), title: T("Новая сцена без связи с предыдущим") }, T("✂ Новая сцена")))));
-    { const sq = this.seamQ(i); if (sq) card.append(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), T("Шов {0}→{1}: {2} · ×{3}", i, i + 1, SEAM_TXT[sq.verdict], sq.ratio) + (sq.raw ? T(" (без выравнивания ×{0})", sq.raw.ratio) : "")
+    { const sq = this.seamQ(i); if (sq) basics.push(h("div", { class: "h3z-seamv " + sq.verdict, title: this.seamTip(i, sq) }, h("b"), T("Шов {0}→{1}: {2} · ×{3}", i, i + 1, SEAM_TXT[sq.verdict], sq.ratio) + (sq.raw ? T(" (без выравнивания ×{0})", sq.raw.ratio) : "")
       + (sq.audio?.warn ? T(" · звук: скачок {0} дБ", sq.audio.db) : ""), sq.verdict !== "ok" || sq.audio?.warn ? h("em", { style: { opacity: .75 } }, T(" — «Ещё дубль» может дать ровнее")) : null)); }
     if (s.gap) {
       const gIn = h("input", { class: "h3z-in", type: "number", min: 0, max: C.MAX_GAP, value: s.gap || 0, style: { width: "84px", padding: "4px 8px" },
         title: T("Промежуток перед отрезком, кадров (24 = 1 с): чёрный кадр и тишина. перетаскивание клипа на таймлайне (магнит выключен) делает то же") });
       gIn.onchange = () => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+gIn.value || 0))); });
-      card.append(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, T("Промежуток перед отрезком")), gIn,
+      basics.push(h("div", { class: "h3z-row", style: { gap: "8px", alignItems: "center" } }, h("div", { class: "h3z-lbl", style: { margin: 0 } }, T("Промежуток перед отрезком")), gIn,
         h("em", { style: { opacity: .7, fontSize: "11px" } }, T("{0} с", (s.gap / C.FPS).toFixed(2))),
         h("button", { class: "h3z-btn sm", onclick: () => this.fillGapSpan(i), title: T("Участок ✂ поверх промежутка: генерация связки между сценами") }, T("✂ Заполнить")),
         h("button", { class: "h3z-btn sm", onclick: () => this.removeGap(i) }, T("✕ Убрать"))));
@@ -730,11 +764,10 @@ export class H3Editor {
         Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => h("option", { value: o, selected: s.overlap_blocks === o }, this.ovLabel(o))));
       ovS.onchange = () => this.setSegOverlap(i, Number(ovS.value));
       const want = C.wantedOverlap(this.p, i), fit = want > 0 && it.overlap < C.overlapFrames(want);
-      card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Перекрытие"), h("em", null, it.overlap ? T("сейчас {0} кадр. ≈ {1} с", it.overlap, (it.overlap / C.FPS).toFixed(2)) : T("нет"))), ovS,
+      basics.push(h("div", null, h("div", { class: "h3z-lbl" }, T("Перекрытие"), h("em", null, it.overlap ? T("сейчас {0} кадр. ≈ {1} с", it.overlap, (it.overlap / C.FPS).toFixed(2)) : T("нет"))), ovS,
         fit ? h("div", { class: "h3z-note err" }, T("Запрошено {0} кадр., помещается {1}: перекрытие должно быть короче обоих отрезков.", C.overlapFrames(want), it.overlap || 0)) : null));
     }
-    if (s.source) card.append(this.footageBlock(i));
-    // duration
+    if (s.source) basics.push(this.footageBlock(i));
     const kMin = Math.max(1, i > 0 && it.overlap ? (it.overlap - 5) / 17 + 1 : 1), kMax = (C.MAX_FRAMES - 5) / 17;
     const rng = h("input", { class: "h3z-range", type: "range", min: kMin, max: kMax, step: 1, value: (s.frames - 5) / 17 });
     const setP = () => rng.style.setProperty("--p", ((rng.value - kMin) / Math.max(1, kMax - kMin) * 100) + "%");
@@ -744,20 +777,22 @@ export class H3Editor {
     rng.onchange = () => this.renderInspector();
     const quick = h("div", { class: "h3z-qs" }, [3, 5, 8, 10, 12, 15].map((sec) => { const f = Math.max(C.snapFrames(sec * 24), 17 * kMin + 5); return h("span", { class: "h3z-q" + (f === s.frames ? " on" : ""), onclick: () => this.mutate((p) => { p.segments[i].frames = f; }), title: T("{0} кадров", f) }, sec + T(" с")); }));
     const rangeWarn = s.frames < C.TRAINED_MIN_FRAMES || s.frames > C.TRAINED_MAX_FRAMES;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Длительность"), h("em", { style: rangeWarn ? { color: "var(--warn)" } : null }, rangeWarn ? T("⚠ вне 124–362 кадров") : T("сетка H3: 17k+5"))), h("div", { class: "h3z-row" }, rng, val), h("div", { style: { marginTop: "8px" } }, quick)));
-    // the project canvas + base seed next to the duration (resolution moved up from the «Ролик» card)
-    card.append(this.resolutionBlock(), this.seedBlock());
-    // prompt
+    basics.push(h("div", null, h("div", { class: "h3z-lbl" }, T("Длительность"), h("em", { style: rangeWarn ? { color: "var(--warn)" } : null }, rangeWarn ? T("⚠ вне 124–362 кадров") : T("сетка H3: 17k+5"))), h("div", { class: "h3z-row" }, rng, val), h("div", { style: { marginTop: "8px" } }, quick)));
+    basics.push(this.resolutionBlock(), this.seedBlock());
+    frag.append(this.inspCard(...basics));
+
+    // —— 2) prompt ——
     const ta = h("textarea", { class: "h3z-ta lg", placeholder: T("Что происходит в этом отрезке: действие, камера, звук…  Ссылки на референсы — <Picture N> (клик по чипу вставит)."), spellcheck: "false" });
     ta.value = s.prompt;
     ta.oninput = () => this.mutate((p) => { p.segments[i].prompt = ta.value; }, { coalesce: "prompt" + s.id, render: "light" });
     this.$.segPrompt = ta;
     const segId = s.id;
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Промпт отрезка"),
+    frag.append(this.inspCard(h("div", null, h("div", { class: "h3z-lbl" }, T("Промпт отрезка"),
       this.peButton(() => { const k = this.p.segments.findIndex((x) => x.id === segId), sg = this.p.segments[k];
         return { title: T("Промпт отрезка {0}", k + 1) + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
-          apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }; })), ta));
-    // refs
+          apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }; })), ta)));
+
+    // —— 3) refs + characters ——
     const refs = C.orderedRefs(this.p, s);
     const box = h("div", { class: "h3z-refs" });
     refs.forEach((a, n) => {
@@ -789,16 +824,22 @@ export class H3Editor {
     box.addEventListener("dragleave", () => box.classList.remove("over"));
     box.addEventListener("drop", (e) => { e.preventDefault(); box.classList.remove("over"); const id = e.dataTransfer.getData("application/x-h3s-asset"); if (id) this.addRef(i, id); });
     const nRefs = refs.length + (cp ? 1 : 0);
-    card.append(h("div", null, h("div", { class: "h3z-lbl" }, T("Референсы"), h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, T("{0} / {1} карт.", nRefs, C.MAX_REF_IMAGES) + (nVid ? T(" · {0} / {1} видео", nVid, C.MAX_REF_VIDEOS) : "") + (arefs.length ? T(" · {0} / {1} аудио", arefs.length, C.MAX_REF_AUDIOS) : "") + T(" · порядок: персонажи, локации, другое"))), box));
-    { const cb = this.charChips({ seg: i }); if (cb) card.append(cb); }
-    card.append(this.statusLine(i));
-    card.append(this.takesBlock(i));
-    { const fb = this.finalBlock(i); if (fb) card.append(fb); }
-    card.append(this.upscaleBlock(i));
-    // everything rarely touched — under one shutter at the bottom
-    card.append(h("details", { class: "h3z-det" }, h("summary", null, T("Дополнительные настройки")),
-      h("div", { class: "in" }, ...[this.mpSegBlock(i), this.overridesBlock(i)].filter(Boolean))));
-    return card;
+    const refKids = [h("div", null, h("div", { class: "h3z-lbl" }, T("Референсы"), h("em", { style: nRefs > C.MAX_REF_IMAGES ? { color: "var(--err)" } : null }, T("{0} / {1} карт.", nRefs, C.MAX_REF_IMAGES) + (nVid ? T(" · {0} / {1} видео", nVid, C.MAX_REF_VIDEOS) : "") + (arefs.length ? T(" · {0} / {1} аудио", arefs.length, C.MAX_REF_AUDIOS) : "") + T(" · порядок: персонажи, локации, другое"))), box)];
+    { const cb = this.charChips({ seg: i }); if (cb) refKids.push(cb); }
+    frag.append(this.inspCard(...refKids));
+
+    // —— 4) status + takes + draft/final ——
+    const runKids = [this.statusLine(i), this.takesBlock(i)];
+    { const fb = this.finalBlock(i); if (fb) runKids.push(fb); }
+    frag.append(this.inspCard(...runKids));
+
+    // —— 5) upscale + extra settings ——
+    frag.append(this.inspCard(
+      this.upscaleBlock(i),
+      h("details", { class: "h3z-det" }, h("summary", null, T("Дополнительные настройки")),
+        h("div", { class: "in" }, ...[this.mpSegBlock(i), this.overridesBlock(i)].filter(Boolean)))));
+
+    return frag;
   }
 
   renderFinalPrompt() {
@@ -1674,13 +1715,15 @@ export class H3Editor {
       if (e.key === "Escape") { e.preventDefault(); this.monitorClose(); }
       return;
     }
-    if (this._ast) {
+    if (this.tool === "assist" || this._ast) {
       if (e.target?.matches?.(".h3z-ast-inputbox textarea") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         this.astSend();
       } else if (e.key === "Escape" && !isTyping(e)) {
         e.preventDefault();
-        if (this._ast.setOpen) { this._ast.setOpen = false; this.renderAssistSettings(); } else this.closeAssist();
+        if (this.$.menu) this.closeMenu();
+        else if (this._ast?.setOpen) { this._ast.setOpen = false; this._ast.styleDraft = null; this.renderLeft(); }
+        else if (this.tool === "assist") { this.tool = "settings"; this.renderTools(); this.renderLeft(); }
       }
       return;
     }   // window capture stops events before the assistant's own listeners, so route composer keys here
@@ -1713,7 +1756,9 @@ export class H3Editor {
     // kind: one stage for this run only (✎ Черновик / ✦ Чистовик of a clip, «↑ Финал»), the project mode stays
     if (region && !this.region(region)) region = "";
     // region: the whole project runs (cached clips are reused) and this «✂ Участок» is sampled anew
-    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, ...(audio ? { audio } : {}) };
+    const clientToken = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("ct" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+    try { sessionStorage.setItem("h3zs.inflight", JSON.stringify({ token: clientToken, project: this.p.id, t: Date.now() })); } catch (e) {}
+    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, client_token: clientToken, ...(audio ? { audio } : {}) };
     this.flushSave();
     this.pendingSigs = C.segmentSigs(this.p, this.p.run.kind || null);
     this.pendingRegionSig = Object.fromEntries((this.p.regions || []).map((r) => [r.id, C.regionSig(this.p, r, this.p.run.kind || null)]));
@@ -1768,6 +1813,23 @@ export class H3Editor {
   }
 
   /** Polling fallback: while a run is active, ask /h3zero/status every 1.5 s and apply what was missed. */
+  /** After Ctrl+F5: look up the client_token journal and resume /h3zero/status polling. */
+  async reattachInflight() {
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem("h3zs.inflight") || "null"); } catch (e) { saved = null; }
+    if (!saved?.token) return;
+    if (saved.project && saved.project !== this.p.id) return;
+    try {
+      const r = await this.host.get("/h3zero/inflight", { token: saved.token });
+      const hit = r?.inflight;
+      if (!hit?.node) return;
+      this.runNode = hit.node;
+      this.run = { active: true, queued: false, seg: -1, step: 0, steps: 0, done: 0, total: 0, eta: null };
+      this.startPolling();
+      this.toast(T("Прогресс восстановлен после перезагрузки"));
+    } catch (e) { /* no active run — fine */ }
+  }
+
   startPolling() {
     if (this._poll) return;
     this._poll = setInterval(() => { if (!this.run?.active) { clearInterval(this._poll); this._poll = null; return; } this.catchUp().catch(() => {}); }, 1500);
@@ -1812,8 +1874,26 @@ export class H3Editor {
     }
     if (["start", "sigmas", "step", "done"].includes(d.event)) this.dynEvent?.(d);
     if (d.event === "sigmas") return;
-    if (d.event === "start") this.run = { active: true, queued: false, seg: -1, segs: d.segments, cached: d.cached, total: d.steps_total, done: 0, step: 0, steps: 0, eta: null, kind: d.estimate?.kind || "full", phase: null };
-    else if (d.event === "phase") { Object.assign(r, { phase: d.phase, seg: d.seg, upInput: d.input || r.upInput, region: d.region || null, chunk: d.chunk || r.chunk, chunks: d.chunks || r.chunks }); if (d.phase !== "upscale") this.tileOverlay(null); this.updateRunUI?.(); return; }
+    if (d.event === "start") { this._stretchToast = false; this._lastWarn = null; this.run = { active: true, queued: false, seg: -1, segs: d.segments, cached: d.cached, total: d.steps_total, done: 0, step: 0, steps: 0, eta: null, kind: d.estimate?.kind || "full", phase: null }; }
+    else if (d.event === "warn") {
+      let msg = d.msg || d.message || "";
+      // stretch fallback: one i18n toast (RU/EN), mark so the phase handler does not repeat it
+      if (d.kind === "upscale_stretch") {
+        msg = T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.");
+        this._stretchToast = true;
+      }
+      if (msg && this._lastWarn !== msg) { this._lastWarn = msg; this.toast(msg, true); }
+      return;
+    }
+    else if (d.event === "phase") {
+      Object.assign(r, { phase: d.phase, seg: d.seg, upInput: d.input || r.upInput, region: d.region || null, chunk: d.chunk || r.chunk, chunks: d.chunks || r.chunks });
+      if (d.phase !== "upscale") this.tileOverlay(null);
+      if (d.input === "stretch" && !this._stretchToast) {
+        this._stretchToast = true;
+        this.toast(T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models."), true);
+      }
+      this.updateRunUI?.(); return;
+    }
     else if (d.event === "uptile") {   // tiled / windowed upscale: every crop evaluation
       Object.assign(r, { active: true, queued: false, seg: d.seg, phase: "upscale", up: d, step: d.step - 1, steps: d.steps, done: d.done, total: d.total || r.total, elapsed: d.elapsed, segCached: false });
       this.tileOverlay(d); this.updateRunUI?.(); return;
@@ -1833,6 +1913,7 @@ export class H3Editor {
       this.applyRegionResults(d.regions);
       this.applyFull(d.full, d.segments, d.elapsed, d.audio_source);
       this.run = { active: false };
+      try { sessionStorage.removeItem("h3zs.inflight"); } catch (e) {}
       this.hideLive(); this.tileOverlay(null);
       if (this.root) { this.renderAll(); this.toast(d.full?.partial ? T("Готово за {0} · следующие отрезки помечены «изменён»", C.fmtDur(d.elapsed)) : T("Готово за {0}", C.fmtDur(d.elapsed))); }
       this.host.onChange?.(this.p);
@@ -1911,7 +1992,7 @@ export class H3Editor {
       const frac = r.total ? Math.min(1, ((r.done || 0) + (u && u.tile ? u.tile / u.tiles : 0)) / r.total) : 0;
       $.runPill.querySelector("i").style.width = (frac * 100).toFixed(1) + "%";
       const pct = Math.round(frac * 100), eta = r.eta != null && r.done ? C.fmtTime(r.eta).replace(/\.\d+$/, "") : "";
-      const inLbl = { learned: T("обученный апскейлер"), rtx: "RTX VSR" }[r.upInput] || r.upInput || "";
+      const inLbl = { learned: T("обученный апскейлер"), stretch: T("растяжение латента"), resize: T("уменьшение (VAE)") }[r.upInput] || r.upInput || "";
       const chk = (c, n) => (n > 1 ? T(" · кусок {0}/{1}", c, n) : "");
       const rn = r.region ? this.regionNo(r.region) : 0;
       const txt = r.queued ? T("В очереди ComfyUI…") : r.seg < 0 ? T("Подготовка…") :
@@ -1950,6 +2031,7 @@ export class H3Editor {
   }
 }
 
+installGenMeta(H3Editor, { C, h, ICON });
 installTakes(H3Editor, { C, h, ICON, PALETTE });
 installRestore(H3Editor, { C, h });
 installMarkers(H3Editor, { C, h, ICON, PALETTE });

@@ -1,0 +1,14 @@
+{
+  "id": "editorial",
+  "name": "📰 Editorial",
+  "description": "Эстетика журнальной и редакционной фотографии: выверенная композиция, стильная подача, выразительный контраст и аккуратное пространство в кадре.",
+  "instructions": [
+    "High-end editorial visual language. Carefully composed visual hierarchy, refined styling, sophisticated contrast and intentional negative space. Premium fashion and magazine photography sensibility."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Арт",
+  "icon": "sparkles",
+  "tone": "violet",
+  "custom": true
+}

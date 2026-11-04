@@ -1,0 +1,14 @@
+{
+  "id": "dolly_push",
+  "name": "🎞️ Slow Dolly Push-In",
+  "description": "Плавное кинематографичное приближение камеры к объекту с естественным параллаксом, усиливающее ощущение близости и вовлечённости.",
+  "instructions": [
+    "Slow controlled cinematic dolly movement toward the subject. Smooth forward camera travel with realistic physical inertia and subtle parallax between foreground and background. No random shake or digital floating. The movement gradually increases visual intimacy while maintaining stable composition."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Камера и композиция",
+  "icon": "camera",
+  "tone": "indigo",
+  "custom": true
+}

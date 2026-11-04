@@ -39,5 +39,20 @@ def fake_learned_upscaler(monkeypatch):
     monkeypatch.setattr(up, "learned_upscale", fake)
     monkeypatch.setattr(up, "learned_models", lambda: ["minimax_h3_latent_upscaler_3d_bf16.safetensors"])
     monkeypatch.setattr(up, "learned_node", lambda: object)
-    monkeypatch.setattr(up, "rtx_available", lambda: False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def clear_vram_lock():
+    """VRAM arbiter is process-global; a failed/hung test must not poison the next."""
+    try:
+        from h3s import h3s_vram as vram
+        vram.release()
+    except Exception:
+        pass
+    yield
+    try:
+        from h3s import h3s_vram as vram
+        vram.release()
+    except Exception:
+        pass

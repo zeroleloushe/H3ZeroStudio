@@ -44,3 +44,7 @@ input/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# user-installed drop-in UI themes (survive outside the node via ComfyUI user dir)
+themes_user/
+node_modules/

@@ -1,0 +1,14 @@
+{
+  "id": "gimbal_smooth",
+  "name": "🎬 Gimbal / Smooth Tracking",
+  "description": "Стабильное плавное движение камеры, словно на электронном стабилизаторе: мягкие разгоны, точное сопровождение и минимум тряски.",
+  "instructions": [
+    "Highly stabilized gimbal camera movement. Smooth controlled tracking with gentle acceleration and deceleration, subtle operator inertia and precise framing. Minimal shake, natural parallax and realistic motion blur. Focus changes are smooth and deliberate. Premium digital cinema image with clean detail and natural lens behavior."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Камера и композиция",
+  "icon": "camera",
+  "tone": "violet",
+  "custom": true
+}

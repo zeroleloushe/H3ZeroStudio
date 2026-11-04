@@ -1,0 +1,14 @@
+{
+  "id": "weathered_surfaces",
+  "name": "🪨 Weathered Materials",
+  "description": "Добавляет материалам правдоподобные следы времени: потёртости, сколы, пятна, вмятины и естественный износ.",
+  "instructions": [
+    "Detailed weathered surfaces with realistic scratches, dents, stains, wear patterns, chipped edges and material aging. Imperfections should follow believable physical causes."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "brown",
+  "custom": true
+}

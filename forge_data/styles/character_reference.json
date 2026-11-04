@@ -1,0 +1,14 @@
+{
+  "id": "character_reference",
+  "name": "👤 Character Reference",
+  "description": "Помогает сохранить идентичность персонажа по референсу: лицо, причёску, пропорции тела, одежду и отличительные черты.",
+  "instructions": [
+    "Use the supplied character reference as the primary identity anchor. Preserve facial structure, hairstyle, body proportions, clothing design and distinctive features consistently."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "teal",
+  "custom": true
+}

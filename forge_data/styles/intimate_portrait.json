@@ -1,0 +1,14 @@
+{
+  "id": "intimate_portrait",
+  "name": "🧑 Intimate Portrait",
+  "description": "Камерный портрет с естественной мимикой, тонкими движениями глаз и детальной кожей, подчёркивающий эмоциональную близость персонажа.",
+  "instructions": [
+    "Intimate character-focused presentation. Natural facial expression, subtle eye movement, realistic skin pores and fine hair detail. Soft believable posture and restrained expression. Prioritize emotional readability and consistent identity."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Персонаж",
+  "icon": "sparkles",
+  "tone": "rose",
+  "custom": true
+}

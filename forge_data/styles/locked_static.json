@@ -1,0 +1,14 @@
+{
+  "id": "locked_static",
+  "name": "📐 Locked / Static Composition",
+  "description": "Статичная съёмка с неподвижной камерой и фиксированной композицией; движение происходит только внутри кадра.",
+  "instructions": [
+    "Locked-off camera on a stable tripod. No intentional camera movement, no handheld shake and no artificial floating motion. Precise stable framing with natural subject movement inside the frame. Fixed perspective, consistent focus and exposure, realistic optical characteristics."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Камера и композиция",
+  "icon": "camera",
+  "tone": "slate",
+  "custom": true
+}

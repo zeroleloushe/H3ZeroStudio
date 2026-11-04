@@ -4,10 +4,9 @@ Inputs (how the upscaled start latent is made):
   * learned H3 latent upscaler (default): the "Minimax H3 Latent Upscaler (3D)" node (LBH-123-AI,
     Comfyui_Minimax_h3_latent_Upscaler) with a model from models/latent_upscale_models. It is only *called*
     at runtime (MIT-licensed repo; no code is copied). Fast: no VAE decode/encode.
-  * RTX Video Super Resolution (NVIDIA Maxine, `nvidia-vfx` = the backend of Comfy-Org's comfyui_nvidia_rtx_nodes,
-    Apache-2.0) on the decoded frames, then VAE encode. Optional quality method and the automatic fallback
-    when the learned model is missing.
-  * VAE decode -> Lanczos -> encode, only when neither is available.
+  * (RTX VSR was removed: projects that used it migrate to tiles σ 0.60.)
+  * If the learned upscaler node/model is missing: spatial trilinear stretch of the latent
+    (temporal length unchanged), then the usual refine — faster/lighter, lower quality; the UI warns.
 
 Refine engine: one sampling pass from a low start sigma over the upscaled latent. Long or large canvases are cut
 into synchronized crops evaluated on every model call and ramp-blended (latent space) into one prediction:
@@ -21,7 +20,7 @@ into synchronized crops evaluated on every model call and ramp-blended (latent s
 Temporal chunks (sequential mode, logic of the author's ComfyUI-H3-WindowedRefine): a clip longer than the chunk
 length («Настройки → Апскейл»: ≈ seconds, snapped to 17k+5 frames) is processed piece by piece — each chunk is
 5m+2 latent frames starting at a block boundary, gets its own upscale input (learned upscaler on the latent slice, or
-RTX VSR on its frames -> VAE encode) and its own refine pass (with spatial tiles inside when the method is «Плитки»).
+VAE encode of its frames) and its own refine pass (with spatial tiles inside when the method is «Плитки»).
 Neighbouring chunks overlap by >= 5o+2 latent frames; the overlap of a chunk is the previous chunk's refined result,
 kept clean (video denoise mask 0 + x0 lock), so the chunk continues it exactly like an extension; the decode
 crossfades the overlap frames. VRAM is freed between chunks, so the peak is one chunk instead of the whole clip.
@@ -45,7 +44,6 @@ FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
 LEARNED_NODE = "MinimaxH3LatentUpscaler3D"
 LEARNED_FOLDER = "latent_upscale_models"
 OFFICIAL_TOKENS = 37 * (768 // 32) * (1344 // 32)   # 1344x768, 124 frames: the token count H3 is made for
-RTX_DEVICE = "cuda"
 MIN_WINDOW_BLOCKS = 7                               # 37 latent frames (124 px frames): shorter windows lose context
 
 
@@ -75,38 +73,34 @@ def learned_node():
         return None
 
 
-def rtx_available():
-    try:
-        import nvvfx  # noqa: F401
-        return torch.cuda.is_available()
-    except Exception:
-        return False
-
-
 def capabilities():
     models = learned_models()
     node = learned_node() is not None
-    return {"learned": bool(models and node), "learned_models": models, "learned_node": node, "rtx": rtx_available()}
+    learned = bool(models and node)
+    return {"learned": learned, "learned_models": models, "learned_node": node,
+            "stretch": True,   # always available: spatial trilinear when learned is missing
+            "input": "learned" if learned else "stretch"}
 
 
-UNAVAILABLE = ("Апскейл недоступен: нет ни обученного латентного апскейлера H3 (нода MinimaxH3LatentUpscaler3D + модель "
-               "minimax_h3_latent_upscaler_3d_bf16.safetensors в models/latent_upscale_models), ни RTX VSR (пакет nvidia-vfx, "
-               "видеокарта NVIDIA RTX). Установите одно из них и перезапустите ComfyUI.")
+# Legacy hard-fail text (kept for older callers); stretch is the real path now.
+UNAVAILABLE = ("Апскейл недоступен: нет обученного латентного апскейлера H3 (нода MinimaxH3LatentUpscaler3D + модель "
+               "minimax_h3_latent_upscaler_3d_bf16.safetensors в models/latent_upscale_models). "
+               "Установите ноду и модель и перезапустите ComfyUI.")
+# Soft fallback when the learned upscaler is missing: stretch the latent, then refine (+ UI toast).
+STRETCH_WARN = ("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. "
+                "Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.")
 
 
 class UpscaleUnavailable(RuntimeError):
-    pass
+    """Deprecated: missing learned upscaler now stretches the latent instead of aborting."""
 
 
 def effective_input(method):
-    """What really produces the start latent: "learned" | "rtx" | None (neither available).
-    "rtx" prefers RTX VSR, anything else the learned upscaler; each falls back to the other."""
+    """What really produces the start latent: "learned" | "stretch" | None."""
     caps = capabilities()
-    order = ("rtx", "learned") if method == "rtx" else ("learned", "rtx")
-    for m in order:
-        if caps[m]:
-            return m
-    return None
+    if caps["learned"]:
+        return "learned"
+    return "stretch"   # no silent failure: spatial interpolate, then refine
 
 
 def env_tag(method, model=None):
@@ -115,6 +109,8 @@ def env_tag(method, model=None):
     eff = effective_input(method)
     if eff == "learned":
         return "learned:" + picked_learned_model(model)
+    if eff == "stretch":
+        return "stretch"
     return eff or "none"
 
 
@@ -322,45 +318,22 @@ def center_crop_to_aspect(frames, w, h):
     return frames[:, y:y + ch, x:x + cw]
 
 
-def rtx_frames(frames, w, h, quality="ULTRA"):
-    """[F,H,W,3] float 0..1 -> [F,h,w,3] with NVIDIA RTX Video Super Resolution; None when unavailable.
-    Same behaviour as the user's reference (KJNodes «Resize Image v2», upscale_method nvidia_rtx_vsr,
-    keep_proportion crop, crop_position center, divisible_by 0, device gpu; reimplemented, not copied):
-    centre crop to the target aspect, nvvfx.VideoSuperRes(QualityLevel.ULTRA by default), output size rounded to
-    the nearest multiple of 8, each frame CHW float32 on CUDA, the result taken as is (no clamping)."""
-    if not rtx_available():
-        return None
-    try:
-        import nvvfx
-        q = getattr(nvvfx.effects.QualityLevel, str(quality or "ULTRA").upper(), nvvfx.effects.QualityLevel.ULTRA)
-        w8, h8 = max(8, round(int(w) / 8) * 8), max(8, round(int(h) / 8) * 8)
-        src = center_crop_to_aspect(frames[..., :3], w, h)
-        out = []
-        with nvvfx.VideoSuperRes(q) as sr:
-            sr.output_width, sr.output_height = w8, h8
-            sr.load()
-            for f in src:
-                comfy.model_management.throw_exception_if_processing_interrupted()
-                inp = f.movedim(-1, 0).to(RTX_DEVICE, torch.float32).contiguous()
-                o = torch.from_dlpack(sr.run(inp).image).clone()
-                out.append(o.movedim(0, -1)[..., :3].float().cpu())
-        px = torch.stack(out)
-        if (w8, h8) != (w, h):
-            from .h3s_gen import _resize
-            px = _resize(px, w, h)
-        log(f"  RTX VSR ({str(quality).upper()}): {frames.shape[0]} frames {frames.shape[2]}x{frames.shape[1]}"
-            + (f" (centre crop {src.shape[2]}x{src.shape[1]})" if src.shape[1:3] != frames.shape[1:3] else "") + f" -> {w}x{h}")
-        return px
-    except Exception as e:
-        log(f"  RTX VSR failed ({e}) -> fallback")
-        return None
+
+def latent_stretch(v, w, h):
+    """Spatial trilinear resize of a video latent to canvas w×h; temporal length unchanged.
+    Used when the learned H3 latent upscaler is missing — lighter VRAM, lower quality."""
+    th, tw = max(1, h // 16), max(1, w // 16)
+    if tuple(v.shape[-2:]) == (th, tw):
+        return v.float().cpu()
+    z = torch.nn.functional.interpolate(v.float(), size=(v.shape[2], th, tw), mode="trilinear", align_corners=False)
+    return z.float().cpu()
 
 
-def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA", model=None):
-    """Upscaled start latent: the learned H3 latent upscaler (default) or RTX VSR -> VAE encode ("rtx"), each
-    falling back to the other. Neither available -> UpscaleUnavailable with a clear message (no silent
-    nearest-exact / Lanczos result). model: which learned upscaler file (settings.upscale_model, "" = the first).
-    Returns (latent [1,24,T,h/16,w/16] CPU, used input)."""
+def upscale_input(vae, v, w, h, method="learned", frames=None, quality=None, model=None):
+    """Upscaled start latent via the learned H3 latent upscaler.
+    Missing model/node (or a failed run) -> spatial trilinear stretch of the latent, then the caller refines
+    (no hard abort). model: settings.upscale_model ("" = the first found).
+    `quality` is ignored (legacy RTX arg). Returns (latent [1,24,T,h/16,w/16] CPU, used input)."""
     from .h3s_gen import decode_video, _resize
     if tuple(v.shape[-2:]) == (h // 16, w // 16):
         return v.float().cpu(), "none"
@@ -369,25 +342,18 @@ def upscale_input(vae, v, w, h, method="learned", frames=None, quality="ULTRA", 
         if frames is None:
             frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
         return vae.encode(_resize(frames, w, h)).float().cpu(), "resize"
-    order = [m for m in (("rtx", "learned") if method == "rtx" else ("learned", "rtx")) if m != "rtx" or rtx_available()]
-    if not order or (order == ["learned"] and (learned_node() is None or not learned_models())):
-        raise UpscaleUnavailable(UNAVAILABLE)
+    if learned_node() is None or not learned_models():
+        log("  no learned latent upscaler -> spatial trilinear stretch (quality lower)")
+        return latent_stretch(v, w, h), "stretch"
     # VRAM handoff: the H3 model (+ CLIP, LoRA clones) leaves the GPU for the upscaler, the upscaler leaves it
     # before the refine / the next sampling brings H3 back (lazily, from RAM: ComfyUI loads it on sampling)
     handoff("unload H3 -> upscaler")
     try:
-        for m in order:
-            if m == "learned":
-                z = learned_upscale(v, w, h, model)
-                if z is not None:
-                    return z, "learned"
-            else:
-                if frames is None:
-                    frames = decode_video(vae, v.to(comfy.model_management.intermediate_device()))
-                px = rtx_frames(frames, w, h, quality)
-                if px is not None:
-                    return vae.encode(px).float().cpu(), "rtx"
-        raise UpscaleUnavailable(UNAVAILABLE)
+        z = learned_upscale(v, w, h, model)
+        if z is not None:
+            return z, "learned"
+        log("  learned latent upscaler failed -> spatial trilinear stretch (quality lower)")
+        return latent_stretch(v, w, h), "stretch"
     finally:
         handoff("unload upscaler -> reload H3 (on the next sampling)")
 
@@ -761,7 +727,7 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     bw, bh = v.shape[-1] * 16, v.shape[-2] * 16
     W, H = core.upscale_canvas(bw, bh, up)
     method = up["method"]
-    want = "rtx" if method == "rtx" else "learned"
+    want = "learned"
     T, A = v.shape[2], a.shape[-1]
     chunks = chunk_plan(s, T, A, method)
     nch = len(chunks)

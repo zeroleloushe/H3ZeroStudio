@@ -1,0 +1,14 @@
+{
+  "id": "overcast_soft",
+  "name": "☁️ Overcast Soft Light",
+  "description": "Мягкий рассеянный свет пасмурного дня с нежными тенями, приглушёнными бликами и естественными нейтральными цветами.",
+  "instructions": [
+    "Large diffuse overcast sky illumination. Very soft shadows, broad natural fill, muted highlights and smooth tonal transitions. Neutral realistic color with gentle atmospheric depth."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "blue",
+  "custom": true
+}

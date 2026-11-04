@@ -1,0 +1,14 @@
+{
+  "id": "neon_night",
+  "name": "🌃 Neon Night",
+  "description": "Ночная городская атмосфера с яркими неоновыми источниками, цветными отражениями, глубокими тенями и мягким свечением.",
+  "instructions": [
+    "Nighttime urban lighting with colored practical neon sources. Mixed cool and warm illumination, realistic colored reflections on skin and surfaces, deep shadows with controlled detail and subtle atmospheric glow."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "violet",
+  "custom": true
+}

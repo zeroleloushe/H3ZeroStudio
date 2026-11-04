@@ -1,0 +1,14 @@
+{
+  "id": "35mm_film",
+  "name": "🎞️ 35mm Film",
+  "description": "Эстетика киноплёнки 35 мм: мягкое зерно, естественные цвета и плавные световые переходы для классического кинообраза.",
+  "instructions": [
+    "Authentic 35mm film aesthetic with organic photographic texture. Gentle film grain, subtle halation around bright highlights, natural contrast roll-off, soft highlight transitions and mild lens imperfections. Rich color separation, realistic depth of field and natural motion blur."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Кинематографичный",
+  "icon": "clapperboard",
+  "tone": "amber",
+  "custom": true
+}

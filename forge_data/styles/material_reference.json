@@ -1,0 +1,14 @@
+{
+  "id": "material_reference",
+  "name": "🧱 Material Reference",
+  "description": "Переносит с референса свойства материала: фактуру, шероховатость, отражения, прозрачность, износ и характер цвета.",
+  "instructions": [
+    "Use the supplied reference to guide material appearance and surface behavior. Preserve relevant texture, roughness, reflectivity, translucency, wear and color relationships."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "amber",
+  "custom": true
+}

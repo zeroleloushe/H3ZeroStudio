@@ -86,7 +86,7 @@ PROJECTS = [
     # «Апскейл отрезка»: normalization, keys only where an upscale applies, legacy draft->final upscaler migration
     {"settings": {"upscale_method": "vae"},
      "assets": [{"id": "v", "file": "v.mp4", "category": "video"}],
-     "segments": [{"frames": 124, "upscale": {"method": "rtx", "scale": "1.4", "sigma": 0.01, "quality": "high"}, "approved": 1},
+     "segments": [{"frames": 124, "upscale": {"method": "tiles", "scale": "1.4", "sigma": 0.01, "quality": "high"}, "approved": 1},
                   {"frames": 124, "upscale": {"method": "tiles", "scale": 3}},
                   {"frames": 124, "upscale": {"method": "latent", "sigma": "0.5"}, "link": "cut"},
                   {"frames": 124, "upscale": {"method": "zz"}},
@@ -100,7 +100,7 @@ PROJECTS = [
                   {"frames": 124, "upscale": {"method": "latent", "tile": [512, 512], "tile_ov": 8}}]},
     # stage parameters, per-run kind, settings scope
     {"settings": {"final_mode": "refine", "draft_sampler": "euler", "draft_cfg": "2.5", "refine_scheduler": "simple", "refine_cfg": 99, "settings_scope": "global",
-                  "seg_upscale": {"method": "rtx", "scale": 1.5}},
+                  "seg_upscale": {"method": "tiles", "scale": 1.5}},
      "run": {"upto": 1, "only": 1, "kind": "draft"}, "segments": [{"frames": 124, "upscale": {"method": "latent"}}, {"frames": 124}]},
     {"settings": {"draft_scheduler": 5, "refine_sampler": None, "settings_scope": "x"}, "run": {"kind": "zz"}, "segments": [{"frames": 124}]},
     # «✂ Участок»: regions (normalization, windows on the scene grid, cuts / footage / scene end)
@@ -112,12 +112,12 @@ PROJECTS = [
      "segments": [{"frames": 124}, {"frames": 124}, {"frames": 90, "link": "cut"}, {"frames": 124, "source": {"asset": "v"}}, {"frames": 158}]},
     {"run": {"region": 5}, "regions": "bad", "segments": [{"frames": 56}]},
     # upscale: legacy multipliers migrate to mp (same canvas), mp targets, chunk settings
-    {"settings": {"aspect": "16:9", "megapixels": 1.0, "seg_upscale": {"method": "rtx", "scale": 1.4}, "upscale_chunk_sec": 3.25, "upscale_chunk_overlap": 9},
+    {"settings": {"aspect": "16:9", "megapixels": 1.0, "seg_upscale": {"method": "tiles", "scale": 1.4}, "upscale_chunk_sec": 3.25, "upscale_chunk_overlap": 9},
      "segments": [{"frames": 362, "upscale": {"method": "latent", "scale": 2}}, {"frames": 158, "upscale": {"method": "tiles", "mp": 3.33333, "tile_ov": 7}},
-                  {"frames": 124, "upscale": {"method": "latent", "mp": "0.1"}}, {"frames": 600, "upscale": {"method": "rtx", "mp": 99, "quality": "low"}}]},
+                  {"frames": 124, "upscale": {"method": "latent", "mp": "0.1"}}, {"frames": 600, "upscale": {"method": "tiles", "mp": 99, "quality": "low"}}]},
     {"settings": {"upscale_chunk_sec": 0, "seg_upscale": {"method": "latent", "mp": 2.5}}, "segments": [{"frames": 600, "upscale": {"method": "latent", "mp": 2.5}}]},
     # per-method upscale profiles (own σ / steps / sampler / chunks) + legacy flat chunk keys still present
-    {"segments": [{"id": "a", "frames": 124, "prompt": "x", "upscale": {"method": "rtx", "mp": 2}}],
+    {"segments": [{"id": "a", "frames": 124, "prompt": "x", "upscale": {"method": "tiles", "mp": 2}}],
      "settings": {"seg_upscale": {"method": "latent", "mp": 2, "sigma": 0.25}, "upscale_chunk_sec": 4, "upscale_chunk_overlap": 2,
                   "upscale_profiles": {"latent": {"sigma": 0.25, "steps": 6, "chunk": True, "chunk_sec": 3},
                                        "rtx": {"quality": "HIGH", "sigma": 0.2, "sampler": "euler", "scheduler": "simple", "chunk": False},
@@ -189,8 +189,8 @@ JS_DRIVER = textwrap.dedent("""
                ucv: p.segments.map((s) => (s.upscale ? C.upscaleCanvas(...C.workResolution(p.settings), s.upscale) : null)),
                rwin: p.regions.map((r) => C.regionWindow(p, r)), chains: C.sceneChains(C.plan(p)),
                chunks: [39, 124, 141, 158, 175, 226, 362, 600, 957].map((f) => C.upscaleChunking(p.settings, f)),
-               mchunks: ["latent", "rtx", "tiles"].map((m) => [124, 362, 957].map((f) => C.upscaleChunking(p.settings, f, m))),
-               upp: ["latent", "rtx", "tiles"].map((m) => p.segments.map((s, i) => C.upscalePassParams(p, i, m))),
+               mchunks: ["latent", "tiles"].map((m) => [124, 362, 957].map((f) => C.upscaleChunking(p.settings, f, m))),
+               upp: ["latent", "tiles"].map((m) => p.segments.map((s, i) => C.upscalePassParams(p, i, m))),
                mpsc: [[960, 544], [1344, 768], [832, 480], [1280, 720]].map(([w, hh]) => [C.mpForScale(w, hh, 1.5), C.mpForScale(w, hh, 2), C.upscaleCanvas(w, hh, { mp: 3 })]),
                keyform: p.segments.map((s) => C.upscaleKeyForm(s.upscale, ...C.workResolution(p.settings))) };
     });
@@ -241,8 +241,8 @@ def test_core_parity(h3s, tmp_path):
         assert json.loads(json.dumps([core.region_window(p, r) for r in p["regions"]])) == j["rwin"]
         assert [list(c) for c in core.scene_chains(core.plan(p))] == j["chains"]
         assert [list(core.upscale_chunking(p["settings"], f)) for f in (39, 124, 141, 158, 175, 226, 362, 600, 957)] == j["chunks"]
-        assert [[list(core.upscale_chunking(p["settings"], f, m)) for f in (124, 362, 957)] for m in ("latent", "rtx", "tiles")] == j["mchunks"]
-        assert [[core.upscale_pass_params(p, i, m) for i in range(len(p["segments"]))] for m in ("latent", "rtx", "tiles")] == j["upp"]
+        assert [[list(core.upscale_chunking(p["settings"], f, m)) for f in (124, 362, 957)] for m in ("latent", "tiles")] == j["mchunks"]
+        assert [[core.upscale_pass_params(p, i, m) for i in range(len(p["segments"]))] for m in ("latent", "tiles")] == j["upp"]
         assert [[core.mp_for_scale(w, hh, 1.5), core.mp_for_scale(w, hh, 2), list(core.upscale_canvas(w, hh, {"mp": 3}))]
                 for w, hh in ((960, 544), (1344, 768), (832, 480), (1280, 720))] == j["mpsc"]
         assert [core.upscale_key_form(s["upscale"], *core.work_resolution(p["settings"])) for s in p["segments"]] == j["keyform"]
@@ -335,7 +335,7 @@ def test_monitor_frontend_polling_and_history(tmp_path):
     assert out["path"] == "/h3zero/monitor" and out["bytes"] == "2.0 ГБ"
     assert out["path0"] == "M0.0,100.0 L320.0,50.0 L640.0,0.0"
     src = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
-    assert 'class: "h3z-head-meta"' in src and "this.timerEl(), this.monitorEl()" in src
+    assert "this.timerEl(), this.monitorEl()" in src
     assert "this.monitorStop?.();" in src and "this.monitorRun?.();" in src
 
 
@@ -452,6 +452,9 @@ def test_assistant_llm(h3s):
     assert core.normalize_assistant({})["cfg"]["max_tokens"] == 16000
     memory = core.normalize_assistant({"cfg": {"engine_defaults": True, "unload_on_generate": True}})["cfg"]
     assert memory["engine_defaults"] is True and memory["unload_on_generate"] is True
+    defaults = core.normalize_assistant({"cfg": {}})["cfg"]
+    assert defaults["unload_on_generate"] is True
+    assert core.normalize_assistant({"cfg": {"unload_on_generate": False}})["cfg"]["unload_on_generate"] is False
     thinking = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.05,
                 "presence_penalty": 0.0, "repetition_penalty": 1.0}
     plain = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0,
@@ -498,7 +501,8 @@ def test_assistant_official_h3_rules_and_text_selection():
 @need_node
 def test_assistant_composer_keys_and_autogrow(tmp_path):
     src = pathlib.Path(JS, "h3s_assist.js").read_text(encoding="utf-8")
-    assert ".h3z-ast-inputbox{display:flex;align-items:center;" in src
+    assert ".h3z-ast-compose{" in src and ".h3z-ast-toolbar{" in src
+    assert 'placeholder: T("Опишите сцену или задайте вопрос…")' in src
     driver = tmp_path / "assistant_composer.mjs"
     driver.write_text(textwrap.dedent(f"""
         import {{ H3Editor }} from {json.dumps(pathlib.Path(JS, "h3s_editor.js").as_uri())};
@@ -509,7 +513,7 @@ def test_assistant_composer_keys_and_autogrow(tmp_path):
         let sent = 0; ed.astSend = () => sent++;
         const event = (shiftKey = false, isComposing = false) => ({{
           key: "Enter", shiftKey, isComposing, prevented: false,
-          target: {{ tagName: "TEXTAREA", matches: (s) => s === ".h3z-ast-inputbox textarea", classList: {{ contains: () => false }} }},
+          target: {{ tagName: "TEXTAREA", matches: (s) => s === ".h3z-ast-inputbox textarea" || s === "textarea.h3z-ast-input" || (typeof s === "string" && s.includes("h3z-ast-input")), classList: {{ contains: () => false }} }},
           stopPropagation() {{}}, preventDefault() {{ this.prevented = true; }}
         }});
         const enter = event(); ed.onKey(enter);
@@ -548,8 +552,8 @@ def test_assistant_composer_keys_and_autogrow(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert out["sent"] == 1 and out["enter"] is True
     assert out["shift"] is False and out["composing"] is False
-    assert out["large"] == {"height": "150px", "minHeight": "38px", "overflowY": "auto"}
-    assert out["small"] == {"height": "38px", "minHeight": "38px", "overflowY": "hidden"}
+    assert out["large"] == {"height": "132px", "minHeight": "44px", "overflowY": "auto"}
+    assert out["small"] == {"height": "44px", "minHeight": "44px", "overflowY": "hidden"}
     assert all(out[key] for key in ("created", "edited", "customDeleted", "builtinEdited", "builtinDeleted", "restored"))
 
 
@@ -746,11 +750,11 @@ def test_workspace_layout_and_gallery_wiring():
     editor = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
     style = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
     gallery = pathlib.Path(JS, "h3s_gallery.js").read_text(encoding="utf-8")
-    assert 'class: "h3z-head-main"' in editor and 'class: "h3z-head-meta"' in editor
+    assert "this.timerEl(), this.monitorEl()" in editor and 'class: "h3z-head-group"' in editor
     assert 'togglePanel(side)' in editor and 'this.$.left.hidden = L.lc' in editor and 'this.$.insp.hidden = L.rc' in editor
     assert 'class: "h3z-heads-inner"' in editor and 'translateY(${-$.tscroll.scrollTop}px)' in editor
     assert 'grid-template-rows:auto var(--h3z-gap)' in style and '--video-h' in style and '--timeline-min' in style
-    assert 'class: "gtype"' in gallery and 'T("Стопка · {0} видео"' in gallery and 'T("Видео · {0}"' in gallery
+    assert 'class: "gtype"' in gallery and 'T("Папка · {0} видео"' in gallery and 'T("Видео · {0}"' in gallery
 
 
 def test_models_tab_uses_single_panel_background():

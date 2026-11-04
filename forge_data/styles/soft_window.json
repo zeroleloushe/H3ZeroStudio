@@ -1,0 +1,14 @@
+{
+  "id": "soft_window",
+  "name": "☀️ Soft Window Light",
+  "description": "Мягкий естественный свет из окна создаёт плавные переходы света и тени, деликатные блики и натуральный объём.",
+  "instructions": [
+    "Soft natural window light entering from one direction. Gentle gradients across the subject, soft-edged shadows, subtle bounce light and realistic falloff. Natural highlight response with no harsh artificial lighting."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "amber",
+  "custom": true
+}

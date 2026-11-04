@@ -1,0 +1,14 @@
+{
+  "id": "natural_expression",
+  "name": "🙂 Natural Expression",
+  "description": "Задаёт живую естественную мимику, моргание и небольшие изменения выражения лица без застывшей или преувеличенной эмоции.",
+  "instructions": [
+    "Subtle natural facial expression and believable micro-expressions. Avoid exaggerated smiles, frozen expressions or artificial facial motion. Preserve realistic eye focus, blinking and small changes in expression."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Персонаж",
+  "icon": "sparkles",
+  "tone": "cyan",
+  "custom": true
+}

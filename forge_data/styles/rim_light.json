@@ -1,0 +1,14 @@
+{
+  "id": "rim_light",
+  "name": "💡 Subtle Rim Light",
+  "description": "Добавляет мягкий контровой свет по краям объекта, отделяя его от фона и подчёркивая силуэт.",
+  "instructions": [
+    "Controlled back or edge lighting creating a subtle luminous contour around the subject. Preserve believable light direction, natural falloff and realistic interaction with hair, clothing and nearby surfaces."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "teal",
+  "custom": true
+}

@@ -1,0 +1,14 @@
+{
+  "id": "16mm_gritty",
+  "name": "📽️ 16mm Gritty Film",
+  "description": "Плёночный стиль 16 мм с заметным зерном и лёгкими несовершенствами для грубого, живого кинематографичного изображения.",
+  "instructions": [
+    "Authentic 16mm film look with visible organic grain, slight gate weave, subtle exposure variation, imperfect frame stability and characteristic film texture. Slightly softer optical rendering, restrained contrast and natural highlight roll-off."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Кинематографичный",
+  "icon": "clapperboard",
+  "tone": "brown",
+  "custom": true
+}

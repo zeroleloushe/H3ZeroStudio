@@ -1,0 +1,14 @@
+{
+    "id": "low_angle",
+    "name": "📐 Low-Angle Composition",
+    "description": "Низкий ракурс камеры визуально усиливает масштаб и значимость объекта, сохраняя естественную перспективу и пропорции.",
+    "instructions": [
+        "Low-angle camera positioned below the subject's eye level. Strong sense of vertical scale and presence while preserving realistic perspective and anatomy. Controlled camera movement, natural lens behavior and believable spatial depth."
+    ],
+    "priority": 50,
+    "enabled": false,
+    "category": "Камера и композиция",
+    "icon": "camera",
+    "tone": "orange",
+    "custom": true
+}

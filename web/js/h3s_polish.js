@@ -69,6 +69,8 @@ export function installPolish(Editor, { C, h, ICON }) {
     closeMenu() {
       if (this.$.menu) { this.$.menu.remove(); this.$.menu = null; }
       if (this._menuOff) { window.removeEventListener("pointerdown", this._menuOff, true); this._menuOff = null; }
+      if (this._menuKeyOff) { window.removeEventListener("keydown", this._menuKeyOff, true); this._menuKeyOff = null; }
+      this._ddAnchor = null;
     },
 
     /** Live per-step preview from the backend ("live" event): animated latent->RGB frames over the player. */

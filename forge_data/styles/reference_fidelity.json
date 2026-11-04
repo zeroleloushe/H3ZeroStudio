@@ -1,0 +1,14 @@
+{
+  "id": "reference_fidelity",
+  "name": "🖼️ High Reference Fidelity",
+  "description": "Максимально сохраняет важные особенности референса — внешность, пропорции, одежду, цвета, материалы и характерные детали.",
+  "instructions": [
+    "Preserve the important visual characteristics of the supplied reference. Maintain recognizable identity, proportions, clothing, colors, materials, composition cues and distinctive details. Do not introduce unnecessary changes unrelated to the requested transformation."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "blue",
+  "custom": true
+}

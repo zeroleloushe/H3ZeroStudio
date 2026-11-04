@@ -1,0 +1,14 @@
+{
+  "id": "dramatic_chiaroscuro",
+  "name": "🌓 Dramatic Chiaroscuro",
+  "description": "Драматичное светотеневое освещение с ярким направленным светом, глубокими тенями и выразительным объёмом.",
+  "instructions": [
+    "Dramatic directional lighting with strong separation between illuminated and shadowed areas. Deep but detailed shadows, controlled highlights and a clear motivated key light."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Освещение",
+  "icon": "sparkles",
+  "tone": "indigo",
+  "custom": true
+}

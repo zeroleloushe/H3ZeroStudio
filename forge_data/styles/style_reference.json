@@ -1,0 +1,14 @@
+{
+  "id": "style_reference",
+  "name": "🎨 Style Reference",
+  "description": "Переносит с референса визуальную стилистику — характер рендера, освещение, контраст, фактуру и цвет, не копируя сам сюжет.",
+  "instructions": [
+    "Use the supplied reference primarily for visual style. Extract its rendering language, color relationships, contrast, texture, lighting character and artistic treatment while allowing the requested subject and composition to remain independent."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Референсы",
+  "icon": "sparkles",
+  "tone": "violet",
+  "custom": true
+}

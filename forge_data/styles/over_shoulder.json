@@ -1,0 +1,14 @@
+{
+  "id": "over_shoulder",
+  "name": "🎥 Over-the-Shoulder Composition",
+  "description": "Кадр через плечо: персонаж на переднем плане частично виден со спины, а основной объект остаётся читаемым в глубине кадра.",
+  "instructions": [
+    "Natural over-the-shoulder framing with the foreground character partially visible while the main subject remains clearly readable. Realistic camera distance, perspective and depth separation. Subtle physical camera movement and natural focus transition between foreground and background."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Камера и композиция",
+  "icon": "camera",
+  "tone": "blue",
+  "custom": true
+}

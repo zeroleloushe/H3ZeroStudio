@@ -114,6 +114,101 @@ def full_path(kind, name):
         return None
 
 
+
+LORA_PREVIEW_EXTS = (
+    ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp", ".preview.gif",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm",
+)
+
+
+def _lora_roots():
+    """Absolute realpaths of every ComfyUI loras folder (incl. extras)."""
+    import folder_paths
+    roots = []
+    try:
+        for d in folder_paths.get_folder_paths("loras"):
+            try:
+                roots.append(os.path.realpath(d))
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return roots
+
+
+def _under_lora_roots(path, roots=None):
+    roots = roots if roots is not None else _lora_roots()
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return False
+    sep = os.sep
+    for root in roots:
+        if real == root or real.startswith(root + sep):
+            return True
+    return False
+
+
+def lora_preview_path(name):
+    """Local preview next to a LoRA file, or None. Only paths inside models/loras (+extras).
+
+    Same basename with .preview.png / .png / .jpg / .jpeg / .webp / .gif / .mp4 / .webm.
+    Optional .civitai.info preview / images[0].url: only a sibling local filename is tried
+    (remote URLs are never fetched).
+    """
+    if not isinstance(name, str) or not name.strip():
+        return None
+    name = name.replace("\\", "/").lstrip("/")
+    if ".." in name.split("/"):
+        return None
+    lora = full_path("lora", name)
+    if not lora or not os.path.isfile(lora):
+        return None
+    roots = _lora_roots()
+    if not _under_lora_roots(lora, roots):
+        return None
+    base, _ext = os.path.splitext(lora)
+    candidates = []
+    for s in (".preview.png", ".preview.jpg", ".preview.webp", ".png"):
+        candidates.append(lora + s)
+    for s in LORA_PREVIEW_EXTS:
+        candidates.append(base + s)
+    info = base + ".civitai.info"
+    if os.path.isfile(info) and _under_lora_roots(info, roots):
+        try:
+            import json
+            with open(info, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            hints = []
+            if isinstance(meta, dict):
+                if isinstance(meta.get("preview"), str):
+                    hints.append(meta["preview"])
+                imgs = meta.get("images")
+                if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
+                    url = imgs[0].get("url")
+                    if isinstance(url, str):
+                        hints.append(url)
+            for h in hints:
+                h = (h or "").strip().replace("\\", "/")
+                if not h:
+                    continue
+                if "://" in h:
+                    h = h.rsplit("/", 1)[-1]
+                if not h or "://" in h or "/" in h or ".." in h:
+                    continue
+                candidates.append(os.path.join(os.path.dirname(lora), h))
+        except Exception:
+            pass
+    seen = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        if os.path.isfile(c) and _under_lora_roots(c, roots):
+            return c
+    return None
+
+
 def file_sig(path):
     try:
         st = os.stat(path)
@@ -283,6 +378,18 @@ def apply_loras(model, clip, loras):
     return model, clip, rep
 
 
+
+def _with_accel(model, project):
+    """Apply Settings→Ускорение patches to a resolved MODEL (clone inside)."""
+    if model is None:
+        return None
+    try:
+        from . import h3s_accel as accel
+        return accel.apply(model, (project or {}).get("settings") or {})
+    except Exception as e:
+        log(f"accel: skipped ({e})")
+        return model
+
 class Resolver:
     """Per-run model source: wired inputs + the project's / clips' presets, loaded lazily through the cache."""
 
@@ -372,7 +479,17 @@ class Resolver:
         """(model, clip) for segment i: wired or preset base + the preset's LoRAs (cached clone)."""
         pr = segment_preset(self.p, i)
         if not pr:
-            return self.w["model"], self.w["clip"]
+            m = self.w["model"]
+            if m is not None:
+                try:
+                    from .h3s_accel import accel_sig as _asig
+                    key = ("wired-accel", id(m), _asig(self.p.get("settings")))
+                except Exception:
+                    key = ("wired-accel", id(m), ())
+                if key not in self.local:
+                    self.local[key] = (_with_accel(m, self.p), self.w["clip"])
+                return self.local[key]
+            return m, self.w["clip"]
         with _LOCK:
             bkey = ("wired",) if self.w["model"] is not None or not pr["model"] else None
             base_m = self.w["model"]
@@ -386,13 +503,19 @@ class Resolver:
             else:
                 ckey, base_c = ("ckpt",) + tuple(bkey), base_c_ck
             lk = tuple((l["file"], l["sm"], l["sc"]) for l in pr["loras"] if l["on"] and (l["sm"] or l["sc"]))
-            pk = (bkey, ckey, lk)
+            try:
+                from .h3s_accel import accel_sig
+                asig = accel_sig(self.p.get("settings"))
+            except Exception:
+                asig = ()
+            pk = (bkey, ckey, lk, asig)
             # clones of wired inputs live for this run only (the wired objects may change between runs)
             store = self.local if bkey[0] == "wired" or ckey[0] == "wired" else CACHE.patched
             if pk not in store:
                 if len(CACHE.patched) > 8:
                     CACHE.patched.clear()
                 m, c, rep = apply_loras(base_m, base_c, pr["loras"])
+                m = _with_accel(m, self.p)
                 store[pk] = (m, c)
                 self.reports[pr["id"]] = rep
                 if rep:
@@ -425,12 +548,18 @@ class Resolver:
         loras = [{"file": l["file"], "on": bool(l.get("on", True)), "sm": float(l.get("sm", 1.0) or 0), "sc": float(l.get("sc", 1.0) or 0)}
                  for l in ug.get("loras") or []]
         lk = tuple((l["file"], l["sm"], l["sc"]) for l in loras if l["on"] and (l["sm"] or l["sc"]))
-        pk = (bkey, ckey, lk, "ug")   # never a preset's key: the result differs by the LoRA stack
+        try:
+            from .h3s_accel import accel_sig
+            _as = accel_sig(self.p.get("settings"))
+        except Exception:
+            _as = ()
+        pk = (bkey, ckey, lk, "ug", _as)   # never a preset's key: the result differs by the LoRA stack
         store = self.local if ckey[0] == "wired" else CACHE.patched
         if pk not in store:
             if len(CACHE.patched) > 8:
                 CACHE.patched.clear()
             m, c, rep = apply_loras(base_m, base_c, loras)
+            m = _with_accel(m, self.p)
             store[pk] = (m, c)
             if rep:
                 log("models: upscale model LoRAs: " + "; ".join(rep))

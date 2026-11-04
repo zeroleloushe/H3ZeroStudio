@@ -127,8 +127,9 @@ def _link_or_copy(src, dst):
     os.replace(tmp, dst)
 
 
-def keep(d, key, pt, recipe=None):
-    """After a latent was written to the cache: make it a take (latent sidecar + recipe). Cheap (hard link)."""
+def keep(d, key, pt, recipe=None, *, fps=24, vae=""):
+    """After a latent was written to the cache: make it a take (latent sidecar + recipe). Cheap (hard link).
+    Also writes a durable AV `.safetensors` next to the take (header-readable, VAE-tagged) when possible."""
     if not key or not os.path.isfile(pt):
         return False
     td = take_dir(d, key, True)
@@ -139,10 +140,30 @@ def keep(d, key, pt, recipe=None):
         rp = os.path.join(td, "recipe.json")
         if recipe is not None and not os.path.isfile(rp):
             _write_json(rp, dict(recipe, key=key, created=int(time.time())))
+        _write_av_latent(td, lp, fps=fps, vae=vae, recipe=recipe)
         return True
     except OSError as e:
         log(f"take {key}: sidecar not written ({e})")
         return False
+
+
+def _write_av_latent(td, lp, *, fps=24, vae="", recipe=None):
+    """Best-effort durable AV latent beside latent.pt (own format; skip quietly on failure)."""
+    try:
+        from . import h3s_av_latent as av
+        import torch
+        sp = os.path.join(td, "latent.safetensors")
+        if os.path.isfile(sp) and os.path.getmtime(sp) >= os.path.getmtime(lp):
+            return
+        data = torch.load(lp, map_location="cpu", weights_only=True)
+        if not isinstance(data, dict) or "v" not in data:
+            return
+        extra = None
+        if isinstance(recipe, dict):
+            extra = {k: recipe.get(k) for k in ("seg_id", "seg", "kind") if k in recipe}
+        av.save(sp, data["v"], data.get("a"), fps=fps, vae=vae or "", extra=extra)
+    except Exception as e:
+        log(f"AV latent sidecar skipped: {e}")
 
 
 def _same(a, b):
@@ -156,7 +177,8 @@ def _same(a, b):
 
 
 def restore(d, key, pt):
-    """Cache file missing but the take has its latent: put it back (link). True when pt exists afterwards."""
+    """Cache file missing but the take has its latent: put it back (link). True when pt exists afterwards.
+    Prefers latent.pt; if only the AV `.safetensors` remains, rebuilds a compatible .pt from it."""
     if os.path.isfile(pt):
         return True
     lp = latent_path(d, key) if key else ""
@@ -168,6 +190,26 @@ def restore(d, key, pt):
             return True
         except OSError as e:
             log(f"cache: restore of {key} failed ({e})")
+    # durable AV safetensors fallback (survives a .pt-only wipe across restarts)
+    sp = os.path.join(take_dir(d, key), "latent.safetensors") if key else ""
+    if sp and os.path.isfile(sp):
+        try:
+            from . import h3s_av_latent as av
+            import torch
+            v, a, _h = av.load(sp)
+            os.makedirs(os.path.dirname(pt), exist_ok=True)
+            tmp = pt + ".part"
+            torch.save({"v": v, "a": a}, tmp)
+            os.replace(tmp, pt)
+            # also refresh latent.pt sidecar
+            try:
+                _link_or_copy(pt, latent_path(d, key) if not os.path.isfile(lp) else lp)
+            except OSError:
+                pass
+            log(f"cache: {os.path.basename(pt)} rebuilt from AV safetensors sidecar")
+            return True
+        except Exception as e:
+            log(f"cache: AV restore of {key} failed ({e})")
     return False
 
 

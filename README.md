@@ -77,7 +77,7 @@
   - Дорожка **«Музыка»** — фон, который подмешивается в итог.
   - Стыки сшиваются с точностью до сэмпла.
 - ✎/✦ **Два этапа.** Быстрый черновик в малом размере, затем чистовик: латентный апскейл и короткая доработка с сохранением звука 1:1.
-- ↑ **Апскейл отрезка и всего ролика.** Обученный латентный апскейлер H3, RTX Video Super Resolution или синхронные плитки (SyncTile). Размер задаётся в мегапикселях. Длинные клипы обрабатываются по кускам по времени, поэтому хватает 12 ГБ VRAM.
+- ↑ **Апскейл отрезка и всего ролика.** Обученный латентный апскейлер H3 (окна) или синхронные плитки (SyncTile). Размер задаётся в мегапикселях. Длинные клипы обрабатываются по кускам по времени, поэтому хватает 12 ГБ VRAM.
 - ✂ **Пересоздать участок.** Кнопка «✂ Участок» над таймлайном: выделите кусок в середине клипа (сгенерированного или футажа), и пересоздастся только он. Видео и звук до и после остаются контекстом, швы — кадр в кадр и сэмпл в сэмпл, у участка свои дубли.
 - 👁️ **Живое превью** каждого шага через tiny VAE `taeh3` со звуком, графики σ / Δ и время шага.
 - ⛶ **Во весь экран и «Удобный просмотр».** Плеер разворачивается на весь экран (F). «Удобный просмотр» для сборки ролика, клипа или файла из галереи: масштаб вписать / ×1 / ×2 / ×4 и колесом у курсора, перетаскивание, шаг по кадрам с таймкодом, скорость 0.25–2×, петля, чёткие пиксели.
@@ -123,8 +123,6 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 ```bat
 cd ComfyUI\custom_nodes
 git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
-rem опционально, для RTX VSR:
-..\..\python_embeded\python.exe -m pip install nvidia-vfx
 ```
 </details>
 
@@ -135,12 +133,11 @@ rem опционально, для RTX VSR:
 | MiniMax H3 (модель, текстовый энкодер, video VAE, audio VAE) | штатные файлы H3 для ComfyUI | `models/diffusion_models`, `models/text_encoders`, `models/vae` | **обязательно** (без audio VAE — только видео) |
 | Обученный латентный апскейлер H3 | `minimax_h3_latent_upscaler_3d_bf16.safetensors` ([HF](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)) | `models/latent_upscale_models` | для 2 этапов и апскейла (метод по умолчанию) |
 | ↳ нода апскейлера | [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) (нода `MinimaxH3LatentUpscaler3D`) | `custom_nodes` | вместе с моделью |
-| RTX Video Super Resolution | пакет `nvidia-vfx` (`pip install nvidia-vfx`) и видеокарта NVIDIA RTX | — | опционально: метод «качество» и запасной вариант |
 | Tiny VAE для превью | `taeh3.safetensors` ([madebyollin/taehv](https://github.com/madebyollin/taehv/tree/main/safetensors)) | `models/vae_approx` | опционально: без него превью грубое (latent → RGB) |
 
 Папки ищутся стандартно через `folder_paths`, поэтому пути из `extra_model_paths.yaml` тоже работают. Что найдено, видно в редакторе: **«Настройки» → «Модели»**.
 
-Если для чистовика или апскейла нет ни обученного апскейлера, ни RTX VSR, генерация остановится до сэмплинга с понятной ошибкой.
+Если для чистовика или апскейла нет обученного апскейлера, генерация остановится до сэмплинга с понятной ошибкой.
 
 ## 🚀 Как пользоваться
 
@@ -190,7 +187,7 @@ rem опционально, для RTX VSR:
 **Режим генерации** («Настройки» → «Генерация»):
 - **1 этап** — каждый отрезок сразу в финальном размере.
 - **2 этапа** — сначала черновик (по умолчанию 50 % по стороне), затем чистовик:
-  1. Видео-латент выбранного черновика увеличивается обученным апскейлером H3 (или через RTX VSR → VAE encode).
+  1. Видео-латент выбранного черновика увеличивается обученным апскейлером H3.
   2. Короткий проход H3 стартует с **σ 0.40** (проверенный диапазон 0.25–0.45). Это доля шума, а не «denoise».
   3. **Звук черновика сохраняется 1:1** через маску звука H3, перекрытие фиксируется по доработанному предыдущему отрезку.
 - **✎ Черновик / ✦ Чистовик / ↑ Финал из черновика** запускают один этап для одного клипа, не меняя режим проекта.
@@ -221,7 +218,6 @@ rem опционально, для RTX VSR:
 | Метод | Как работает | σ по умолчанию |
 |---|---|---|
 | **Латент + доработка** (по умолчанию) | обученный апскейлер H3 прямо в латенте, без VAE decode/encode | 0.40 |
-| **RTX VSR → доработка** | decode → RTX VSR (ULTRA) → encode, вариант «качество» | 0.25 |
 | **Плитки (SyncTile)** | синхронные плитки: на каждом шаге считаются все плитки со своими референсами и смешиваются рампами | 0.60 (рекомендуется: ниже почти не влияет, 0.60 держит согласованность и почти не меняет детали) |
 
 - Для плиток задаются размер (768×448 … 1280×704 или свой) и перекрытие. Итоговая сетка показывается сразу, например «3×3 = 9 плит. → 1728×960».
@@ -310,11 +306,32 @@ rem опционально, для RTX VSR:
 
 Пока открыт редактор, горячие клавиши ComfyUI (в том числе его Ctrl+Z для графа) не срабатывают.
 
+
+## 🎨 Темы / Themes
+
+Встроенные темы: Неон, Графит, Океан, Фарфор, Закат (Настройки → Тема интерфейса).
+
+**Сторонние пакеты тем** (переживают обновление ноды) кладутся в:
+
+```
+<ComfyUI>/user/default/H3ZeroStudio/themes/<theme_id>/
+  theme.json   # id, name_ru, name_en, author, version, base ("dark"|"light"), swatches?
+  theme.css    # CSS-переменные и оверрайды для :root[data-h3z-theme="<id>"]
+  assets/      # опционально: png / svg / woff2
+```
+
+Альтернатива рядом с нодой (в `.gitignore`): `themes_user/<theme_id>/`.
+После копирования — **Ctrl+F5**; тема появится в списке. Битые пакеты пропускаются с предупреждением.
+
+Пример оммажа Windows 98 распространяется отдельно (подписчикам Boosty), в репозиторий не входит.
+
+**Drop-in theme packs** that survive node updates go in `<ComfyUI>/user/default/H3ZeroStudio/themes/<id>/` (or `themes_user/` next to the node). Each pack needs `theme.json` + `theme.css` scoped to `:root[data-h3z-theme="<id>"]`. Hard-reload (Ctrl+F5) to pick them up in Settings.
+
 ## ❓ FAQ
 
-<details><summary><b>«Апскейл недоступен» / чистовик не запускается</b></summary>
+<details><summary><b>Предупреждение «латент растянут» / апскейл без обученной модели</b></summary>
 
-Нужен обученный апскейлер: нода [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) и файл `minimax_h3_latent_upscaler_3d_bf16.safetensors` в `models/latent_upscale_models`. Другой вариант — `pip install nvidia-vfx` на ПК с NVIDIA RTX. Статус виден в «Настройки» → «Модели».
+Без обученного апскейлера студия не останавливается: латент просто растягивается (trilinear по кадру, время без изменений), затем идёт доработка — быстрее и легче по VRAM, но качество ниже. Чтобы получить обученный путь, поставьте ноду [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) и файл `minimax_h3_latent_upscaler_3d_bf16.safetensors` в `models/latent_upscale_models`. Статус и выбор модели — в «Настройки» → «Модели» / «Апскейл».
 </details>
 
 <details><summary><b>Превью во время генерации мутное, цвета странные</b></summary>
@@ -372,8 +389,8 @@ The interface is available in English and Russian: «Settings» → 🌐 *Interf
 
 - **Segments.** Build a long video from segments, each with its own prompt and reference images. *Extend* continues the previous segment: its latent tail is pinned and audio continues through H3's native denoise masks. *New scene* is a hard cut.
 - **Takes.** Keep up to 12 takes per segment. Only changed segments are re-generated, thanks to a content-hash cache.
-- **Two stages.** A fast draft first, then a final pass: learned H3 latent upscaler (or RTX VSR) plus a short low-σ refine that keeps the draft audio 1:1.
-- **Upscale.** Per segment or the whole video: learned latent upscaler, RTX Video Super Resolution, or synchronized tiles (SyncTile). Footage used as is is upscaled too (VAE-encoded frames through the same mode; with RTX VSR the file's own frames, no VAE, no refine), and so are ✂ spans (bridge / prologue / region takes, right click «↑ Апскейл участка»; cached with the take, seams level-locked after the upscale). The target size is set in megapixels. Long clips are processed in sequential temporal chunks (upscale + refine per chunk, overlaps continued like an extension, VRAM freed between chunks), which keeps a 12 GB GPU in budget.
+- **Two stages.** A fast draft first, then a final pass: learned H3 latent upscaler  plus a short low-σ refine that keeps the draft audio 1:1.
+- **Upscale.** Per segment or the whole video: learned latent upscaler or or synchronized tiles (SyncTile). Footage used as is is upscaled too (VAE-encoded frames through the same mode; ), and so are ✂ spans (bridge / prologue / region takes, right click «↑ Апскейл участка»; cached with the take, seams level-locked after the upscale). The target size is set in megapixels. Long clips are processed in sequential temporal chunks (upscale + refine per chunk, overlaps continued like an extension, VRAM freed between chunks), which keeps a 12 GB GPU in budget.
 - **Regenerate a range.** The «✂ Участок» toolbar button selects a range in the middle of a clip (generated or footage). Only that range is re-sampled; the video and audio before and after it stay as clean context (H3's native per-modality temporal mask). The result is spliced back frame-exactly and sample-exactly, and each result is a take of the region.
 - **Audio.** "Аудио" lanes **lock** your audio, so the video follows its rhythm and lip-sync. The "Музыка" lane is a background music bed mixed into the output.
 - **Live preview.** Every step is decoded with `taeh3`, with audio, σ/Δ charts and a per-step log.
@@ -394,10 +411,11 @@ The interface is available in English and Russian: «Settings» → 🌐 *Interf
 
 **Optional models:**
 - `minimax_h3_latent_upscaler_3d_bf16.safetensors` in `models/latent_upscale_models`, plus the [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) node;
-- `pip install nvidia-vfx` for RTX VSR;
 - `taeh3.safetensors` in `models/vae_approx` for the preview.
 
 **Use:** wire `model`, `clip`, `vae` and `audio_vae` (optional `sampler` / `sigmas` inputs, e.g. for models with their own schedule such as Pika Flex, win over the project's sampler / scheduler / steps: `sigmas` drive every pass that starts from noise, `sampler` every pass; refine / upscale passes keep their own partial schedule; both are part of the cache key). Click **«Развернуть»** (Expand), build the timeline and press **«Сгенерировать»** (`Ctrl+Enter`). Outputs: `images` (24 fps), `audio`, `latent`.
+
+**Thanks:** AV latent persistence, Repeat-from-meta, smarter Veda fallbacks, the VRAM arbiter and progress re-attach after reload — ideas cheerfully borrowed from the best app and developer in the world, [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) by EvgenRublev 😉 (GPL-3.0); our own code.
 
 **Support:** H3ZeroStudio is free and open source (GPL-3.0). If you find it useful and want to support development, you can do so on [Boosty](https://boosty.to/zeroleloushe). Entirely optional; there are no paid features.
 
@@ -423,11 +441,9 @@ H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — 
   - [seitanism — ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) (GPL-3.0);
   - [ttulttul — ComfyUI-Minimax-H3-Continuation](https://github.com/ttulttul/ComfyUI-Minimax-H3-Continuation) (MIT).
 - **Таймлайн из нескольких клипов H3:** [tritant — ComfyUI_MiniMax_H3_Extender](https://github.com/tritant/ComfyUI_MiniMax_H3_Extender) (Apache-2.0), идея.
-- **Живое превью и RTX VSR** — по образцу [kijai — ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) (GPL-3.0):
+- **Живое превью** — по образцу [kijai — ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) (GPL-3.0):
   - Model Preview Override: tiny VAE `taeh3`, Δ шага, звук через audio_vae;
-  - Resize Image v2 с `nvidia_rtx_vsr`.
-- **Остальное для превью и RTX VSR:**
-  - Вызов RTX VSR сверен с [Comfy-Org — Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (Apache-2.0); используется пакет NVIDIA `nvidia-vfx`.
+- **Остальное для превью:**
   - Веса `taeh3` — [madebyollin/taehv](https://github.com/madebyollin/taehv).
 - **Оценка швов, выравнивание яркости и цвета на стыках (level lock), де-клик звука, BT.709, запас VRAM:** идеи из [chanon/comfyui-obvpm-timeline](https://github.com/chanon/comfyui-obvpm-timeline) (GPL-3.0, © chanon / obvpm) — оценка стыка относительно обычного движения кадра, ~5 мс затухание на жёстких склейках, теги BT.709, сведение уровней по обе стороны стыка, временный подъём штатного резерва VRAM на время запуска. Код написан заново.
 - **Промежутки и мосты (единый движок перегенерации участка):** подход — участок с контекстом с обеих сторон, середина генерируется, — по идее [chanon/comfyui-obvpm-timeline](https://github.com/chanon/comfyui-obvpm-timeline) (GPL-3.0). Только идея, код свой.
@@ -449,6 +465,7 @@ H3ZeroStudio распространяется под **[GPL-3.0](LICENSE)** — 
   - [panghea — ComfyUI-MiniMax-H3-Inpaint-Tools](https://github.com/panghea/ComfyUI-MiniMax-H3-Inpaint-Tools) (GPL-3.0): маски по отрезку времени;
   - [filliptm — ComfyUI-FL-MiniMaxH3](https://github.com/filliptm/ComfyUI-FL-MiniMaxH3), «Temporal Reshot» (Apache-2.0): интервал + контекст по сетке 17k+5;
   - [red-polo — ComfyUI-MiniMaxH3FrameInfill](https://github.com/red-polo/ComfyUI-MiniMaxH3FrameInfill) (GPL-3.0): заполнение промежутка по окружающему видео.
+- **Сохранение AV-латента, «Повторить», умная Veda (dense-fallback), арбитр VRAM, восстановление прогресса после перезагрузки:** часть идей подсмотрена у лучшего на свете приложения и разработчика — [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) от EvgenRublev 😉 (GPL-3.0). Код свой.
 - **ComfyUI** (GPL-3.0) — нативная реализация MiniMax H3: refs, keyframes, `ModelSamplingAV`, блоки TAESD/TAEHV.
 
 **Кадры на скриншотах** — из фильма *Tears of Steel* © Blender Foundation | [mango.blender.org](https://mango.blender.org), лицензия [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Используется только видео; музыка в демо-проекте синтезирована отдельно. Генерации на скриншотах воспроизводят интерфейс на реальных кадрах — это не выход модели.

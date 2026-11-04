@@ -1,0 +1,29 @@
+{
+    "id": "дизайн_звука",
+    "name": "Дизайн звука",
+    "description": "Правильное оформление звукового сопровождения",
+    "instructions": [
+      "## Realistic Audio & Sound Design",
+      "**Describe the actual sounds of the scene. Use realistic, contextually accurate audio only. No invented sound effects, unnecessary music, or exaggerated cinematic audio.**",
+      "Every sound must have a clear source and a physical reason to exist. The goal is natural, immersive sound that matches the scene, not artificial sound design.",
+      "### Core Rules",
+      "- **Describe specific sounds.** Include relevant details such as fabric rustling during movement, footsteps on the actual surface, subtle breathing, hand contact, object handling, doors, environmental ambience, and distant traffic. Describe only sounds that make sense in context.",
+      "- **Match sound to action.** Every audible event must align with the character's movements and the timing of the scene. Clothing should rustle when it moves; footsteps should match the walking pace and surface; breathing should sound natural and proportionate to the character's activity.",
+      "- **Maintain realistic ambience.** Describe the appropriate environmental soundscape, such as wind, rain, room tone, distant conversations, traffic, or ventilation. Keep background sounds subtle and consistent with the location.",
+      "- **Use accurate spatial audio.** Specify natural stereo positioning and movement. Sounds should originate from the correct direction and shift realistically as characters or sound sources move. Maintain consistent left-right positioning, distance, and perspective. Avoid arbitrary panning.",
+      "- **Respect distance and acoustics.** Nearby sounds should be clearer and more detailed; distant sounds should be quieter and naturally blended into the environment. Apply reverberation only when justified by the actual space.",
+      "- **No unnecessary music.** Do not add background music, dramatic scores, emotional musical cues, or musical transitions unless explicitly requested.",
+      "- **No artificial effects.** Avoid whooshes, cinematic impacts, risers, booms, chimes, synthetic textures, exaggerated foley, random sound effects, and other sounds that have no physical source in the scene.",
+      "- **No exaggerated audio.** Breathing, fabric noise, footsteps, and other subtle sounds must remain believable. Do not amplify ordinary actions into loud, distracting effects.",
+      "- **Preserve audio continuity.** Maintain consistent ambience, sound perspective, volume, and spatial positioning across the entire scene. Do not introduce sudden changes without a physical or environmental reason.",
+      "### Final Check",
+      "Before describing the audio, verify that every sound has a plausible source, matches the on-screen action, has realistic volume and spatial placement, and belongs naturally in the environment. Remove any sound that feels artificial, redundant, or unnecessarily cinematic.",
+      "**Golden rule: Natural sound, accurate spatial positioning, realistic ambience. Every sound must belong to the scene. No invented effects, no unwanted music, no audio gimmicks.**"
+    ],
+    "priority": 60,
+    "enabled": false,
+    "category": "Базовые",
+    "icon": "film",
+    "tone": "teal",
+    "custom": true
+  }

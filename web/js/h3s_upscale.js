@@ -8,20 +8,27 @@ import { MT_CSS } from "./h3s_modeltab.js";
 export function installUpscale(Editor, { C, h, ICON }) {
   const LBL = C.UPSCALE_LABELS;
   Object.assign(Editor.prototype, {
-    upCaps() { return this.opts?.upscale || { learned: false, rtx: false, learned_models: [], learned_node: false }; },
+    upCaps() { return this.opts?.upscale || { learned: false, learned_models: [], learned_node: false }; },
     upKnown() { return !!this.opts?.upscale; },
-    /** The learned upscaler or RTX VSR is available (unknown before /h3zero/options answered: assume yes). */
-    upAvail() { const c = this.upCaps(); return !this.upKnown() || !!(c.learned || c.rtx); },
-    upUnavailText() {
-      return T("Апскейл недоступен: нет ни обученного латентного апскейлера H3 (нода MinimaxH3LatentUpscaler3D + модель minimax_h3_latent_upscaler_3d_bf16.safetensors в models/latent_upscale_models), ни RTX VSR (nvidia-vfx). Установите одно из них и перезапустите ComfyUI.");
+    /** Always available: learned model when present, else spatial latent stretch + refine. */
+    upAvail() { return true; },
+    /** True when options are known and the trained latent upscaler is missing → stretch fallback. */
+    upStretchMode() { return this.upKnown() && !this.upCaps().learned; },
+    upStretchWarnText() {
+      return T("Нет обученного латентного апскейлера H3 — латент просто растянут (trilinear), качество ниже. Поставьте ноду MinimaxH3LatentUpscaler3D и модель в models/latent_upscale_models.");
+    },
+    /** @deprecated alias — stretch is a soft warn, not a hard unavail. */
+    upUnavailText() { return this.upStretchWarnText(); },
+    /** Soft warn banner (or null) when stretch fallback is active. */
+    upStretchNote() {
+      return this.upStretchMode() ? h("div", { class: "h3z-note warn" }, this.upStretchWarnText()) : null;
     },
 
     /** What really makes the start latent for a method on this machine (mirror of h3s_upscale.effective_input). */
     upInputLabel(method) {
       const c = this.upCaps();
-      if (!this.upKnown()) return method === "rtx" ? "RTX VSR" : T("обученный латентный апскейлер");
-      if (method === "rtx") return c.rtx ? "RTX VSR" : c.learned ? T("нет RTX VSR → обученный апскейлер") : T("недоступен: нет RTX VSR и модели апскейлера");
-      return c.learned ? T("обученный латентный апскейлер") : c.rtx ? T("нет модели апскейлера → RTX VSR") : T("недоступен: нет модели апскейлера и RTX VSR");
+      if (!this.upKnown()) return T("обученный латентный апскейлер");
+      return c.learned ? T("обученный латентный апскейлер") : T("растяжение латента (нет модели апскейлера)");
     },
 
     upDefault() { return C.normalizeUpscale(this.p.settings.seg_upscale) || C.normalizeUpscale({ method: "latent", scale: 2 }); },
@@ -53,7 +60,6 @@ export function installUpscale(Editor, { C, h, ICON }) {
     /** Upscale segment i with `up` (a take with exactly this state is reused, else only this segment runs). */
     upscaleSeg(i, up) {
       const why = this.upWhy(i); if (why) { this.toast(why, true); return; }
-      if (!this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
       const st = this.segGenState(i);
       const s = this.seg(i);
       if (!st.ok && !s.freeze) { this.toast(st.why, true); return; }
@@ -88,7 +94,6 @@ export function installUpscale(Editor, { C, h, ICON }) {
     /** Header «↑ Апскейл»: the whole video — every clip upscaled with the settings (or `up`), one run; per-segment
      *  windows and keys, so ready clips come from the cache and an interrupted run resumes. */
     upscaleAll(up = this.upDefault()) {
-      if (!this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
       if (this.run.active) { this.toast(T("Идёт генерация"), true); return; }
       const list = this.upList();
       const spans = (this.p.regions || []).filter((rg) => this.regionTake(rg)?.fresh).map((rg) => rg.id);   // applied ✂ spans too
@@ -165,17 +170,16 @@ export function installUpscale(Editor, { C, h, ICON }) {
     upscaleBlock(i) {
       const s = this.seg(i), why = this.upWhy(i), u = this.upDefault();
       const res = s.result?.upscale && !this.isStale(i) ? s.result : null;
-      const status = res ? h("div", { class: "h3z-note ok" }, T("↑ Готов: {0} · {1}", (res.wh || []).join("×"), this.upText(res.upscale)) + (res.up_input ? T(" · вход: {0}", { learned: T("обученный апскейлер"), rtx: "RTX VSR", resize: T("уменьшение (VAE)") }[res.up_input] || res.up_input) : ""))
+      const status = res ? h("div", { class: "h3z-note ok" }, T("↑ Готов: {0} · {1}", (res.wh || []).join("×"), this.upText(res.upscale)) + (res.up_input ? T(" · вход: {0}", { learned: T("обученный апскейлер"), stretch: T("растяжение латента"), resize: T("уменьшение (VAE)") }[res.up_input] || res.up_input) : ""))
         : s.upscale && C.upscalable(s) ? h("div", { class: "h3z-note warn" }, T("↑ {0} задан — будет сделан при генерации", this.upText(s.upscale))) : null;
       return h("div", { class: "h3z-upblock" },
         h("div", { class: "h3z-lbl" }, T("Апскейл отрезка"), h("em", null, why || `${this.upText(u)} → ${this.upMp(u)}`)),
-        status, !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,
+        status, this.upStretchNote(),
         h("div", { class: "h3z-row wrap" },
           h("button", { class: "h3z-btn sm primary", disabled: !!why || undefined, title: why || T("Только этот клип (результат — новый дубль, звук 1:1)"), html: T("<b>↑</b><span>Апскейл отрезка</span>"), onclick: () => this.upscaleSeg(i, u) }),
           s.upscale ? h("button", { class: "h3z-btn sm", onclick: () => this.removeUpscale(i) }, T("Убрать апскейл")) : null),
-        C.isFootage(s) ? h("div", { class: "h3z-note" }, (s.upscale?.method || u.method) === "rtx"
-          ? T("Футаж «как есть» + RTX VSR: кадры файла увеличиваются напрямую (без VAE и без доработки) — содержимое не меняется.")
-          : T("Футаж «как есть»: его кадры кодируются VAE и проходят тот же апскейл + доработку (σ {0}) — мелкие детали могут слегка измениться. Без изменений — метод RTX VSR. Звук не трогается.", (s.upscale || u).sigma)) : null,
+        C.isFootage(s) ? h("div", { class: "h3z-note" },
+          T("Футаж «как есть»: его кадры кодируются VAE и проходят тот же апскейл + доработку (σ {0}) — мелкие детали могут слегка измениться. Звук не трогается.", (s.upscale || u).sigma)) : null,
         h("div", { class: "h3z-note" }, T("Метод и размер — Настройки → «Апскейл». Весь ролик — кнопка «↑ Апскейл» в шапке.")));
     },
 
@@ -194,7 +198,6 @@ export function installUpscale(Editor, { C, h, ICON }) {
     upscaleRegion(id, up) {
       const rg = this.region(id); if (!rg) return;
       const why = this.upRegionWhy(rg); if (why) { this.toast(why, true); return; }
-      if (!this.upAvail()) { this.toast(this.upUnavailText(), true); return; }
       up = C.normalizeUpscale(up); if (!up) return;
       this.updateRegion(id, (r) => { r.upscale = up; }, { render: "none" });
       const st = this.regionUpState(this.region(id));
@@ -231,7 +234,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
       return b;
     },
 
-    /** Settings section «Апскейл»: method, target size, strength, RTX quality. */
+    /** Settings section «Апскейл»: method, target size, strength. */
     /** Change the profile of upscale method m (and select it): the other methods' profiles are never touched. */
     upSetProfile(m, patch = {}, select = false) {
       const pr0 = C.upscaleProfile(this.p.settings, m);
@@ -256,7 +259,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
       const put = (x) => this.upSetProfile(m0, x);
       const pill = (on, label, title, fn) => h("div", { class: "h3z-pill" + (on ? " on" : ""), title, onclick: fn }, label);
       const methods = h("div", { class: "h3z-pills h3z-upmethods" }, ...C.SEG_UPSCALE_METHODS.map((m) => pill(m === m0, LBL[m],
-        { latent: T("Обученный латентный апскейлер H3 (быстро, без декода/энкода) → доработка"), rtx: T("RTX VSR по кадрам → VAE энкод → бережная доработка (качество)"), tiles: T("Апскейл → синхронные плитки (SyncTile): каждая плитка видит промпт и референсы отрезка") }[m] + T(" · вход: {0} · у метода свои настройки", this.upInputLabel(m)),
+        { latent: T("Окна: обученный латентный апскейлер H3 → доработка окнами (быстро, без декода/энкода)"), tiles: T("Плитки: апскейл → синхронные плитки (SyncTile): каждая плитка видит промпт и референсы отрезка") }[m] + T(" · вход: {0} · у метода свои настройки", this.upInputLabel(m)),
         () => { if (m !== m0) this.upSetProfile(m, {}, true); })));
       const [bw, bh] = C.workResolution(g), [cw, chh] = this.upCanvas(f);
       const choices = this.upSizeChoices(f).filter((c) => c.mp), custom = !choices.some((c) => c.on);
@@ -301,10 +304,8 @@ export function installUpscale(Editor, { C, h, ICON }) {
       const sch = this.schedSel(pr.scheduler || "", this.opts?.schedulers || [], (v) => put({ scheduler: v }),
         { value: pr.sigmas || "", onch: (t) => put({ sigmas: t }) },
         T("как «Этап 2» · {0}", st2.scheduler));
-      const q = m0 === "rtx" ? h("select", { class: "h3z-sel up-quality", title: T("Качество RTX VSR") }, C.RTX_QUALITIES.map((x) => h("option", { value: x, selected: f.quality === x }, x))) : null;
-      if (q) q.onchange = () => put({ quality: q.value });
       // the refine's model + LoRA: the project / clip presets or the user's own (settings.upscale_gen)
-      const ug = g.upscale_gen, own = ug.mode === "custom";
+      const ug = g.upscale_gen || { mode: "project", model: "", loras: [] }, own = ug.mode === "custom";
       if (!this._mp) this.mpLoad().then(() => { if (this.tool === "settings" && this._setTab === "up") this.renderLeft(); });
       const files = this._mp?.files || {};
       const ck = files.checkpoint || [], un = files.unet || [], loras = files.lora || [];
@@ -380,9 +381,8 @@ export function installUpscale(Editor, { C, h, ICON }) {
         h("div", { class: "h3z-grid2" }, this.field(T("Сила доработки"), sig), this.field(T("Шаги доработки"), steps)),
         h("div", { class: "h3z-grid2" }, this.field(T("Сэмплер"), smp), this.field(T("Расписание"), sch)),
         this.field(T("Модель доработки"), gen),
-        q ? this.field("RTX VSR", q) : null,
         m0 === "tiles" ? this.field(T("Плитки"), this.upTileSettings(f, put)) : null,
-        !this.upAvail() ? h("div", { class: "h3z-note err" }, this.upUnavailText()) : null,
+        this.upStretchNote(),
         h("div", { class: "h3z-note" }, T("«↑ Апскейл» в шапке — весь ролик (каждый отрезок своим окном, длинные — по кускам, звук 1:1, готовые из кэша). ↑ на клипе или в его меню — только этот клип. Результат — новый дубль, старый можно вернуть."))));
     },
   });

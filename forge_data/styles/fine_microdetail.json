@@ -1,0 +1,14 @@
+{
+  "id": "fine_microdetail",
+  "name": "🔬 Fine Microdetail",
+  "description": "Усиливает мелкие реалистичные детали поверхностей — поры, волокна, тонкие царапины и микротекстуры без искусственного шума.",
+  "instructions": [
+    "High-frequency microdetail across visible surfaces. Preserve tiny material variations, subtle texture, fine edges, pores, fibers and small imperfections without artificial noise."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "teal",
+  "custom": true
+}

@@ -1,0 +1,14 @@
+{
+  "id": "metal_detail",
+  "name": "🔩 Realistic Metal Detail",
+  "description": "Делает металлические поверхности убедительнее за счёт реалистичных отражений, царапин, следов обработки и окисления.",
+  "instructions": [
+    "Detailed metal surfaces with believable roughness, machining marks, scratches, oxidation and physically accurate reflections. Preserve material-specific highlights and edge behavior."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Детали и текстуры",
+  "icon": "sparkles",
+  "tone": "slate",
+  "custom": true
+}

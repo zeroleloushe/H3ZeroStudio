@@ -261,6 +261,10 @@ export function installRegions(Editor, { C, h, ICON }) {
       const gi = this.p.segments.findIndex((s, k) => s.gap && (() => { const it = this.items()[k]; return it && it.start - it.gap < w.b && it.start > w.a; })());
       this.openMenu(e, `✂ ${name} ${this.regionNo(id)}`, [
         { label: T("↻ Пересоздать"), fn: () => this.regenRegion(id), title: T("Новый дубль (новый сид, если такой уже есть)") },
+        this.regionTake(rg)?.take ? { label: T("ℹ Параметры генерации"), fn: () => {
+          const tk = this.regionTake(rg);
+          this.openGenMeta({ take: tk.take, region: rg, gallery: { prompt: rg.prompt, seed: rg.seed, kind: "region" } });
+        } } : null,
         ...this.upRegionMenuEntries(id),
         this.regionRestorable(rg) ? { label: T("↺ Восстановить входы дубля"), fn: () => this.restoreRegionTake(id) } : null,
         { label: kn === "bridge" || kn === "prologue" ? T("✕ Убрать заполнение") : T("✕ Удалить участок"), fn: () => this.deleteRegion(id), danger: true,

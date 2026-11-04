@@ -1,0 +1,14 @@
+{
+  "id": "natural_character",
+  "name": "👤 Natural Character",
+  "description": "Поддерживает естественную внешность персонажа: узнаваемое лицо, пропорции, причёску, одежду и реалистичные особенности кожи.",
+  "instructions": [
+    "Natural believable character presentation. Preserve consistent facial structure, body proportions, hairstyle, clothing and recognizable physical features. Realistic skin texture, subtle imperfections and natural posture."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Персонаж",
+  "icon": "sparkles",
+  "tone": "teal",
+  "custom": true
+}

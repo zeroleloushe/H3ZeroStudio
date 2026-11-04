@@ -245,10 +245,23 @@ export function installGallery(Editor, { C, h, ICON }) {
         "sep",
         ref ? { label: e.active ? T("✓ Активный дубль на таймлайне") : T("✓ Выбрать этот дубль (отрезок {0})", ref.i + 1), fn: () => this.selectTake(ref.i, ref.take.id), dis: e.active || busy || !!this.seg(ref.i)?.freeze } : null,
         { icon: ICON.film || "", label: T("На таймлайн (футаж)"), title: T("Добавить видео в конец таймлайна как футаж (как есть)"), fn: () => { const id = this.galAsset(e); if (id) this.addFootage(id); }, dis: !e.video },
-        seg ? { label: T("В референсы отрезка {0} (<Video>)", this.sel + 1), fn: () => { const id = this.galAsset(e); if (id && !this.seg().refs.includes(id)) this.toggleRef(this.sel, id); }, dis: !e.video } : null,
+        seg ? { icon: ICON.link || "", label: T("В референсы отрезка {0} (<Video>)", this.sel + 1), fn: () => { const id = this.galAsset(e); if (id && !this.seg().refs.includes(id)) this.toggleRef(this.sel, id); }, dis: !e.video } : null,
         ref && isSeg && e.kind !== "upscale" ? { label: T("↑ Апскейл отрезка"), title: T("Выбрать этот дубль и увеличить отрезок (метод по умолчанию)"), fn: () => { if (!e.active) this.selectTake(ref.i, ref.take.id, true); this.upscaleSeg(ref.i, this.upDefault()); }, dis: busy } : null,
         ref && e.kind === "draft" ? { label: T("↑ Финал из черновика"), fn: () => { if (!e.active) this.selectTake(ref.i, ref.take.id, true); this.finalFromDraft([ref.i]); }, dis: busy } : null,
         "sep",
+        { label: T("ℹ Параметры генерации"), title: T("Окно с промптом, моделью, LoRA, сидом, шагами, разрешением и апскейлом этого результата; можно скопировать промпт"), fn: () => {
+          const ref = this.galRef(e);
+          this.openGenMeta({ segIndex: ref?.i, take: ref?.take, gallery: e });
+        } },
+        { label: T("↺ Повторить"), title: this.galRef(e)?.i >= 0 ? T("Восстановить промпт и настройки этого результата в отрезок") : T("Недоступно: итоговый ролик собран из всех отрезков и не привязан к одному отрезку. «Повторить» работает для дублей отрезков"), fn: () => {
+          const ref = this.galRef(e);
+          if (!(ref?.i >= 0)) return this.toast(T("Нет отрезка для «Повторить»"), true);
+          this.repeatFromMeta({ segIndex: ref.i, prompt: e.prompt || ref.take?.snap?.prompt || "",
+            refs: ref.take?.snap?.refs || this.seg(ref.i)?.refs || [], cards: ref.take?.snap?.cards || [],
+            up: ref.take?.snap?.upscale || e.upscale, ov: ref.take?.snap?.overrides || {},
+            mp: ref.take?.psnap?.mp || null, st: ref.take?.psnap?.settings || null,
+            models: e.models, seed: e.seed, kind: e.kind });
+        }, dis: !(this.galRef(e)?.i >= 0) },
         { label: T("💾 Сохранить в папку…"), fn: () => this.galSave(e), dis: !e.video },
         { label: e.fav ? T("☆ Убрать из избранного") : T("★ В избранное"), fn: () => this.galFav(e) },
         "sep",

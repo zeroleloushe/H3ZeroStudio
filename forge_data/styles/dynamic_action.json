@@ -1,0 +1,14 @@
+{
+  "id": "dynamic_action",
+  "name": "⚡ Dynamic Action Camera",
+  "description": "Энергичная съёмка динамики с быстрым сопровождением, резкими панорамами и реалистичной тряской камеры во время движения.",
+  "instructions": [
+    "Dynamic action camera movement with fast reactive tracking, rapid pans, quick reframing and energetic changes in direction. Strong but physically believable shake during impacts, running and sudden movements. The camera may briefly fall behind the action before catching up. Pronounced natural motion blur, subtle rolling shutter and realistic lens distortion."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Камера и композиция",
+  "icon": "camera",
+  "tone": "orange",
+  "custom": true
+}

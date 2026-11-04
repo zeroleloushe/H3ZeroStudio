@@ -1,0 +1,14 @@
+{
+  "id": "anamorphic_epic",
+  "name": "🎥 Anamorphic Epic",
+  "description": "Эпичный широкоэкранный кинообраз с объёмной глубиной, овальным боке и характерными горизонтальными бликами анаморфотной оптики.",
+  "instructions": [
+    "Large-format anamorphic cinema aesthetic. Controlled cinematic camera movement, shallow depth of field, strong subject separation and pronounced spatial depth. Subtle anamorphic lens characteristics including gentle horizontal flare, oval bokeh and mild edge distortion."
+  ],
+  "priority": 50,
+  "enabled": false,
+  "category": "Кинематографичный",
+  "icon": "clapperboard",
+  "tone": "rose",
+  "custom": true
+}

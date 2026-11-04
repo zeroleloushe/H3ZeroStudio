@@ -85,6 +85,13 @@ export const MT_CSS = `
 .h3z-lp .row .d{font-size:10.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;max-width:45%}
 .h3z-lp .row.back{color:var(--mut)}
 .h3z-lp .empty{padding:12px;color:var(--mut)}
+
+.h3z-lp-prev{position:fixed;z-index:100010;pointer-events:none;max-width:min(280px,40vw);max-height:min(280px,40vh);
+  padding:6px;border-radius:12px;background:var(--panel2);border:1px solid var(--line2);
+  box-shadow:0 16px 40px rgba(0,0,0,.55);backdrop-filter:blur(14px) saturate(140%);overflow:hidden}
+.h3z-lp-prev::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--grad);opacity:.9}
+.h3z-lp-prev img,.h3z-lp-prev video{display:block;max-width:100%;max-height:min(260px,38vh);border-radius:8px;background:#0a0c14}
+.h3z-lp-prev .cap{margin-top:4px;font-size:10.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 `;
 
 export function installModelTab(Editor, { C, h }) {
@@ -178,7 +185,7 @@ export function installModelTab(Editor, { C, h }) {
           const hits = files.filter((f) => terms.every((t) => f.toLowerCase().includes(t)));
           for (const f of hits.slice(0, 400)) {
             const dir = parts(f).slice(0, -1).join(" / ");
-            rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f)), dir ? h("span", { class: "d" }, dir) : null), () => pick(f)]);
+            rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f)), dir ? h("span", { class: "d" }, dir) : null), () => pick(f), f]);
           }
           if (!hits.length) ls.append(h("div", { class: "empty" }, T("Ничего не найдено")));
         } else {
@@ -195,13 +202,70 @@ export function installModelTab(Editor, { C, h }) {
           if (path.length) rows.push([row("back", IC.back, h("span", { class: "n" }, T("Назад"))), () => { path = path.slice(0, -1); hi = 0; paint(); }]);
           for (const [d, c] of [...sub].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: "base" })))
             rows.push([row("fold", IC.folder, h("span", { class: "n" }, d), h("span", { class: "c", title: T("{0} файл.", c) }, String(c))), () => { path = [...path, d]; hi = 0; paint(); }]);
-          for (const f of here) rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f))), () => pick(f)]);
+          for (const f of here) rows.push([row(f === cur ? "cur" : "", IC.file, h("span", { class: "n" }, stem(f))), () => pick(f), f]);
           if (!rows.length) ls.append(h("div", { class: "empty" }, T("Пусто")));
         }
         hi = Math.min(hi, Math.max(0, rows.length - 1));
-        rows.forEach(([el, fn], j) => { el.onclick = fn; if (j === hi) el.classList.add("hi"); ls.append(el); });
+        rows.forEach(([el, fn, file], j) => {
+          el.onclick = fn;
+          if (j === hi) el.classList.add("hi");
+          if (file) {
+            el.addEventListener("pointerenter", (ev) => showPrev(file, ev));
+            el.addEventListener("pointermove", (ev) => movePrev(ev));
+            el.addEventListener("pointerleave", hidePrev);
+          }
+          ls.append(el);
+        });
       };
-      const close = () => { pop.remove(); document.removeEventListener("pointerdown", outside, true); setTimeout(() => this.focusSink?.(), 0); };
+      const prevCache = this._loraPrevCache || (this._loraPrevCache = new Map());   // file -> 'yes'|'no'|HTMLImageElement|HTMLVideoElement
+      let prevEl = null, prevFile = null, prevTimer = 0;
+      const hidePrev = () => { clearTimeout(prevTimer); prevTimer = 0; prevEl?.remove(); prevEl = null; prevFile = null; };
+      const placePrev = (ev) => {
+        if (!prevEl) return;
+        const pad = 14, vw = window.innerWidth, vh = window.innerHeight;
+        const w = prevEl.offsetWidth || 200, hh = prevEl.offsetHeight || 160;
+        let x = ev.clientX + pad, y = ev.clientY + pad;
+        if (x + w > vw - 8) x = ev.clientX - w - pad;
+        if (y + hh > vh - 8) y = ev.clientY - hh - pad;
+        prevEl.style.left = Math.max(8, x) + "px";
+        prevEl.style.top = Math.max(8, y) + "px";
+      };
+      const movePrev = (ev) => { if (prevEl) placePrev(ev); };
+      const showPrev = (file, ev) => {
+        if (prevFile === file && prevEl) { placePrev(ev); return; }
+        hidePrev();
+        prevFile = file;
+        const cached = prevCache.get(file);
+        if (cached === "no") return;
+        const url = "/h3zero/lora/preview?file=" + encodeURIComponent(file);
+        const mount = (media) => {
+          if (prevFile !== file) return;
+          hidePrev();
+          prevFile = file;
+          prevEl = h("div", { class: "h3z-lp-prev" }, media, h("div", { class: "cap", title: file }, stem(file)));
+          (this.root || document.body).append(prevEl);
+          placePrev(ev);
+        };
+        if (cached && cached !== "yes") { mount(cached.cloneNode(true)); return; }
+        prevTimer = setTimeout(async () => {
+          try {
+            const r = await fetch(url, { method: "GET" });
+            if (!r.ok) { prevCache.set(file, "no"); return; }
+            const ct = (r.headers.get("content-type") || "").toLowerCase();
+            const blob = await r.blob();
+            const obj = URL.createObjectURL(blob);
+            let media;
+            if (ct.startsWith("video/") || /\.(mp4|webm)(\?|$)/i.test(file)) {
+              media = h("video", { src: obj, muted: true, loop: true, autoplay: true, playsinline: true });
+            } else {
+              media = h("img", { src: obj, alt: stem(file) });
+            }
+            prevCache.set(file, media);
+            mount(media.cloneNode(true));
+          } catch (e) { prevCache.set(file, "no"); }
+        }, 120);
+      };
+      const close = () => { hidePrev(); pop.remove(); document.removeEventListener("pointerdown", outside, true); setTimeout(() => this.focusSink?.(), 0); };
       const outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
       pop._close = close;
       pop.addEventListener("mousedown", (e) => { if (e.target !== inp) e.preventDefault(); });   // clicks keep the search field focused

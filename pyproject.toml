@@ -4,7 +4,7 @@ description = "CapCut-style timeline editor for MiniMax H3 video inside ComfyUI:
 version = "1.0.2"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-# Everything it needs (torch, numpy, Pillow, av, aiohttp) ships with ComfyUI; see requirements.txt for the optional RTX VSR extra.
+# Everything it needs (torch, numpy, Pillow, av, aiohttp) ships with ComfyUI; see requirements.txt.
 dependencies = []
 classifiers = [
     "Operating System :: OS Independent",
