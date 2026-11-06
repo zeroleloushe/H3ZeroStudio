@@ -345,7 +345,8 @@ def test_editor_keeps_keyboard_sink_focused():
     src = pathlib.Path(ROOT, "web", "js", "h3s_editor.js").read_text(encoding="utf-8")
     assert 'class: "h3z-sink", readonly: true' in src
     assert "focusSink()" in src and 'classList?.contains("h3z-sink")' in src
-    assert "setTimeout(() => this.focusSink(), 0)" in src
+    assert "scheduleFocusSink()" in src
+    assert "this._ptrDown" in src and "this._keepChatSelect" in src
     assert "window.getSelection()" in src and "sel.isCollapsed" in src
     assert ".h3z-ast-bubble,.h3z-ast-reasonbody,.h3z-final" in src
 
@@ -497,7 +498,7 @@ def test_assistant_official_h3_rules_and_text_selection():
                    "For the target video, at 0.00 seconds into the target video",
                    "How the reference pictures align with the target video"):
         assert marker in src
-    assert ".h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text" in src
+    assert ".h3z-root .h3z-ast-bubble,.h3z-root .h3z-ast-bubble *,.h3z-root .h3z-ast-reasonbody,.h3z-root .h3z-ast-reasonbody *{user-select:text!important;-webkit-user-select:text!important}" in src
 
 
 @need_node

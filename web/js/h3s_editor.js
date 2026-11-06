@@ -184,7 +184,9 @@ export class H3Editor {
     if (a?.closest?.(".h3z-lp")) return;   // the LoRA picker (a popover on <body>) keeps its search field
     if (a?.closest?.(".h3z-monpop,.h3z-sysmon")) return;
     if (a && a !== this.$.sink && this.root.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
-    // Selecting chat (or other selectable) text: focusing the sink would collapse the selection and block copy.
+    // While the mouse is down, refocusing the sink cancels an in-progress chat selection
+    // (focusout fires on mousedown, before the selection exists).
+    if (this._ptrDown) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.rangeCount) {
       const node = sel.anchorNode;
@@ -192,6 +194,13 @@ export class H3Editor {
       if (el && this.root.contains(el)) return;
     }
     this.$.sink.focus({ preventScroll: true });
+  }
+
+  scheduleFocusSink() {
+    clearTimeout(this._sinkT);
+    if (this._ptrDown) return;
+    const delay = this._keepChatSelect ? 400 : 0;
+    this._sinkT = setTimeout(() => this.focusSink(), delay);
   }
 
   /** Re-read the project from the node (e.g. workflow reloaded) when closed. */
@@ -301,8 +310,14 @@ export class H3Editor {
     // It ignores keys while an <input> has focus, so the editor keeps focus on this hidden read-only input.
     $.sink = h("input", { class: "h3z-sink", readonly: true, tabindex: "-1", "aria-hidden": "true", autocomplete: "off" });
     this.root.append($.sink, $.head, $.body, $.splitT, $.tl);
-    this.root.addEventListener("focusout", () => setTimeout(() => this.focusSink(), 0));
-    this.root.addEventListener("pointerup", () => setTimeout(() => this.focusSink(), 0));
+    this.root.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      this._ptrDown = true;
+      clearTimeout(this._sinkT);
+      this._keepChatSelect = !!e.target?.closest?.(".h3z-ast-bubble,.h3z-ast-reasonbody,.h3z-final");
+    });
+    this.root.addEventListener("focusout", () => this.scheduleFocusSink());
+    this.root.addEventListener("pointerup", () => this.scheduleFocusSink());
     this.buildCenter();
     this.buildTimeline();
     // drag&drop / paste must never reach ComfyUI (it would load a workflow / paste nodes)
@@ -371,16 +386,25 @@ export class H3Editor {
     this._keyup = (e) => { if (this.root) e.stopPropagation(); };
     this._paste = (e) => this.onPaste(e);
     this._resize = () => { if (this._rsz) return; this._rsz = requestAnimationFrame(() => { this._rsz = 0; if (this.root) { applyUiScale(uiScaleSetting(), false, this.root); this.applyLayout(); this.renderTimeline(); this.layoutStage(); } }); };
+    this._ptrEnd = () => {
+      if (!this._ptrDown) return;
+      this._ptrDown = false;
+      this.scheduleFocusSink();
+    };
     window.addEventListener("keydown", this._key, true);
     window.addEventListener("keyup", this._keyup, true);
     document.addEventListener("paste", this._paste, true);
     window.addEventListener("resize", this._resize);
+    window.addEventListener("pointerup", this._ptrEnd, true);
+    window.addEventListener("pointercancel", this._ptrEnd, true);
   }
   unbindGlobal() {
     window.removeEventListener("keydown", this._key, true);
     window.removeEventListener("keyup", this._keyup, true);
     document.removeEventListener("paste", this._paste, true);
     window.removeEventListener("resize", this._resize);
+    window.removeEventListener("pointerup", this._ptrEnd, true);
+    window.removeEventListener("pointercancel", this._ptrEnd, true);
   }
 
   renderAll() {

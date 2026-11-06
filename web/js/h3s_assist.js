@@ -71,7 +71,7 @@ const ASSIST_CSS = `
 .h3z-ast-msg{min-width:0;width:100%;padding:10px;font-size:12.5px}
 .h3z-ast-msg .h3z-card-h h4{font-size:12px;font-weight:650}
 .h3z-ast-msg.user{border-color:color-mix(in srgb,var(--a1) 28%,transparent);background:color-mix(in srgb,var(--a1) 8%,var(--panel))}
-.h3z-ast-bubble,.h3z-ast-bubble *,.h3z-ast-reasonbody{user-select:text;-webkit-user-select:text}
+.h3z-root .h3z-ast-bubble,.h3z-root .h3z-ast-bubble *,.h3z-root .h3z-ast-reasonbody,.h3z-root .h3z-ast-reasonbody *{user-select:text!important;-webkit-user-select:text!important}
 .h3z-ast-bubble{white-space:normal;word-break:break-word;overflow-wrap:anywhere;font-size:12.5px;font-weight:400;line-height:1.5;min-width:0;background:transparent;border:none;padding:0;margin:0;box-shadow:none}
 .h3z-ast-msg .h3z-row{gap:5px;flex-wrap:wrap;margin-top:6px}
 .h3z-ast-msg .h3z-btn{font-weight:500}
