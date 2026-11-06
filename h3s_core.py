@@ -860,18 +860,18 @@ def normalize_upscale_profiles(st):
     (the profiles are the source: seg_upscale only selects the method). Older settings had one flat set
     (seg_upscale + upscale_chunk_sec / _overlap): it becomes the profile of the selected method, the other
     methods get their defaults (same size, own σ, chunks on for latent, off for tiles)."""
-    su = st["seg_upscale"]
+    seg_upscale = st["seg_upscale"]
     raw = st.get("upscale_profiles")
     if not isinstance(raw, dict) or not any(isinstance(raw.get(m), dict) for m in SEG_UPSCALE_METHODS):
         cs, co = _num(st.get("upscale_chunk_sec"), 5.0), st.get("upscale_chunk_overlap", 1)
-        size = {k: su[k] for k in ("mp", "scale") if k in su}
+        size = {k: seg_upscale[k] for k in ("mp", "scale") if k in seg_upscale}
         raw = {}
         for m in SEG_UPSCALE_METHODS:
-            base = {k: v for k, v in su.items() if k != "method"} if m == su["method"] else {**size, "sigma": SEG_UPSCALE_SIGMA[m]}
-            on = cs > 0 if m == su["method"] else UPSCALE_CHUNK_DEFAULT[m]
+            base = {k: v for k, v in seg_upscale.items() if k != "method"} if m == seg_upscale["method"] else {**size, "sigma": SEG_UPSCALE_SIGMA[m]}
+            on = cs > 0 if m == seg_upscale["method"] else UPSCALE_CHUNK_DEFAULT[m]
             raw[m] = {**base, "chunk": on, "chunk_sec": cs if cs > 0 else 5.0, "chunk_overlap": co}
     st["upscale_profiles"] = {m: normalize_upscale_profile(m, raw.get(m)) for m in SEG_UPSCALE_METHODS}
-    st["seg_upscale"] = profile_upscale(st, su["method"])
+    st["seg_upscale"] = profile_upscale(st, seg_upscale["method"])
 
 
 def upscale_profile(settings, method):
