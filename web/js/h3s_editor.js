@@ -1247,7 +1247,7 @@ export class H3Editor {
   buildTimeline() {
     const $ = this.$;
     $.zoomR = h("input", { class: "h3z-range", type: "range", min: 0, max: 100, step: 1, value: 0, title: T("Масштаб (Ctrl+колесо, + / −)") });
-    $.zoomR.oninput = () => { this.zoom = zoomOf(Number($.zoomR.value)); this.syncZoomUI(); this.renderTimeline(); this.scrollToPlayhead(); };
+    $.zoomR.oninput = () => { this.zoomTo(zoomOf(Number($.zoomR.value))); this.scrollToPlayhead(); };
     $.endIn = h("input", { class: "h3z-in sm", type: "number", step: "0.1", min: 0.5, title: T("Длина ролика в секундах: всё, что за маркером конца, не генерируется") });
     $.endIn.onchange = () => { const v = Number($.endIn.value); this.setEnd(v > 0 ? Math.round(v * C.FPS) : 0); };
     $.endAuto = h("div", { class: "h3z-pills h3z-endmode" },
@@ -1330,14 +1330,42 @@ export class H3Editor {
     window.addEventListener("pointermove", move, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
   }
 
+  /** Zoom by a factor; clientX (screen px) anchors the frame under the cursor. */
   setZoomBy(f, clientX) {
     const $ = this.$, r = $.tscroll.getBoundingClientRect();
-    const cx = clientX !== undefined ? clientX - r.left : $.tscroll.clientWidth / 2;
+    // clientX/r.left are screen px; scrollLeft and ppf are local (pre-zoom) px → divide by the UI scale
+    const cx = clientX !== undefined ? (clientX - r.left) / this.uiS : $.tscroll.clientWidth / 2;
+    this.zoomTo(this.zoom * f, cx);
+  }
+  /** Set the zoom, keeping the frame under cx (local px inside the scroller; default: centre).
+   *  Fast path: rescale the existing DOM in place (no rebuild) and rebuild exactly once the gesture pauses. */
+  zoomTo(z, cx) {
+    const $ = this.$; if (!$.tscroll) return;
+    if (cx === undefined) cx = $.tscroll.clientWidth / 2;
     const fx = ($.tscroll.scrollLeft + cx) / this.ppf;
-    this.zoom = clamp(this.zoom * f, ZMIN, ZMAX);
+    this.zoom = clamp(z, ZMIN, ZMAX);
     this.syncZoomUI();
-    this.renderTimeline();
+    if (this._ppfLock || !this.zoomPreview()) this.renderTimeline();   // mid-drag / no DOM yet: exact rebuild as before
+    else this.scheduleZoomRender();
     $.tscroll.scrollLeft = fx * this.ppf - cx;
+  }
+  /** Cheap live preview of a zoom step: one GPU-composited scaleX() on the timeline content (no per-node work, no
+   *  layout). It is only a preview: scheduleZoomRender() rebuilds the timeline exactly once the gesture pauses, and
+   *  we rebuild at once when the scale drifted more than 2x from what is drawn (so nothing gets visibly stretched). */
+  zoomPreview() {
+    const $ = this.$, inner = $.tinner; if (!inner || !inner.firstChild || !this._ppfR) return false;
+    const total = Math.max(this.contentFrames(), this.totalFrames(), 24 * 5);
+    const viewW = Math.max(200, $.tscroll.clientWidth - 170);
+    const nppf = Math.max(0.002, viewW / total * this.zoom), k = nppf / this._ppfR;
+    if (!(k >= 0.5 && k <= 2)) return false;
+    inner.style.transformOrigin = "0 0";
+    inner.style.transform = Math.abs(k - 1) < 1e-9 ? "" : `scaleX(${k})`;
+    this._ppf = nppf;   // pointer maths (frameAt, drags) stays consistent with what is on screen
+    return true;
+  }
+  scheduleZoomRender() {
+    clearTimeout(this._zrT);
+    this._zrT = setTimeout(() => { this._zrT = 0; if (this.root) this.renderTimeline(); }, 140);
   }
   fitZoom() { this.zoom = 1; this.syncZoomUI(); this.renderTimeline(); this.$.tscroll.scrollLeft = 0; }
   syncZoomUI() { const z = this.$.zoomR; if (!z) return; z.value = zoomPos(this.zoom); z.style.setProperty("--p", z.value + "%"); }
@@ -1392,6 +1420,8 @@ export class H3Editor {
   }
 
   get ppf() { return this._ppf || 1; }
+  /** UI scale factor (CSS zoom of the root). Pointer deltas / offsets from clientX are in screen px; timeline math is in local px. */
+  get uiS() { return uiScaleFactor() || 1; }
 
   syncTimelineMetrics() {
     const $ = this.$, lanes = this.audioLanes?.() || [0, 1, 2];
@@ -1405,6 +1435,7 @@ export class H3Editor {
   }
 
   renderTimeline() {
+    if (this._zrT) { clearTimeout(this._zrT); this._zrT = 0; }
     this.$.magBtn?._paint?.(); // undo / settings may have flipped «🧲 Магнит»
     const $ = this.$; if (!$.tinner) return;
     this.syncTimelineMetrics();
@@ -1420,9 +1451,9 @@ export class H3Editor {
       ppf = Math.max(0.002, viewW / total * this.zoom);   // = the lock unless the zoom limits were hit
       this.syncZoomUI();
     }
-    this._ppf = ppf;
+    this._ppf = this._ppfR = ppf;
     const W = Math.max($.tscroll.clientWidth, Math.ceil(total * ppf) + 150);
-    const inner = $.tinner; inner.innerHTML = ""; inner.style.width = W + "px";
+    const inner = $.tinner; inner.innerHTML = ""; inner.style.width = W + "px"; inner.style.transform = "";
     // ruler
     const ruler = h("div", { class: "h3z-ruler", title: T("Клик / перетаскивание — переместить плейхед") });
     const pps = ppf * C.FPS;
@@ -1562,7 +1593,7 @@ export class H3Editor {
 
   scrollToPlayhead() { const $ = this.$; $.tscroll.scrollLeft = Math.max(0, this.playhead * this.ppf - $.tscroll.clientWidth / 2); }
 
-  frameAt(clientX) { const r = this.$.tinner.getBoundingClientRect(); return (clientX - r.left) / this.ppf; }
+  frameAt(clientX) { const r = this.$.tinner.getBoundingClientRect(); return (clientX - r.left) / this.uiS / this.ppf; }
 
   scrubStart(e) {
     e.preventDefault();
@@ -1583,7 +1614,7 @@ export class H3Editor {
     const its = this.items();
     const centers = its.map((it, k) => ((it.start + (k ? it.overlap : 0) + it.end) / 2) * this.ppf);
     const move = (ev) => {
-      const dx = ev.clientX - sx;
+      const dx = (ev.clientX - sx) / this.uiS;
       if (!dragging && Math.abs(dx) > 5 && this.p.segments.length > 1) { dragging = true; clip.classList.add("dragging"); ins = h("div", { class: "h3z-ins" }); clip.parentElement.append(ins); }
       if (!dragging) return;
       clip.style.transform = `translateX(${dx}px) translateY(-4px)`;
@@ -1656,7 +1687,7 @@ export class H3Editor {
     let last = null;
     const move = (ev) => {
       const ripple = ev.shiftKey;
-      let k = Math.round((ev.clientX - sx) / this.ppf / 17);
+      let k = Math.round((ev.clientX - sx) / this.uiS / this.ppf / 17);
       const kMinA = Math.ceil((minA - fa0) / 17), kMaxA = Math.floor((C.MAX_FRAMES - fa0) / 17);
       k = clamp(k, kMinA, kMaxA);
       if (!ripple) k = clamp(k, Math.ceil((fb0 - C.MAX_FRAMES) / 17), Math.floor((fb0 - minB) / 17));

@@ -9,10 +9,12 @@ export function installPolish(Editor, { C, h, ICON }) {
       const box = h("div", { class: "strip" });
       if (!res.strip_n) { box.style.backgroundImage = `url("${this.host.url(res.strip)}")`; clip.append(box); return; }
       const clipH = this.timelineVideoHeight || 110;
-      const [w, hh] = C.resolution(this.p.settings), tw = Math.max(24, clipH * w / hh), n = res.strip_n;
+      const [w, hh] = C.resolution(this.p.settings), n = res.strip_n;
+      const MAXT = 200;   // DOM cap per clip: when the clip is wider than MAXT natural tiles (high zoom) the tiles are widened to still cover it all
+      const tw = Math.max(24, clipH * w / hh, wd / MAXT);
       const url = this.host.url(res.strip), frames = res.frames || it.frames;
       box.classList.add("tiles");
-      const count = Math.min(200, Math.ceil(wd / tw));
+      const count = Math.min(MAXT, Math.ceil(wd / tw));
       for (let k = 0; k < count; k++) {
         const f = fileOff + ov + (k * tw + tw / 2) / this.ppf;
         const idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
@@ -27,7 +29,7 @@ export function installPolish(Editor, { C, h, ICON }) {
         const s = this.p.segments[i], res = s?.result, it = this.items()[i];
         if (!res?.strip_n || !it) return this.hideHover();
         const r = clip.getBoundingClientRect(), ov = i > 0 ? it.overlap : 0;
-        const f = ov + (e.clientX - r.left) / this.ppf, n = res.strip_n, frames = res.frames || it.frames;
+        const f = ov + (e.clientX - r.left) / this.uiS / this.ppf, n = res.strip_n, frames = res.frames || it.frames;
         const idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
         const [w, hh] = C.resolution(this.p.settings), W = 176, H = Math.round(W * hh / w);
         let hv = this.$.hover;

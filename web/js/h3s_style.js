@@ -1194,6 +1194,10 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 @media (max-width:1400px) {
   .h3z-head .h3z-chips .h3z-chip.c-steps, .h3z-head .h3z-chips .h3z-chip.c-time { display:none; }
 }
+/* perf: backdrop-filter re-blurs the whole panel area on every repaint under it (playhead, scrubbing, scrolling, video
+   frames); the 2 largest panels alone are ~1.4 Mpx. The panels sit on a flat background, so the blur is practically
+   invisible while costing ~5x frame time. Fills are untouched; only the blur is dropped. */
+.h3z-glass { backdrop-filter:none; -webkit-backdrop-filter:none; }
 `;
 
 export function injectStyle() {

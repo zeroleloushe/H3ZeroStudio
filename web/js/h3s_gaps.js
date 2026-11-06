@@ -31,7 +31,7 @@ export function installGaps(Editor, { C, h }) {
       const tip = h("div", { class: "h3z-tip" }); document.body.append(tip);
       let first = true, cur = g0;
       const move = (ev) => {
-        const g = Math.max(0, Math.min(C.MAX_GAP, g0 + Math.round((ev.clientX - sx) / this.ppf)));
+        const g = Math.max(0, Math.min(C.MAX_GAP, g0 + Math.round((ev.clientX - sx) / this.uiS / this.ppf)));
         tip.style.left = ev.clientX + 12 + "px"; tip.style.top = ev.clientY - 34 + "px";
         tip.textContent = g ? T("промежуток {0} кадр. · {1} с", g, (g / C.FPS).toFixed(2)) : T("без промежутка");
         if (g === cur) return;
@@ -77,7 +77,7 @@ export function installGaps(Editor, { C, h }) {
       const centers = its.map((it, k) => ((it.start + (k ? it.overlap : 0) + it.end) / 2) * this.ppf);
       let dragging = false, cur = g0, first = true, target = i, ins = null, tip = null;
       const move = (ev) => {
-        const dx = ev.clientX - sx;
+        const dx = (ev.clientX - sx) / this.uiS;
         if (!dragging && Math.abs(dx) < 5) return;
         if (!dragging) {
           if (this.run?.active) { this.toast(T("Идёт генерация — клипы двигаются после неё"), true); window.removeEventListener("pointermove", move); return; }

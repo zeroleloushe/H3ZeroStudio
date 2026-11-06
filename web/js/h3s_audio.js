@@ -277,7 +277,7 @@ export function installAudio(Editor, { C, h, ICON }) {
         const id = e.dataTransfer.getData("application/x-h3s-audio"); if (!id) return;
         e.preventDefault(); e.stopPropagation();
         const r = at.getBoundingClientRect();
-        this.addAudioClip(id, Math.max(0, this.frameAt(e.clientX) / C.FPS), this.audioLaneAt(e.clientY - r.top));
+        this.addAudioClip(id, Math.max(0, this.frameAt(e.clientX) / C.FPS), this.audioLaneAt((e.clientY - r.top) / this.uiS));
       });
     },
 
@@ -290,14 +290,14 @@ export function installAudio(Editor, { C, h, ICON }) {
       let moved = false;
       const tip = h("div", { class: "h3z-tip" }); document.body.append(tip);
       const move = (ev) => {
-        const dt = (ev.clientX - sx) / pps;
+        const dt = (ev.clientX - sx) / this.uiS / pps;
         if (!moved && Math.abs(ev.clientX - sx) < 3 && Math.abs(ev.clientY - sy) < 6) return;
         moved = true;
         let st = c0.start, tin = c0.in, len = sp0.len, lane = c0.lane;
         if (kind === "move") {
           st = Math.max(0, snap(c0.start + dt));
           const lanes = this.audioLanes(), row = Math.max(0, lanes.indexOf(c0.lane));
-          lane = lanes[Math.max(0, Math.min(lanes.length - 1, row + Math.round((ev.clientY - sy) / (LANE_H + LANE_GAP))))];
+          lane = lanes[Math.max(0, Math.min(lanes.length - 1, row + Math.round((ev.clientY - sy) / this.uiS / (LANE_H + LANE_GAP))))];
         } else if (kind === "l") {
           const d = Math.max(-Math.min(c0.in, c0.start), Math.min(dt, sp0.len - 0.2));
           st = snap(c0.start + d); tin = Math.max(0, snap(c0.in + d)); len = sp0.len - (st - c0.start);

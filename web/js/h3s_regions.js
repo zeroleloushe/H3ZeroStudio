@@ -189,7 +189,7 @@ export function installRegions(Editor, { C, h, ICON }) {
       const sx = e.clientX, s0 = rg0.start, e0 = rg0.end;
       const tip = h("div", { class: "h3z-tip" }); let moved = false;
       const move = (ev) => {
-        const dx = (ev.clientX - sx) / this.ppf;
+        const dx = (ev.clientX - sx) / this.uiS / this.ppf;
         if (!moved && Math.abs(ev.clientX - sx) < 3) return;
         if (!moved) document.body.append(tip);
         moved = true;
@@ -243,13 +243,13 @@ export function installRegions(Editor, { C, h, ICON }) {
       core.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); this.selRegion = rg.id; this.renderTimeline(); this.spanMenu(e, rg.id); });
       core.addEventListener("pointermove", (e) => {                     // hover: the take's frame under the cursor
         if (e.buttons || !n) return this.hideHover?.();
-        const r = core.getBoundingClientRect(), f = off + (e.clientX - r.left) / ppf, idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
+        const r = core.getBoundingClientRect(), f = off + (e.clientX - r.left) / this.uiS / ppf, idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
         const W = 176, HH = Math.round(W * vh / vw);
         let hv = this.$.hover;
         if (!hv) { hv = this.$.hover = h("div", { class: "h3z-hover" }, h("div", { class: "im" }), h("span")); this.root.append(hv); }
         const im = hv.firstChild; im.style.width = W + "px"; im.style.height = HH + "px";
         im.style.backgroundImage = `url("${url}")`; im.style.backgroundSize = `${n * W}px ${HH}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
-        hv.lastChild.textContent = `${C.fmtTime((w.a + (e.clientX - r.left) / ppf) / C.FPS)} · ${name.toLowerCase()} ${this.regionNo(rg.id)}` + (tk.fresh ? "" : T(" · устарел"));
+        hv.lastChild.textContent = `${C.fmtTime((w.a + (e.clientX - r.left) / this.uiS / ppf) / C.FPS)} · ${name.toLowerCase()} ${this.regionNo(rg.id)}` + (tk.fresh ? "" : T(" · устарел"));
         uiPlaceAtClient(e.clientX - W / 2 - 12, r.top, hv, this.root, { offsetX: 12, offsetY: -(HH + 34) });
         this.showHover(hv, core);
       });

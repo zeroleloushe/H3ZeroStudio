@@ -139,6 +139,17 @@ export function uiPlaceAtClient(clientX, clientY, el, root = null, opts = {}) {
   const pad = opts.pad ?? 8;
   const ox = opts.offsetX ?? 12;
   const oy = opts.offsetY ?? -34;
+  // An element that lives OUTSIDE the zoomed root (e.g. a drag tip appended to <body>) is not zoomed itself:
+  // it must be placed in plain viewport px, not in the root's local (pre-zoom) px.
+  const zroot = uiScaleRoot(root);
+  if (zroot && !zroot.contains(el)) {
+    const bw = window.innerWidth || 1600, bh = window.innerHeight || 900;
+    const w0 = el.offsetWidth || 0, h0 = el.offsetHeight || 0;
+    const l0 = Math.max(pad, Math.min(clientX + ox, bw - w0 - pad));
+    const t0 = Math.max(pad, Math.min(clientY + oy, bh - h0 - pad));
+    el.style.left = l0 + "px"; el.style.top = t0 + "px"; el.style.right = "auto"; el.style.bottom = "auto";
+    return { left: l0, top: t0, w: w0, h: h0 };
+  }
   const bounds = uiLocalBounds(root);
   const pt = uiLocalPoint(clientX + ox, clientY + oy, root);
   const w = el.offsetWidth || Math.round(uiLocalSize(el.getBoundingClientRect().width));

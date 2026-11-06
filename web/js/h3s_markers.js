@@ -50,7 +50,7 @@ export function installMarkers(Editor, { C, h, ICON }) {
       const sx = e.clientX, f0 = m0.frame;
       let moved = false;
       const move = (ev) => {
-        const dx = ev.clientX - sx;
+        const dx = (ev.clientX - sx) / this.uiS;
         if (!moved && Math.abs(dx) < 3) return;
         const f = Math.max(0, Math.round(f0 + dx / this.ppf));
         if (!moved || this.marker(id)?.frame !== f) {
