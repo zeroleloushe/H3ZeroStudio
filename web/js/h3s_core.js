@@ -174,19 +174,19 @@ export function normalizeUpscaleProfile(m, p) {
   return out;
 }
 export function normalizeUpscaleProfiles(st) {
-  const su = st.seg_upscale;
+  const seg_upscale = st.seg_upscale;
   let raw = st.upscale_profiles;
   if (!raw || typeof raw !== "object" || !SEG_UPSCALE_METHODS.some((m) => raw[m] && typeof raw[m] === "object")) {
-    const cs = num(st.upscale_chunk_sec, 5.0), co = st.upscale_chunk_overlap ?? 1, size = pick(su, ["mp", "scale"]);
+    const cs = num(st.upscale_chunk_sec, 5.0), co = st.upscale_chunk_overlap ?? 1, size = pick(seg_upscale, ["mp", "scale"]);
     raw = {};
     for (const m of SEG_UPSCALE_METHODS) {
-      const base = m === su.method ? pick(su, UPSCALE_UP_FIELDS) : { ...size, sigma: SEG_UPSCALE_SIGMA[m] };
-      raw[m] = { ...base, chunk: m === su.method ? cs > 0 : UPSCALE_CHUNK_DEFAULT[m], chunk_sec: cs > 0 ? cs : 5.0, chunk_overlap: co };
+      const base = m === seg_upscale.method ? pick(seg_upscale, UPSCALE_UP_FIELDS) : { ...size, sigma: SEG_UPSCALE_SIGMA[m] };
+      raw[m] = { ...base, chunk: m === seg_upscale.method ? cs > 0 : UPSCALE_CHUNK_DEFAULT[m], chunk_sec: cs > 0 ? cs : 5.0, chunk_overlap: co };
     }
   }
   const out = {}; for (const m of SEG_UPSCALE_METHODS) out[m] = normalizeUpscaleProfile(m, raw[m]);
   st.upscale_profiles = out;
-  st.seg_upscale = profileUpscale(st, su.method);
+  st.seg_upscale = profileUpscale(st, seg_upscale.method);
 }
 export function upscaleProfile(s, method) { const pr = (s.upscale_profiles || {})[method]; return pr && typeof pr === "object" ? pr : normalizeUpscaleProfile(method, null); }
 export function profileUpscale(s, method) { return normalizeUpscale({ ...pick(upscaleProfile(s, method), UPSCALE_UP_FIELDS), method }); }

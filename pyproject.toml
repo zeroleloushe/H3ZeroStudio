@@ -1,7 +1,7 @@
 [project]
 name = "h3zerostudio"
 description = "CapCut-style timeline editor for MiniMax H3 video inside ComfyUI: multi-segment long videos with per-segment prompts and references, seamless continuations, bridges, takes, character cards (RefMod-compatible), upscale and export."
-version = "1.0.4"
+version = "1.0.5"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 # Everything it needs (torch, numpy, Pillow, av, aiohttp) ships with ComfyUI; see requirements.txt.
