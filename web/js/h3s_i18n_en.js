@@ -2258,6 +2258,8 @@ export default {
   "Тёплый графит с янтарными акцентами": "Warm graphite with amber accents",
   "Тема: {0}": "Theme: {0}",
   "Тема интерфейса": "Interface theme",
+  "Размытие панелей": "Panel blur",
+  "Стеклянный эффект панелей. Выключение может сделать интерфейс чуть быстрее.": "Glass effect on panels. Turning it off can make the interface a bit faster.",
   "Масштаб интерфейса студии": "Studio UI scale",
   "{0}%": "{0}%",
   "Сообщения появятся после запуска генерации": "Messages will appear after generation starts",

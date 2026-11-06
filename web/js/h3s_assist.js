@@ -124,7 +124,7 @@ const ASSIST_CSS = `
 .h3z-ast-reason summary::-webkit-details-marker{display:none}
 .h3z-ast-reasondot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--a1);margin-right:6px;vertical-align:middle;flex:none}
 .h3z-ast-reason.live .h3z-ast-reasondot{animation:h3zAstPulse 1s infinite alternate}
-.h3z-ast-reasonbody{max-height:120px;overflow:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;background:transparent}
+.h3z-ast-reasonbody{max-height:120px;overflow:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;background:transparent;contain:content}
 @media (max-width:360px){.h3z-ast-stylelist{grid-template-columns:1fr}}
 `;
 
@@ -257,8 +257,8 @@ export function astMd(raw) {
 function astFillMd(el, raw) {
   if (!el) return;
   const text = raw == null ? "" : String(raw);
-  if (el.dataset.mdRaw === text) return;
-  el.dataset.mdRaw = text;
+  if (el._mdRaw === text) return;
+  el._mdRaw = text;
   el.innerHTML = astMd(text);
 }
 
@@ -535,8 +535,18 @@ export function installAssist(Editor, { C, h, ICON }) {
       if (cfg.auto_unload && cfg.api_model) this._astUnloadT = setTimeout(() => this.astUnload(true), cfg.auto_unload_delay * 1000);
     },
     astPaintStatus() {
-      this.renderAssistHead?.();
-      const old = this._ast?.el.querySelector(".h3z-ast-conn");
+      const A = this._ast;
+      if (!A?.el) return;
+      const st = this.astStatusView();
+      const btn = A.el.querySelector(".h3z-ast-status");
+      if (btn) {
+        btn.className = "h3z-ast-status " + st.cls;
+        btn.title = st.tip || st.text;
+        btn.setAttribute("aria-label", st.tip || st.text);
+        const label = btn.querySelector("span");
+        if (label) label.textContent = st.text;
+      }
+      const old = A.el.querySelector(".h3z-ast-conn");
       if (old) old.replaceWith(this.astConnectionState());
     },
     astOpenSettings(tab = "connection") {
@@ -684,10 +694,10 @@ export function installAssist(Editor, { C, h, ICON }) {
             if (data.kind === "stats") stats = data.text;
             if (data.kind === "reasoning") reasoning += data.text;
             if (data.kind === "token") answer += data.text;
-            if (data.kind === "reasoning" || data.kind === "token") {
-              this.astPaintStream(answer, reasoning);
-              const log = A.el.querySelector(".h3z-ast-log"); if (log) log.scrollTop = log.scrollHeight;
-            }
+          }
+          if (answer || reasoning) {
+            this.astPaintStream(answer, reasoning);
+            const log = A.el.querySelector(".h3z-ast-log"); if (log) log.scrollTop = log.scrollHeight;
           }
         }
         if (!answer.trim()) throw new Error(T("API вернул пустой ответ"));
@@ -717,6 +727,18 @@ export function installAssist(Editor, { C, h, ICON }) {
         h("div", { class: "h3z-ast-reasonbody", dataset: { mdRaw: text || "" }, html: astMd(text) }));
     },
     astPaintStream(answer, reasoning) {
+      const A = this._ast;
+      if (!A) return;
+      A._streamAnswer = answer;
+      A._streamReasoning = reasoning;
+      if (A._streamRaf) return;
+      const paint = () => {
+        A._streamRaf = 0;
+        this.astFlushStream(A._streamAnswer, A._streamReasoning);
+      };
+      A._streamRaf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(paint) : (paint(), 0);
+    },
+    astFlushStream(answer, reasoning) {
       const pending = this._ast?.el.querySelector(".h3z-ast-msg.pending"); if (!pending) return;
       const bubble = pending.querySelector(".tx"); if (bubble) astFillMd(bubble, answer);
       let details = pending.querySelector(".h3z-ast-reason");
@@ -731,7 +753,16 @@ export function installAssist(Editor, { C, h, ICON }) {
       if (details) {
         const body = details.querySelector(".h3z-ast-reasonbody");
         const active = !answer;
-        astFillMd(body, reasoning);
+        if (active) {
+          if (body && body._plainRaw !== reasoning) {
+            body._plainRaw = reasoning;
+            body._mdRaw = undefined;
+            body.textContent = reasoning;
+          }
+        } else {
+          if (body) body._plainRaw = undefined;
+          astFillMd(body, reasoning);
+        }
         details.querySelector("summary span").textContent = active ? T("Модель размышляет…") : T("Размышления модели");
         details.classList.toggle("live", active);
         if (active) {
@@ -1055,11 +1086,11 @@ export function installAssist(Editor, { C, h, ICON }) {
       const title = st.state === "connected" ? T("Подключено к API") : st.state === "checking" ? T("Проверяем соединение…") : st.state === "error" ? T("Не удалось подключиться") : T("Соединение ещё не проверено");
       const detail = st.state === "connected" ? T("Список моделей получен: {0}", st.models.length) : st.error || T("Нажмите «Подключить». Адрес и ключ будут проверены через GET /models.");
       const cls = st.state === "error" ? "warn" : st.state === "connected" ? "ok" : "";
-      return h("div", { class: "h3z-note" + (cls ? " " + cls : "") }, h("b", null, title), h("div", null, detail));
+      return h("div", { class: "h3z-note h3z-ast-conn" + (cls ? " " + cls : "") }, h("b", null, title), h("div", null, detail));
     },
     astSetConnection() {
       const cfg = this.p.assistant.cfg, st = this._ast.status;
-      const base = h("input", { class: "h3z-in", type: "url", value: cfg.api_base, placeholder: "http://127.0.0.1:1234/v1", spellcheck: "false", "data-ast-cfg": "api_base" });
+      const base = h("input", { class: "h3z-in", type: "text", inputmode: "url", value: cfg.api_base, placeholder: "http://127.0.0.1:1234/v1", spellcheck: "false", "data-ast-cfg": "api_base", autocomplete: "off" });
       base.oninput = () => this.astText("api_base", base, true);
       const key = h("input", { class: "h3z-in", type: "password", value: cfg.api_key, placeholder: "sk-…", autocomplete: "off", spellcheck: "false", "data-ast-cfg": "api_key" });
       key.oninput = () => this.astText("api_key", key, true);

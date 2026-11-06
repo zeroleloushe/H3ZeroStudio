@@ -70,8 +70,42 @@ def test_lora_preview_prefers_preview_png_and_civitai_local(lora_tree, tmp_path)
     assert p2 and os.path.basename(p2) == "thumb.webp"
 
 
+def test_lora_preview_ignores_video_siblings(lora_tree):
+    root, _ = lora_tree
+    weight = root / "noisy.safetensors"
+    weight.write_bytes(b"x")
+    (root / "noisy.mp4").write_bytes(b"vid")
+    (root / "noisy.webm").write_bytes(b"vid")
+    (root / "noisy.preview.mp4").write_bytes(b"vid")
+    (root / "noisy.safetensors.preview.mp4").write_bytes(b"vid")
+    assert hm.lora_preview_path("noisy.safetensors") is None
+    (root / "sub" / "cool.mp4").write_bytes(b"vid")
+    (root / "sub" / "cool.preview.mp4").write_bytes(b"vid")
+    p = hm.lora_preview_path("sub/cool.safetensors")
+    assert p and os.path.basename(p) == "cool.png"
+
+
+def test_lora_preview_skips_civitai_video_and_uses_image(lora_tree):
+    root, _ = lora_tree
+    weight = root / "mix.safetensors"
+    weight.write_bytes(b"x")
+    (root / "clip.mp4").write_bytes(b"vid")
+    (root / "still.webp").write_bytes(b"WEBP")
+    (root / "mix.civitai.info").write_text(json.dumps({
+        "preview": "clip.mp4",
+        "images": [
+            {"url": "clip.mp4", "type": "video"},
+            {"url": "still.webp", "type": "image"},
+        ],
+    }), encoding="utf-8")
+    p = hm.lora_preview_path("mix.safetensors")
+    assert p and os.path.basename(p) == "still.webp"
+
+
 def test_lora_preview_route_registered():
     src = open(os.path.join(os.path.dirname(__file__), "..", "routes.py"), encoding="utf-8").read()
     assert '/h3zero/lora/preview' in src and "lora_preview_path" in src
     js = open(os.path.join(os.path.dirname(__file__), "..", "web", "js", "h3s_modeltab.js"), encoding="utf-8").read()
     assert "h3z-lp-prev" in js and "/h3zero/lora/preview?file=" in js
+    assert 'h("video"' not in js
+    assert "kind.startsWith(\"video/\")" in js

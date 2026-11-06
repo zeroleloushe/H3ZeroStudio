@@ -184,6 +184,13 @@ export class H3Editor {
     if (a?.closest?.(".h3z-lp")) return;   // the LoRA picker (a popover on <body>) keeps its search field
     if (a?.closest?.(".h3z-monpop,.h3z-sysmon")) return;
     if (a && a !== this.$.sink && this.root.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+    // Selecting chat (or other selectable) text: focusing the sink would collapse the selection and block copy.
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.rangeCount) {
+      const node = sel.anchorNode;
+      const el = node && (node.nodeType === 1 ? node : node.parentElement);
+      if (el && this.root.contains(el)) return;
+    }
     this.$.sink.focus({ preventScroll: true });
   }
 
@@ -294,14 +301,18 @@ export class H3Editor {
     // It ignores keys while an <input> has focus, so the editor keeps focus on this hidden read-only input.
     $.sink = h("input", { class: "h3z-sink", readonly: true, tabindex: "-1", "aria-hidden": "true", autocomplete: "off" });
     this.root.append($.sink, $.head, $.body, $.splitT, $.tl);
-    this.root.addEventListener("focusout", () => setTimeout(() => { if (!this._ast) this.focusSink(); }, 0));
-    this.root.addEventListener("pointerup", () => setTimeout(() => { if (!this._ast) this.focusSink(); }, 0));
+    this.root.addEventListener("focusout", () => setTimeout(() => this.focusSink(), 0));
+    this.root.addEventListener("pointerup", () => setTimeout(() => this.focusSink(), 0));
     this.buildCenter();
     this.buildTimeline();
     // drag&drop / paste must never reach ComfyUI (it would load a workflow / paste nodes)
     for (const ev of ["dragover", "drop", "dragenter"]) this.root.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); });
     this.root.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
-    this.root.addEventListener("contextmenu", (e) => { if (!isTyping(e)) e.preventDefault(); e.stopPropagation(); });
+    this.root.addEventListener("contextmenu", (e) => {
+      e.stopPropagation();
+      if (isTyping(e) || e.target?.closest?.(".h3z-ast-bubble,.h3z-ast-reasonbody,.h3z-final")) return;
+      e.preventDefault();
+    });
   }
 
   /** Panel sizes and visibility persist; automatic collapsing stops after the first manual choice. */
@@ -1773,8 +1784,10 @@ export class H3Editor {
       if (e.key === "Escape") { e.preventDefault(); this.monitorClose(); }
       return;
     }
-    if (this.tool === "assist" || this._ast) {
-      // Composer: Enter / Ctrl|Cmd+Enter send; Shift+Enter newline. Capture on window owns keys, so handle here.
+    // Composer keys: window capture + stopPropagation run before the textarea listener.
+    // Handle Enter (send) and Escape here, but do not swallow every other hotkey — and do
+    // not keep swallowing them after leaving the assistant tab (this._ast stays alive for drafts).
+    {
       const sel = "textarea.h3z-ast-input, .h3z-ast-compose textarea, .h3z-ast-inputbox textarea";
       const ta = e.target?.closest?.(sel) || (e.target?.matches?.(sel) ? e.target : null);
       if (ta && e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
@@ -1782,14 +1795,16 @@ export class H3Editor {
           e.preventDefault();
           if (!this._ast?.busy) this.astSend();
         }
-      } else if (e.key === "Escape" && !isTyping(e)) {
+        return;
+      }
+      if (this.tool === "assist" && e.key === "Escape" && !isTyping(e)) {
         e.preventDefault();
         if (this.$.menu) this.closeMenu();
         else if (this._ast?.setOpen) { this._ast.setOpen = false; this._ast.styleDraft = null; this.renderLeft(); }
-        else if (this.tool === "assist") { this.tool = "settings"; this.renderTools(); this.renderLeft(); }
+        else { this.tool = "settings"; this.renderTools(); this.renderLeft(); }
+        return;
       }
-      return;
-    }   // window capture stops events before the assistant's own listeners, so route composer keys here
+    }
     if (this.$.saveModal) { if (e.key === "Escape" && !isTyping(e)) { e.preventDefault(); this.closeSaveDialog(); } return; }
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
     if (k === "Escape") { e.preventDefault(); if (isTyping(e)) { e.target.blur(); this.focusSink(); } else if (this.$.menu) this.closeMenu(); else if (this.$.pop) this.toggleWarnings(); else if (this.regionMode) this.toggleRegionMode(false); else if (this.selRegion) { this.selRegion = null; this.renderTimeline(); } else if (this.selMarker) { this.selMarker = null; this.renderInspector(); this.renderTimeline(); } else if (this.selAudio) { this.selAudio = null; this.renderTimeline(); this.renderLeft(); } else this.close(); return; }

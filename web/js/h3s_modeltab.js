@@ -215,7 +215,7 @@ export function installModelTab(Editor, { C, h }) {
           ls.append(el);
         });
       };
-      const prevCache = this._loraPrevCache || (this._loraPrevCache = new Map());   // file -> 'yes'|'no'|HTMLImageElement|HTMLVideoElement
+      const prevCache = this._loraPrevCache || (this._loraPrevCache = new Map());   // file -> 'yes'|'no'|HTMLImageElement
       let prevEl = null, prevFile = null, prevTimer = 0;
       const hidePrev = () => { clearTimeout(prevTimer); prevTimer = 0; prevEl?.remove(); prevEl = null; prevFile = null; };
       const placePrev = (ev) => {
@@ -245,13 +245,10 @@ export function installModelTab(Editor, { C, h }) {
             if (!r.ok) { prevCache.set(file, "no"); return; }
             const ct = (r.headers.get("content-type") || "").toLowerCase();
             const blob = await r.blob();
+            const kind = ((blob.type || ct) || "").toLowerCase();
+            if (kind.startsWith("video/")) { prevCache.set(file, "no"); return; }
             const obj = URL.createObjectURL(blob);
-            let media;
-            if (ct.startsWith("video/") || /\.(mp4|webm)(\?|$)/i.test(file)) {
-              media = h("video", { src: obj, muted: true, loop: true, autoplay: true, playsinline: true });
-            } else {
-              media = h("img", { src: obj, alt: stem(file) });
-            }
+            const media = h("img", { src: obj, alt: stem(file) });
             prevCache.set(file, media);
             mount(media.cloneNode(true));
           } catch (e) { prevCache.set(file, "no"); }

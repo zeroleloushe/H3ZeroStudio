@@ -1,5 +1,6 @@
 import { T, langSetting, setLangSetting } from "./h3s_i18n.js";
 import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings } from "./h3s_theme.js";
+import { uiBlurEnabled, applyUiBlur } from "./h3s_ui_blur.js";
 // «Настройки»: the rarely changed, set-once settings in their own rail tab — generation stages (1 / 2) with the
 // parameters of each stage, upscale, extension and audio seams, cache, live preview, logging and the status of
 // the models. They are global (stored by the server in output/h3zerostudio/_settings.json and shared by all
@@ -523,7 +524,13 @@ export function installSettings(Editor, { C, h, ICON }) {
         const themeWarn = themeWarnings().length ? h("div", { class: "h3z-note warn" }, T("Темы: {0}", themeWarnings().slice(0, 3).join("; "))) : null;
         return h("div", { class: "h3z-themerow" }, h("span", { class: "h3z-lbl" }, T("Тема интерфейса"), h("em", null, T("пакеты — после Ctrl+F5"))), themeGrid, themeWarn);
       });
-      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, scope, tabs, ...cur[2]);
+      const blurRow = this._safeSection(T("Размытие панелей"), () => this.toggle(
+        T("Размытие панелей"),
+        uiBlurEnabled(),
+        (v) => { applyUiBlur(v, true); this.renderLeft(); },
+        T("Стеклянный эффект панелей. Выключение может сделать интерфейс чуть быстрее.")
+      ));
+      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, blurRow, scope, tabs, ...cur[2]);
       L.append(head, body);
       this._setOpen = null;
       this.keepDetails(L);

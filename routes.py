@@ -309,7 +309,7 @@ def register():
 
     @routes.get("/h3zero/lora/preview")
     async def lora_preview(request):
-        """Serve a LoRA's local preview image/video (only under ComfyUI loras folders)."""
+        """Serve a LoRA's local preview image (only under ComfyUI loras folders)."""
         from . import h3s_models as hm
         name = request.query.get("file") or request.query.get("name") or ""
         try:

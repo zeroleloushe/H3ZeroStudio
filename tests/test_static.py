@@ -345,7 +345,9 @@ def test_editor_keeps_keyboard_sink_focused():
     src = pathlib.Path(ROOT, "web", "js", "h3s_editor.js").read_text(encoding="utf-8")
     assert 'class: "h3z-sink", readonly: true' in src
     assert "focusSink()" in src and 'classList?.contains("h3z-sink")' in src
-    assert 'setTimeout(() => { if (!this._ast) this.focusSink(); }, 0)' in src
+    assert "setTimeout(() => this.focusSink(), 0)" in src
+    assert "window.getSelection()" in src and "sel.isCollapsed" in src
+    assert ".h3z-ast-bubble,.h3z-ast-reasonbody,.h3z-final" in src
 
 
 def test_end_marker_and_audio_clips(h3s):

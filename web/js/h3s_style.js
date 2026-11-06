@@ -1,5 +1,6 @@
 import { T } from "./h3s_i18n.js";
 import { applyTheme } from "./h3s_theme.js";
+import { applyUiBlur } from "./h3s_ui_blur.js";
 // H3ZeroStudio styles (CapCut-like: deep navy-black, purple→cyan gradients, glassy rounded panels).
 export const CSS = String.raw`
 .h3z-root, .h3z-compact { --bg0:#05070f; --bg1:#0a0e1c; --bg2:#10152a; --panel:rgba(17,22,42,.72); --panel2:rgba(24,30,56,.78);
@@ -1194,14 +1195,21 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 @media (max-width:1400px) {
   .h3z-head .h3z-chips .h3z-chip.c-steps, .h3z-head .h3z-chips .h3z-chip.c-time { display:none; }
 }
-/* perf: backdrop-filter re-blurs the whole panel area on every repaint under it (playhead, scrubbing, scrolling, video
-   frames); the 2 largest panels alone are ~1.4 Mpx. The panels sit on a flat background, so the blur is practically
-   invisible while costing ~5x frame time. Fills are untouched; only the blur is dropped. */
-.h3z-glass { backdrop-filter:none; -webkit-backdrop-filter:none; }
+:root[data-h3z-ui-blur="off"] .h3z-root,
+:root[data-h3z-ui-blur="off"] .h3z-root *,
+:root[data-h3z-ui-blur="off"] .h3z-compact,
+:root[data-h3z-ui-blur="off"] .h3z-compact *,
+:root[data-h3z-ui-blur="off"] [class^="h3z-"],
+:root[data-h3z-ui-blur="off"] [class*=" h3z-"],
+:root[data-h3z-ui-blur="off"] .h3z-comp-ph::before {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 `;
 
 export function injectStyle() {
   applyTheme();
+  applyUiBlur();
   if (document.getElementById("h3z-style")) return;
   const s = document.createElement("style");
   s.id = "h3z-style";

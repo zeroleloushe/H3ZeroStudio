@@ -32,6 +32,21 @@ def test_assist_studio_layout_and_modes():
     assert 'type: "checkbox"' not in js
 
 
+
+def test_assist_api_field_and_chat_selection():
+    root = os.path.join(os.path.dirname(__file__), "..", "web", "js")
+    js = open(os.path.join(root, "h3s_assist.js"), encoding="utf-8").read()
+    ed = open(os.path.join(root, "h3s_editor.js"), encoding="utf-8").read()
+    paint = js.split("astPaintStatus() {")[1].split("astOpenSettings")[0]
+    assert "renderAssistHead" not in paint
+    assert "h3z-ast-status" in paint
+    assert 'class: "h3z-note h3z-ast-conn"' in js
+    assert 'type: "text", inputmode: "url"' in js
+    assert 'type: "url"' not in js
+    assert "sel.isCollapsed" in ed
+    assert ".h3z-ast-bubble,.h3z-ast-reasonbody,.h3z-final" in ed
+
+
 def test_llm_stats_include_ttft():
     from h3s import h3s_llm as llm
     import inspect

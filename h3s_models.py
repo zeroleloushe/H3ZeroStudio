@@ -117,8 +117,9 @@ def full_path(kind, name):
 
 LORA_PREVIEW_EXTS = (
     ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp", ".preview.gif",
-    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif",
 )
+LORA_PREVIEW_IMAGE_TAILS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
 
 def _lora_roots():
@@ -149,12 +150,21 @@ def _under_lora_roots(path, roots=None):
     return False
 
 
-def lora_preview_path(name):
-    """Local preview next to a LoRA file, or None. Only paths inside models/loras (+extras).
+def _is_lora_preview_image(path):
+    """True if path looks like a still-image preview (no video)."""
+    lower = os.path.basename(path).lower()
+    return any(lower.endswith(ext) for ext in LORA_PREVIEW_IMAGE_TAILS)
 
-    Same basename with .preview.png / .png / .jpg / .jpeg / .webp / .gif / .mp4 / .webm.
-    Optional .civitai.info preview / images[0].url: only a sibling local filename is tried
-    (remote URLs are never fetched).
+
+def lora_preview_path(name):
+    """Local still-image preview next to a LoRA file, or None.
+
+    Only paths inside models/loras (+extras). Same basename with
+    .preview.png / .png / .jpg / .jpeg / .webp / .gif. Video siblings
+    (.mp4 / .webm) are ignored: the picker shows images only.
+    Optional .civitai.info preview / images[].url: only a sibling local
+    image filename is tried (remote URLs are never fetched; video
+    entries are skipped).
     """
     if not isinstance(name, str) or not name.strip():
         return None
@@ -184,10 +194,15 @@ def lora_preview_path(name):
                 if isinstance(meta.get("preview"), str):
                     hints.append(meta["preview"])
                 imgs = meta.get("images")
-                if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
-                    url = imgs[0].get("url")
-                    if isinstance(url, str):
-                        hints.append(url)
+                if isinstance(imgs, list):
+                    for im in imgs:
+                        if not isinstance(im, dict):
+                            continue
+                        if str(im.get("type") or "").lower() == "video":
+                            continue
+                        url = im.get("url")
+                        if isinstance(url, str):
+                            hints.append(url)
             for h in hints:
                 h = (h or "").strip().replace("\\", "/")
                 if not h:
@@ -204,7 +219,7 @@ def lora_preview_path(name):
         if c in seen:
             continue
         seen.add(c)
-        if os.path.isfile(c) and _under_lora_roots(c, roots):
+        if os.path.isfile(c) and _under_lora_roots(c, roots) and _is_lora_preview_image(c):
             return c
     return None
 
