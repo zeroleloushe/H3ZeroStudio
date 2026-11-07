@@ -501,7 +501,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const tabs = h("div", { class: "h3z-settabs" }, ...TABS.map(([id, label]) => h("div", { class: "h3z-settab" + (id === cur[0] ? " on" : ""), onclick: () => { if (this._setTab === id) return; this._setTab = id; this.renderLeft(); } }, label)));
       cur[2].forEach((d) => { if (d && d.tagName === "DETAILS") d.open = true; });   // sections start open; download panel is a plain div
       // UI language (global, every project): Auto follows ComfyUI's language (Comfy.Locale); a switch reloads the page
-      const lsel = h("select", { class: "h3z-sel sm" }, [["auto", T("Авто (как в ComfyUI)")], ["ru", T("Русский")], ["en", "English"]].map(([v, l]) => h("option", { value: v, selected: langSetting() === v }, l)));
+      const lsel = h("select", { class: "h3z-sel sm" }, [["auto", T("Авто (как в ComfyUI)")], ["ru", T("Русский")], ["en", "English"], ["th", "ไทย"], ["zh", "中文"]].map(([v, l]) => h("option", { value: v, selected: langSetting() === v }, l)));
       lsel.onchange = () => { if (setLangSetting(lsel.value)) this.toast(T("Язык сменится после перезагрузки страницы"), false, { label: T("Перезагрузить"), fn: () => location.reload() }); };
       const langRow = h("div", { class: "h3z-langrow" }, h("span", { class: "h3z-lbl" }, "🌐 " + T("Язык интерфейса")), lsel);
       const welcomeLink = h("button", { class: "h3z-btn sm", style: "margin-left:8px", title: T("Показать приветствие и статус моделей"),

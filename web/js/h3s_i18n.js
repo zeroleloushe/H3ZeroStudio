@@ -1,18 +1,23 @@
-// H3ZeroStudio UI language. The Russian source string is the key: t("Текст {0}", x) → EN from h3s_i18n_en.js, else
-// the Russian text (fallback). Pure module (no DOM needed) so node tests and h3s_core.js can use it.
+// H3ZeroStudio UI language. The Russian source string is the key: t("Текст {0}", x) → the UI language's dictionary
+// (h3s_i18n_en/th/zh.js), a key missing there → English, else the Russian text (fallback). Pure module (no DOM needed) so node tests and h3s_core.js can use it.
 import EN from "./h3s_i18n_en.js";
+import TH from "./h3s_i18n_th.js";
+import ZH from "./h3s_i18n_zh.js";
 
-const KEY = "h3zs.lang";          // "auto" | "ru" | "en" (global, every project)
+const KEY = "h3zs.lang";          // "auto" | "ru" | "en" | "th" | "zh" (global, every project)
 const AUTO = "h3zs.lang.auto";    // the ComfyUI locale seen last time (Comfy.Locale), for «Авто» before settings load
 const ls = () => { try { return globalThis.localStorage || null; } catch { return null; } };
 
-export const LANGS = ["auto", "ru", "en"];
+export const LANGS = ["auto", "ru", "en", "th", "zh"];
+/** Translated UI languages; Thai and Chinese fall back to English for keys they lack (and for the help). */
+const DICTS = { en: EN, th: TH, zh: ZH };
+const tr = (k) => { const v = DICTS[LANG]?.[k]; return v !== undefined ? v : EN[k]; };
 export function langSetting() { const v = ls()?.getItem(KEY); return LANGS.includes(v) ? v : "auto"; }
 function resolve(set) {
-  if (set === "ru" || set === "en") return set;
+  if (set !== "auto" && LANGS.includes(set)) return set;
   if (!ls()) return "ru";   // node (tests, core parity): the Russian source
   const loc = ls()?.getItem(AUTO) || globalThis.navigator?.language || "ru";
-  return /^ru\b/i.test(loc) ? "ru" : "en";
+  return /^ru\b/i.test(loc) ? "ru" : /^th\b/i.test(loc) ? "th" : /^zh\b/i.test(loc) ? "zh" : "en";
 }
 let LANG = resolve(langSetting());
 export const lang = () => LANG;
@@ -27,13 +32,13 @@ export function setLangForTests(l) { LANG = l; }
 const fill = (s, a) => (a.length ? s.replace(/\{(\d+)\}/g, (m, i) => (a[i] === undefined ? m : a[i])) : s);
 /** Translate a Russian source string; {0}, {1}… are filled from the arguments. */
 export function t(ru, ...a) {
-  const s = LANG === "en" ? (EN[ru] ?? ru) : ru;
+  const s = LANG === "ru" ? ru : (tr(ru) ?? ru);
   return fill(s, a);
 }
-/** Plural: Russian 3 forms (1 / 2–4 / 5+); English uses the first and the third translated. */
+/** Plural: Russian 3 forms (1 / 2–4 / 5+); other languages use the first and the third translated. */
 export function plural(n, one, few, many) {
   n = Math.abs(Number(n) || 0);
-  if (LANG === "en") return n === 1 ? one : many;
+  if (LANG !== "ru") return n === 1 ? one : many;
   const m = n % 10, mm = n % 100;
   return m === 1 && mm !== 11 ? one : m >= 2 && m <= 4 && (mm < 10 || mm >= 20) ? few : many;
 }
@@ -41,7 +46,7 @@ export function plural(n, one, few, many) {
 const SRV_FIELDS = new Set(["error", "message", "what", "stage", "label", "text", "err", "note", "msg", "reason", "status_text", "detail", "hint"]);
 /** Translate the human-readable fields of a server payload (progress / run status) in place. */
 export function tDeep(o, depth = 3) {
-  if (LANG !== "en" || !o || typeof o !== "object" || depth < 0) return o;
+  if (LANG === "ru" || !o || typeof o !== "object" || depth < 0) return o;
   for (const k of Object.keys(o)) {
     const v = o[k];
     if (typeof v === "string") { if (SRV_FIELDS.has(k)) o[k] = tServer(v); }
@@ -53,19 +58,19 @@ export function tDeep(o, depth = 3) {
 let PAT = null;
 const esc = (s) => s.replace(/[.*+?^$()|[\]\\]/g, "\\$&");
 export function tServer(msg) {
-  if (LANG !== "en" || !msg || !/[А-Яа-яЁё]/.test(msg)) return msg;
+  if (LANG === "ru" || !msg || !/[А-Яа-яЁё]/.test(msg)) return msg;
   msg = String(msg);
-  if (EN[msg] !== undefined) return EN[msg];
+  if (tr(msg) !== undefined) return tr(msg);
   if (!PAT) PAT = Object.keys(EN).filter((k) => /\{\d+\}/.test(k) && /[А-Яа-яЁё]{3}/.test(k.replace(/\{\d+\}/g, ""))).sort((a, b) => b.replace(/\{\d+\}/g, "").length - a.replace(/\{\d+\}/g, "").length).map((k) => {
     const parts = k.split(/(\{\d+\})/), idx = [];
     const re = parts.map((p) => { const m = /^\{(\d+)\}$/.exec(p); if (m) { idx.push(+m[1]); return "([\\s\\S]*?)"; } return esc(p).replace(/\{/g, "\\{").replace(/\}/g, "\\}"); }).join("");
-    return { re: new RegExp("^" + re + "$"), idx, en: EN[k] };
+    return { re: new RegExp("^" + re + "$"), idx, key: k };
   });
   // longest literal parts first: the most specific pattern wins
-  for (const p of PAT) { const m = p.re.exec(msg); if (m) { const a = []; p.idx.forEach((i, j) => { a[i] = tServer(m[j + 1]); }); return fill(p.en, a); } }
+  for (const p of PAT) { const m = p.re.exec(msg); if (m) { const a = []; p.idx.forEach((i, j) => { a[i] = tServer(m[j + 1]); }); return fill(tr(p.key), a); } }
   // composite messages ("Не создалась: <server text>") — translate the pieces around ": "
   const i = msg.indexOf(": ");
-  if (i > 0) { const h = msg.slice(0, i + 2), r = msg.slice(i + 2); const th = EN[h] ?? EN[h.trim()], tr = tServer(r); if (th !== undefined || tr !== r) return (th !== undefined ? th + (th.endsWith(" ") ? "" : " ") : h) + tr; }
+  if (i > 0) { const h = msg.slice(0, i + 2), r = msg.slice(i + 2); const th = tr(h) ?? tr(h.trim()), rest = tServer(r); if (th !== undefined || rest !== r) return (th !== undefined ? th + (th.endsWith(" ") ? "" : " ") : h) + rest; }
   return msg;
 }
 export const T = t;

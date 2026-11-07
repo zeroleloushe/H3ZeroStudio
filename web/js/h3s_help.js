@@ -4,8 +4,8 @@ import { HELP_EN } from "./h3s_help_en.js";
 // «Справка»: a beginner's manual inside the studio. The left panel holds search + table of contents, the
 // content opens wide over the player and the right panel (collapsible sections, several columns on wide
 // screens). Only features that exist in the code are described.
-/** Help sections [id, title, html] in the UI language. */
-export const HELP = () => (lang() === "en" ? HELP_EN : HELP_RU);
+/** Help sections [id, title, html] in the UI language (Russian or English; Thai and Chinese show the English help). */
+export const HELP = () => (lang() === "ru" ? HELP_RU : HELP_EN);
 
 export function installHelp(Editor, { h }) {
   Object.assign(Editor.prototype, {

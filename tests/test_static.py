@@ -792,7 +792,7 @@ def test_help_colors_follow_interface_theme():
 # ---------------------------------------------------------------- i18n (RU source → EN dictionary)
 import re
 CYR = re.compile(r"[А-Яа-яЁё]")
-I18N_SKIP = {"h3s_i18n.js", "h3s_i18n_en.js", "h3s_help_ru.js", "h3s_prompt_library.js"}   # dictionaries and source-language content
+I18N_SKIP = {"h3s_i18n.js", "h3s_i18n_en.js", "h3s_i18n_th.js", "h3s_i18n_zh.js", "h3s_help_ru.js", "h3s_prompt_library.js"}   # dictionaries and source-language content
 I18N_ALLOW = {"H3ZeroStudio · Таймлайн", "максимум"}              # matched against Russian text on purpose
 
 
@@ -931,6 +931,75 @@ def test_help_has_english_version(tmp_path):
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o["ru"] == o["en"] and len(o["en"]) > 20
     assert not o["cyr"], o["cyr"][:20]
+
+
+I18N_EXTRA = {"th": ("h3s_i18n_th.js", "ไทย", re.compile(r"[\u0E00-\u0E7F]")), "zh": ("h3s_i18n_zh.js", "中文", re.compile(r"[\u4E00-\u9FFF]"))}
+
+
+def _dict_entries(name):
+    out = {}
+    for line in open(os.path.join(JS, name), encoding="utf-8"):
+        m = re.match(r'^\s*("(?:[^"\\]|\\.)*"):\s*("(?:[^"\\]|\\.)*"),?\s*$', line)
+        if m:
+            out[json.loads(m.group(1))] = json.loads(m.group(2))
+    return out
+
+
+def test_language_picker_lists_thai_and_chinese():
+    """Settings → interface language offers Thai and Chinese (native names) next to Auto / Russian / English."""
+    i18n = open(os.path.join(JS, "h3s_i18n.js"), encoding="utf-8").read()
+    settings = open(os.path.join(JS, "h3s_settings.js"), encoding="utf-8").read()
+    assert 'export const LANGS = ["auto", "ru", "en", "th", "zh"];' in i18n
+    assert 'import TH from "./h3s_i18n_th.js";' in i18n and 'import ZH from "./h3s_i18n_zh.js";' in i18n
+    assert '["en", "English"], ["th", "ไทย"], ["zh", "中文"]]' in settings
+    assert settings.count('["th", "ไทย"]') == 1 and settings.count('["zh", "中文"]') == 1   # one picker, no duplicates
+    assert 'h("select", { class: "h3z-sel sm" }, [["auto"' in settings   # the same picker control as before
+
+
+@pytest.mark.parametrize("code", sorted(I18N_EXTRA))
+def test_extra_ui_dictionary_matches_english(code):
+    """th/zh: every key exists in the English dictionary, {0}… holes and <tags> match it, the text is in the language
+    (no Russian left); keys they lack fall back to English at runtime. No help file is needed for them."""
+    name, label, script = I18N_EXTRA[code]
+    en, d = _dict_entries("h3s_i18n_en.js"), _dict_entries(name)
+    assert len(d) > 0.95 * len(en)
+    assert set(d) <= set(en), sorted(set(d) - set(en))[:10]
+    holes = lambda s: sorted(re.findall(r"\{\d+\}|<\/?[A-Za-z][^<>]*?(?=[\s>])|&[a-z]+;", s))
+    bad = [k for k, v in d.items() if holes(v) != holes(en[k])]
+    assert not bad, bad[:10]
+    assert not [v for v in d.values() if CYR.search(v)]
+    assert sum(1 for v in d.values() if script.search(v)) > 0.9 * len(d)
+    assert not os.path.exists(os.path.join(JS, f"h3s_help_{code}.js"))   # the help is not translated: English is shown
+
+
+@need_node
+def test_i18n_thai_chinese_runtime(tmp_path):
+    """Thai / Chinese: T() uses their dictionary, a missing key falls back to English, then to Russian; plurals use
+    the one/many forms; server messages are translated; the help panel shows the English help (not empty)."""
+    js = tmp_path / "tz.mjs"
+    js.write_text(textwrap.dedent(f"""
+        const I = await import({json.dumps(pathlib.Path(JS, "h3s_i18n.js").as_uri())});
+        const H = await import({json.dumps(pathlib.Path(JS, "h3s_help.js").as_uri())});
+        const E = await import({json.dumps(pathlib.Path(JS, "h3s_help_en.js").as_uri())});
+        const R = await import({json.dumps(pathlib.Path(JS, "h3s_help_ru.js").as_uri())});
+        const r = {{ langs: I.LANGS, ruHelp: H.HELP() === R.HELP_RU }};
+        for (const l of ["th", "zh"]) {{
+          I.setLangForTests(l);
+          r[l] = {{ seg: I.T("Отрезок {{0}}", 3), lang: I.T("Язык интерфейса"), miss: I.T("Нет такой строки {{0}}", 1),
+            pl: [I.plural(1, "a", "b", "c"), I.plural(3, "a", "b", "c")], srv: I.tServer("Генерация прервана"),
+            help: H.HELP() === E.HELP_EN && H.HELP().length > 20, helpTitle: I.T("Справка H3ZeroStudio") }};
+        }}
+        console.log(JSON.stringify(r));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(js)], capture_output=True, text=True, timeout=60, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["langs"] == ["auto", "ru", "en", "th", "zh"] and o["ruHelp"]
+    assert o["th"]["seg"] == "ช่วง 3" and o["zh"]["seg"] == "分段 3"
+    assert o["th"]["lang"] == "ภาษาของอินเทอร์เฟซ" and o["zh"]["lang"] == "界面语言"
+    for l in ("th", "zh"):
+        assert o[l]["miss"] == "Нет такой строки 1" and o[l]["pl"] == ["a", "c"] and o[l]["help"]
+        assert not CYR.search(o[l]["srv"]) and not CYR.search(o[l]["helpTitle"])
 
 
 def test_node_texts_are_english_with_russian_locale():

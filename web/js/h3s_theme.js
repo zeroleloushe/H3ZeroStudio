@@ -20,8 +20,8 @@ export function themeWarnings() { return _warnings; }
 export function allThemes() {
   return UI_THEMES.concat(_plugins.map((p) => ({
     id: p.id,
-    name: (lang() === "en" ? (p.name_en || p.name_ru) : (p.name_ru || p.name_en)) || p.id,
-    description: (lang() === "en" ? (p.description_en || p.description_ru) : (p.description_ru || p.description_en)) || "",
+    name: (lang() !== "ru" ? (p.name_en || p.name_ru) : (p.name_ru || p.name_en)) || p.id,
+    description: (lang() !== "ru" ? (p.description_en || p.description_ru) : (p.description_ru || p.description_en)) || "",
     swatches: p.swatches || ["#c0c0c0", "#000080", "#008080"],
     plugin: true,
     base: p.base || "dark",
