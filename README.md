@@ -6,6 +6,8 @@
 
 Длинные ролики из отрезков, у каждого свой промпт и референсы. Отрезки продолжают друг друга без швов, а персонажи остаются теми же.
 
+**Языки интерфейса:** русский · English · ไทย · 中文
+
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-6c47ff.svg)](https://github.com/comfyanonymous/ComfyUI)
 [![MiniMax H3](https://img.shields.io/badge/model-MiniMax%20H3-ff6a3d.svg)](#-модели)
@@ -180,7 +182,7 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 <tr><td><sub><b>«Настройки»:</b> этапы, параметры прохода, продление, кэш, превью, модели</sub></td><td><sub><b>«Апскейл»:</b> метод, итоговые Мп, σ; для плиток — сетка 3×3 и перекрытие</sub></td></tr>
 </table>
 
-**Язык интерфейса** — русский или английский: «Настройки» → 🌐 «Язык интерфейса» («Авто» — как в ComfyUI).
+**Язык интерфейса** — русский, English, ไทย и 中文: «Настройки» → 🌐 «Язык интерфейса» («Авто» — как в ComfyUI).
 
 В правой панели собрано то, что меняется часто: отрезок, общий промпт, негатив, разрешение и сид. Всё остальное — во вкладке **«Настройки»**. Глобальные настройки хранятся в `output/h3zerostudio/_settings.json`. Есть два режима: «Для всех проектов» и «Только этот проект».
 
@@ -385,7 +387,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 
 **H3ZeroStudio** is a CapCut-style timeline editor node for **MiniMax H3** in ComfyUI.
 
-The interface is available in English and Russian: «Settings» → 🌐 *Interface language* (Auto follows ComfyUI's language). The node is **“H3ZeroStudio · Timeline”**; with ComfyUI set to Russian, its name and tooltips are shown in Russian.
+The interface is available in Russian, English, Thai (ไทย) and Simplified Chinese (中文): «Settings» → 🌐 *Interface language* (Auto follows ComfyUI's language). The node is **“H3ZeroStudio · Timeline”**; with ComfyUI set to Russian, its name and tooltips are shown in Russian.
 
 - **Segments.** Build a long video from segments, each with its own prompt and reference images. *Extend* continues the previous segment: its latent tail is pinned and audio continues through H3's native denoise masks. *New scene* is a hard cut.
 - **Takes.** Keep up to 12 takes per segment. Only changed segments are re-generated, thanks to a content-hash cache.
