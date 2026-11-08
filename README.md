@@ -18,7 +18,13 @@
 
 💛 Проект бесплатный и открытый. Если он вам пригодился и хочется поддержать разработку, это можно сделать на [Boosty](https://boosty.to/zeroleloushe). Платных функций и подписок для доступа к ноде нет.
 
-🇹🇬 Для обсуждения ноды, пожеланий и вопросов заходи в группу TG [H3ZeroStudio (Comfy UI)(https://t.me/+Jh-mDY5nwOIyMTFi)]
+### 💬 Telegram Community / Telegram-сообщество
+
+🇬🇧 **For node discussions, feature requests, suggestions, and questions, join our Telegram group:**
+
+🇷🇺 **Для обсуждения ноды, пожеланий, предложений и вопросов присоединяйтесь к нашей группе в Telegram:**
+
+[![Telegram](https://img.shields.io/badge/Telegram-H3ZeroStudio-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+Jh-mDY5nwOIyMTFi)
 
 <a href="docs/promo.mp4"><img src="docs/images/promo.gif" alt="H3ZeroStudio: обзор функций за 53 секунды" width="100%"></a>
 
