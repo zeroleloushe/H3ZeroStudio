@@ -319,7 +319,7 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 
 ## 🎨 Темы / Themes
 
-Встроенные темы: Неон, Графит, Океан, Фарфор, Закат (Настройки → Тема интерфейса).
+Встроенные темы: Графит (по умолчанию), Неон, Океан, Фарфор, Закат и «Бонус: Windows 98» (Настройки → Тема интерфейса).
 
 **Сторонние пакеты тем** (переживают обновление ноды) кладутся в:
 
@@ -333,9 +333,9 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 Альтернатива рядом с нодой (в `.gitignore`): `themes_user/<theme_id>/`.
 После копирования — **Ctrl+F5**; тема появится в списке. Битые пакеты пропускаются с предупреждением.
 
-Пример оммажа Windows 98 распространяется отдельно (подписчикам Boosty), в репозиторий не входит.
+Оммаж Windows 98 теперь входит в ноду (`themes/win98/`, только CSS — без шрифтов и картинок Microsoft). Если раньше вы ставили его вручную, старая копия просто не покажется второй карточкой; её можно удалить.
 
-**Drop-in theme packs** that survive node updates go in `<ComfyUI>/user/default/H3ZeroStudio/themes/<id>/` (or `themes_user/` next to the node). Each pack needs `theme.json` + `theme.css` scoped to `:root[data-h3z-theme="<id>"]`. Hard-reload (Ctrl+F5) to pick them up in Settings.
+**Drop-in theme packs** that survive node updates go in `<ComfyUI>/user/default/H3ZeroStudio/themes/<id>/` (or `themes_user/` next to the node). Each pack needs `theme.json` + `theme.css` scoped to `:root[data-h3z-theme="<id>"]`. Hard-reload (Ctrl+F5) to pick them up in Settings. The «Bonus: Windows 98» pack now ships with the node (`themes/win98/`, pure CSS); Graphite is the default theme.
 
 ## ❓ FAQ
 

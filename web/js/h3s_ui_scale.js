@@ -2,13 +2,15 @@ import { T } from "./h3s_i18n.js";
 
 const KEY = "h3zs.uiScale";
 export const UI_SCALES = [75, 80, 90, 100, 110, 125];
+/** Studio scale of a fresh install (and of «Вернуть настройки по умолчанию»). */
+export const DEFAULT_UI_SCALE = 100;
 
 export function uiScaleSetting() {
   try {
     const n = Number(localStorage.getItem(KEY));
     if (UI_SCALES.includes(n)) return n;
   } catch {}
-  return 100;
+  return DEFAULT_UI_SCALE;
 }
 
 export function uiScaleFactor() {

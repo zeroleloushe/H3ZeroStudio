@@ -685,6 +685,7 @@ details.h3z-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3z-setbody .h3z-det .in { display:flex; flex-direction:column; gap:9px; }
 .h3z-setscope { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.025); }
 .h3z-setscope .h3z-btn { align-self:flex-start; }
+.h3z-setbody > .h3z-setreset { align-self:stretch; width:100%; min-width:0; height:auto; min-height:28px; padding:5px 10px; box-sizing:border-box; white-space:normal; overflow-wrap:anywhere; text-align:center; line-height:1.25; }
 .h3z-langrow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; } .h3z-langrow .h3z-lbl { margin:0; } .h3z-langrow .h3z-sel { flex:1 1 140px; min-width:0; max-width:220px; }
 .h3z-settabs { display:flex; flex-wrap:wrap; gap:4px; position:sticky; top:0; z-index:3; padding:8px 14px; margin:0 -14px 2px; background:var(--panel); backdrop-filter:blur(18px) saturate(140%); border-bottom:1px solid var(--line); }
 .h3z-settab { flex:1 1 auto; text-align:center; padding:7px 10px; border-radius:8px; cursor:pointer; font-size:12px; white-space:nowrap; color:#d6dafa; border:1px solid var(--line); background:rgba(255,255,255,.03); user-select:none; }

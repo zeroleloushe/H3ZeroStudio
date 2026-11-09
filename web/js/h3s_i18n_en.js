@@ -2439,6 +2439,17 @@ export default {
   "Опишите сцену или задайте вопрос ниже.": "Describe a scene or ask a question below.",
   "Стили — через «＋ Стили».": "Styles — via “＋ Styles”.",
   "Соседние отрезки: промпты и референсы предыдущего и следующего — удобно при продлении клипа.": "Neighbor clips: prompts and refs of the previous and next segments — handy when extending a clip.",
-  "＋ Стили ·{0}": "＋ Styles ·{0}"
-
+  "＋ Стили ·{0}": "＋ Styles ·{0}",
+  "Вернуть настройки по умолчанию": "Reset settings to defaults",
+  "↺ Вернуть настройки по умолчанию": "↺ Reset settings to defaults",
+  "↺ Вернуть настройки по умолчанию?": "↺ Reset settings to defaults?",
+  "Глобальные настройки и интерфейс — к значениям по умолчанию (API-ключи и проекты сохраняются)": "Global settings and interface back to defaults (API keys and projects are kept)",
+  "Настройки этого проекта — к глобальным (API-ключи и проекты сохраняются)": "This project's settings back to the global ones (API keys and projects are kept)",
+  "Настройки для всех проектов сброшены по умолчанию": "Settings for all projects reset to defaults",
+  "Настройки сброшены по умолчанию. Язык сменится после перезагрузки страницы": "Settings reset to defaults. The language changes after the page reloads",
+  "Настройки этого проекта сброшены к глобальным (Ctrl+Z — вернуть)": "This project's settings reset to the global ones (Ctrl+Z to undo)",
+  "Не удалось сбросить настройки: ": "Could not reset the settings: ",
+  "Сбрасываются глобальные настройки («Для всех проектов»): все вкладки ниже вернутся к значениям по умолчанию — в этом проекте и во всех проектах с «Для всех проектов». Язык интерфейса станет «Авто», тема — «{0}», размытие панелей включится, масштаб — {1}%.": "Resets the global settings (“For all projects”): every tab below returns to its defaults — in this project and in every project set to “For all projects”. Interface language becomes “Auto”, theme “{0}”, panel blur turns on, scale {1}%.",
+  "Сбрасываются настройки только этого проекта: все вкладки ниже снова станут как в глобальных настройках. Глобальные настройки, другие проекты, язык, тема и масштаб не меняются.": "Resets only this project's settings: every tab below matches the global settings again. Global settings, other projects, language, theme and scale stay as they are.",
+  "Сохраняются: API-ключи и адреса LLM, папки моделей, проекты (отрезки, промпты, ассеты), модели и кэш.": "Kept: LLM API keys and URLs, model folders, projects (segments, prompts, assets), models and cache.",
 };

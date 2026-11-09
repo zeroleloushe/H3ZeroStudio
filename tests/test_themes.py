@@ -1,6 +1,7 @@
 """Drop-in UI theme pack loader + safe file resolve."""
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -69,3 +70,15 @@ def test_missing_css_skipped(tmp_path, monkeypatch):
     listed = themes.list_themes()
     assert listed["themes"] == []
     assert any("missing" in w for w in listed["warnings"])
+
+
+def test_bundled_pack_ships_and_dedupes_local_copy(tmp_path, monkeypatch):
+    """themes/win98 is in the repo; an old local copy with the same id gives no second card and no warning."""
+    local = tmp_path / "user_themes"
+    shutil.copytree(os.path.join(themes.bundled_root(), "win98"), local / "win98")
+    monkeypatch.setattr(themes, "theme_roots", lambda: [themes.bundled_root(), str(local)])
+    listed = themes.list_themes()
+    assert listed["warnings"] == []
+    wins = [t for t in listed["themes"] if t["id"] == "win98"]
+    assert len(wins) == 1 and wins[0]["bundled"] and wins[0]["name_zh"] and wins[0]["name_th"]
+    assert os.path.realpath(themes.resolve_file("win98", "theme.css")).startswith(os.path.realpath(themes.bundled_root()))

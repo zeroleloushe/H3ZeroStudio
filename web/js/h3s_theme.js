@@ -1,6 +1,8 @@
 import { T, lang } from "./h3s_i18n.js";
 
 const KEY = "h3zs.theme";
+/** The theme of a fresh install (and of «Вернуть настройки по умолчанию»). */
+export const DEFAULT_THEME = "graphite";
 
 export const UI_THEMES = [
   { id: "neon", name: T("Неон"), description: T("Фирменная фиолетово-голубая тема"), swatches: ["#8b5cf6", "#22d3ee", "#0a0e1c"] },
@@ -17,11 +19,18 @@ let _warnings = [];
 export function pluginThemes() { return _plugins; }
 export function themeWarnings() { return _warnings; }
 
+/** A pack field in the UI language: name_<lang>, then English (non-ru) / Russian, then the other one. */
+function packText(p, field) {
+  const l = lang();
+  const ru = p[field + "_ru"], en = p[field + "_en"];
+  return (l === "ru" ? (ru || en) : (p[field + "_" + l] || en || ru)) || "";
+}
+
 export function allThemes() {
   return UI_THEMES.concat(_plugins.map((p) => ({
     id: p.id,
-    name: (lang() !== "ru" ? (p.name_en || p.name_ru) : (p.name_ru || p.name_en)) || p.id,
-    description: (lang() !== "ru" ? (p.description_en || p.description_ru) : (p.description_ru || p.description_en)) || "",
+    name: packText(p, "name") || p.id,
+    description: packText(p, "description"),
     swatches: p.swatches || ["#c0c0c0", "#000080", "#008080"],
     plugin: true,
     base: p.base || "dark",
@@ -34,7 +43,7 @@ export function themeSetting() {
     const value = localStorage.getItem(KEY);
     if (allThemes().some((theme) => theme.id === value)) return value;
   } catch {}
-  return "neon";
+  return DEFAULT_THEME;
 }
 
 function _ensurePluginCss(theme) {
@@ -52,7 +61,7 @@ function _ensurePluginCss(theme) {
 
 export function applyTheme(value, save = false) {
   const themes = allThemes();
-  const id = value === undefined ? themeSetting() : themes.some((theme) => theme.id === value) ? value : "neon";
+  const id = value === undefined ? themeSetting() : themes.some((theme) => theme.id === value) ? value : DEFAULT_THEME;
   if (save) { try { localStorage.setItem(KEY, id); } catch {} }
   const theme = themes.find((t) => t.id === id) || themes[0];
   if (typeof document !== "undefined") {

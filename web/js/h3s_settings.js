@@ -1,6 +1,7 @@
 import { T, langSetting, setLangSetting } from "./h3s_i18n.js";
-import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings } from "./h3s_theme.js";
-import { uiBlurEnabled, applyUiBlur } from "./h3s_ui_blur.js";
+import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings, DEFAULT_THEME } from "./h3s_theme.js";
+import { uiBlurEnabled, applyUiBlur, DEFAULT_UI_BLUR } from "./h3s_ui_blur.js";
+import { DEFAULT_UI_SCALE } from "./h3s_ui_scale.js";
 // «Настройки»: the rarely changed, set-once settings in their own rail tab — generation stages (1 / 2) with the
 // parameters of each stage, upscale, extension and audio seams, cache, live preview, logging and the status of
 // the models. They are global (stored by the server in output/h3zerostudio/_settings.json and shared by all
@@ -95,6 +96,54 @@ export function installSettings(Editor, { C, h, ICON }) {
       await this.globPut(this.globVals(), true);
       this.toast(T("Глобальные настройки = настройки этого проекта"));
       this.renderLeft();
+    },
+    /** «Вернуть настройки по умолчанию»: the values of a fresh project (C.DEFAULT_SETTINGS through normalizeProject). */
+    defaultGlobVals() { return JSON.parse(JSON.stringify(this.globVals(C.normalizeProject({}).settings))); },
+    /** Confirm in the H3 dialog (as «Удалить проект»); what is reset follows «Для всех проектов» / «Только этот проект». */
+    askResetSettings() {
+      this.closeSaveDialog?.();
+      const glob = this.globScope();
+      const themeName = allThemes().find((t) => t.id === DEFAULT_THEME)?.name || DEFAULT_THEME;
+      const go = h("button", { class: "h3z-btn danger", type: "button", title: T("Вернуть настройки по умолчанию") }, T("Сбросить"));
+      const close = () => this.closeSaveDialog();
+      go.onclick = async () => {
+        go.disabled = true;
+        try { await this.resetSettings(glob); close(); }
+        catch (e) { this.toast(T("Не удалось сбросить настройки: ") + (e.message || e), true); go.disabled = false; }
+      };
+      const box = h("div", { class: "h3z-save h3z-glass h3z-setreset-dlg" },
+        h("div", { class: "hd" }, h("b", null, T("↺ Вернуть настройки по умолчанию?")), h("i", { class: "grow" }),
+          h("button", { class: "h3z-btn sm icon", type: "button", title: T("Закрыть"), onclick: close }, "✕")),
+        h("div", { class: "h3z-note" }, glob
+          ? T("Сбрасываются глобальные настройки («Для всех проектов»): все вкладки ниже вернутся к значениям по умолчанию — в этом проекте и во всех проектах с «Для всех проектов». Язык интерфейса станет «Авто», тема — «{0}», размытие панелей включится, масштаб — {1}%.", themeName, DEFAULT_UI_SCALE)
+          : T("Сбрасываются настройки только этого проекта: все вкладки ниже снова станут как в глобальных настройках. Глобальные настройки, другие проекты, язык, тема и масштаб не меняются.")),
+        h("div", { class: "h3z-note" }, T("Сохраняются: API-ключи и адреса LLM, папки моделей, проекты (отрезки, промпты, ассеты), модели и кэш.")),
+        h("div", { class: "h3z-row" }, h("i", { class: "grow" }), h("button", { class: "h3z-btn", type: "button", onclick: close }, T("Отмена")), go));
+      const modal = this.$.saveModal = h("div", { class: "h3z-modal" }, box);
+      modal.addEventListener("pointerdown", (x) => { if (x.target === modal) close(); });
+      box.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") close(); });
+      this.root.append(modal);
+      go.focus();
+    },
+    /** glob: the global settings and the interface (language, theme, blur, scale) → defaults, this project follows;
+     *  else only this project's own settings → the global ones (defaults where none are saved). Undo: Ctrl+Z (project). */
+    async resetSettings(glob = this.globScope()) {
+      const def = this.defaultGlobVals();
+      if (glob) {
+        const relang = setLangSetting("auto");
+        applyTheme(DEFAULT_THEME, true); this.drawDyn?.();
+        applyUiBlur(DEFAULT_UI_BLUR, true);
+        this.setUiScale?.(DEFAULT_UI_SCALE);   // header + welcome picker follow
+        this.mutate((p) => { Object.assign(p.settings, def); });
+        await this.globPut(this.globVals(), true);
+        if (relang) this.toast(T("Настройки сброшены по умолчанию. Язык сменится после перезагрузки страницы"), false, { label: T("Перезагрузить"), fn: () => location.reload() });
+        else this.toast(T("Настройки для всех проектов сброшены по умолчанию"));
+        return;
+      }
+      const g = await this.globLoad(true), vals = {};
+      for (const k of C.GLOBAL_KEYS) vals[k] = k in g ? JSON.parse(JSON.stringify(g[k])) : def[k];
+      this.mutate((p) => { Object.assign(p.settings, vals); });
+      this.toast(T("Настройки этого проекта сброшены к глобальным (Ctrl+Z — вернуть)"));
     },
     openSettings(section) {
       this.tool = "settings"; if (section) this._setOpen = section;
@@ -390,6 +439,10 @@ export function installSettings(Editor, { C, h, ICON }) {
           pill(!glob, T("Только этот проект"), T("Свои настройки проекта: изменения не затрагивают другие проекты"), () => glob && this.setScope("project"))),
         h("div", { class: "h3z-note" }, glob ? T("Изменения здесь сохраняются глобально и применяются ко всем проектам с «Для всех проектов».") : T("Этот проект хранит свои настройки (так открываются проекты прошлых версий, чтобы их клипы не устарели).")),
         !glob ? h("button", { class: "h3z-btn sm", title: T("Записать настройки этого проекта как глобальные"), onclick: () => this.projToGlobal() }, T("Сделать глобальными")) : null);
+      // «Вернуть настройки по умолчанию» (between the scope block and the tabs): confirm, then reset per the scope
+      const resetBtn = h("button", { class: "h3z-btn sm danger h3z-setreset", type: "button",
+        title: glob ? T("Глобальные настройки и интерфейс — к значениям по умолчанию (API-ключи и проекты сохраняются)") : T("Настройки этого проекта — к глобальным (API-ключи и проекты сохраняются)"),
+        onclick: () => this.askResetSettings() }, T("↺ Вернуть настройки по умолчанию"));
       // generation stages
       const smp = this.opts.samplers, sch = this.opts.schedulers;
       const stages = det(T("Генерация"),
@@ -530,7 +583,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         (v) => { applyUiBlur(v, true); this.renderLeft(); },
         T("Стеклянный эффект панелей. Выключение может сделать интерфейс чуть быстрее.")
       ));
-      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, blurRow, scope, tabs, ...cur[2]);
+      const body = h("div", { class: "h3z-scroll h3z-setbody" }, langRow, themeRow, blurRow, scope, resetBtn, tabs, ...cur[2]);
       L.append(head, body);
       this._setOpen = null;
       this.keepDetails(L);

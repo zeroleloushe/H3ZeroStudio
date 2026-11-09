@@ -9,6 +9,10 @@ Packs live outside the node tree so they survive updates:
 
 Also scanned (gitignored): <node>/themes_user/<theme_id>/
 
+Bundled with the node (shipped to everyone, scanned first): <node>/themes/<theme_id>/.
+A local pack with the same id as a bundled one is skipped silently (no duplicate card,
+no warning) so old manual installs of a now-bundled pack keep working.
+
 Served only through a path-safe route (css/png/svg/woff2). Invalid packs are
 skipped and reported so the Settings picker can toast a warning.
 """
@@ -27,9 +31,14 @@ def _node_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def bundled_root():
+    """Packs shipped in the repository (e.g. «Бонус: Windows 98»)."""
+    return os.path.join(_node_dir(), "themes")
+
+
 def theme_roots():
-    """Ordered search roots (user dir first, then node-local themes_user)."""
-    roots = []
+    """Ordered search roots (bundled packs, then the user dir, then node-local themes_user)."""
+    roots = [bundled_root()]
     try:
         import folder_paths
         base = None
@@ -86,6 +95,11 @@ def _validate_meta(meta, folder_id):
         "swatches": swatches,
         "description_ru": str(meta.get("description_ru") or meta.get("description") or "")[:200],
         "description_en": str(meta.get("description_en") or meta.get("description") or "")[:200],
+        # optional extra UI languages; the frontend falls back to English
+        "name_th": str(meta.get("name_th") or "").strip()[:80],
+        "name_zh": str(meta.get("name_zh") or "").strip()[:80],
+        "description_th": str(meta.get("description_th") or "")[:200],
+        "description_zh": str(meta.get("description_zh") or "")[:200],
     }, None
 
 
@@ -95,7 +109,13 @@ def scan_themes():
     themes = []
     warnings = []
     seen = set()
+    bundled_ids = set()
+    try:
+        bundled = os.path.normcase(os.path.realpath(bundled_root()))
+    except Exception:
+        bundled = ""
     for root in theme_roots():
+        is_bundled = bool(bundled) and os.path.normcase(os.path.realpath(root)) == bundled
         if not os.path.isdir(root):
             continue
         try:
@@ -125,13 +145,18 @@ def scan_themes():
                 warnings.append(f"{name}: missing {meta['css']}")
                 continue
             if meta["id"] in seen:
-                warnings.append(f"{name}: duplicate id {meta['id']} (skipped)")
+                # a local copy of a bundled pack is expected (installed before it shipped): skip quietly
+                if meta["id"] not in bundled_ids:
+                    warnings.append(f"{name}: duplicate id {meta['id']} (skipped)")
                 continue
             seen.add(meta["id"])
+            if is_bundled:
+                bundled_ids.add(meta["id"])
             themes.append({
                 **meta,
                 "root": folder,
                 "plugin": True,
+                "bundled": is_bundled,
                 "swatches": meta["swatches"] or ["#c0c0c0", "#000080", "#008080"],
             })
     _warned = list(warnings)
@@ -148,6 +173,9 @@ def list_themes():
             "author": t["author"], "version": t["version"], "base": t["base"],
             "swatches": t["swatches"], "plugin": True,
             "description_ru": t["description_ru"], "description_en": t["description_en"],
+            "name_th": t["name_th"], "name_zh": t["name_zh"],
+            "description_th": t["description_th"], "description_zh": t["description_zh"],
+            "bundled": bool(t.get("bundled")),
             "css": f"/h3zero/themes/{t['id']}/theme.css",
         })
     return {"themes": out, "warnings": warnings}

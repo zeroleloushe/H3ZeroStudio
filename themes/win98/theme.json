@@ -1,0 +1,20 @@
+{
+  "id": "win98",
+  "name_ru": "Бонус: Windows 98",
+  "name_en": "Bonus: Windows 98",
+  "name_th": "โบนัส: Windows 98",
+  "name_zh": "彩蛋：Windows 98",
+  "description_ru": "Оммаж классическому интерфейсу Windows 98 (без логотипов Microsoft). Серебро, 3D-bevel, синие заголовки.",
+  "description_en": "Homage to the classic Windows 98 look (no Microsoft logos). Silver surfaces, 3D bevels, navy title bars.",
+  "description_th": "คารวะหน้าตาคลาสสิกของ Windows 98 (ไม่มีโลโก้ Microsoft) พื้นผิวสีเงิน ขอบนูนสามมิติ แถบชื่อสีน้ำเงินเข้ม",
+  "description_zh": "致敬经典 Windows 98 外观（不含 Microsoft 标志）。银灰界面、3D 斜面边框、深蓝标题栏。",
+  "author": "H3ZeroStudio",
+  "version": "1.0",
+  "base": "light",
+  "css": "theme.css",
+  "swatches": [
+    "#c0c0c0",
+    "#000080",
+    "#008080"
+  ]
+}

@@ -291,11 +291,111 @@ def test_interface_themes(tmp_path):
     out = json.loads(r.stdout)
     assert out["ids"] == ["neon", "graphite", "ocean", "porcelain", "sunset"]
     assert out["applied"] == out["ids"] and out["schemes"] == ["dark", "dark", "dark", "light", "dark"]
-    assert out["stored"] == out["restored"] == "ocean" and out["invalid"] == "neon"
+    assert out["stored"] == out["restored"] == "ocean" and out["invalid"] == "graphite"
     settings = pathlib.Path(JS, "h3s_settings.js").read_text(encoding="utf-8")
     css = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
-    assert "langRow, themeRow, scope" in settings and "applyTheme(theme.id, true)" in settings
+    assert "langRow, themeRow, blurRow, scope, resetBtn, tabs" in settings and "applyTheme(theme.id, true)" in settings
     assert all(f':root[data-h3z-theme="{theme}"]' in css for theme in out["ids"][1:])
+    # a fresh install (nothing saved) and «Вернуть настройки по умолчанию» use «Графит»
+    assert 'export const DEFAULT_THEME = "graphite";' in pathlib.Path(JS, "h3s_theme.js").read_text(encoding="utf-8")
+
+
+@need_node
+def test_bundled_win98_theme(tmp_path):
+    """«Бонус: Windows 98» ships in the repo as a bundled pack (themes/win98): pure CSS, names in every UI language."""
+    pack = pathlib.Path(JS).parents[1] / "themes" / "win98"
+    meta = json.loads((pack / "theme.json").read_text(encoding="utf-8"))
+    assert meta["id"] == "win98" and meta["base"] == "light" and meta["name_ru"] == "Бонус: Windows 98"
+    assert all(meta.get(f"name_{l}") and meta.get(f"description_{l}") for l in ("ru", "en", "th", "zh"))
+    css = (pack / meta["css"]).read_text(encoding="utf-8")
+    assert ':root[data-h3z-theme="win98"]' in css and "url(" not in css and "@font-face" not in css
+    assert sorted(f.name for f in pack.iterdir()) == ["theme.css", "theme.json"]  # no fonts / bitmaps shipped
+    driver = tmp_path / "packs.mjs"
+    driver.write_text(textwrap.dedent(f"""
+        const storage = new Map([["h3zs.lang", "th"]]);
+        globalThis.localStorage = {{ getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) }};
+        globalThis.document = {{ documentElement: {{ dataset: {{}}, style: {{}} }} }};
+        const {{ allThemes, loadPluginThemes, themeSetting }} = await import({json.dumps(pathlib.Path(JS, "h3s_theme.js").as_uri())});
+        const first = themeSetting();
+        await loadPluginThemes(async () => ({{ themes: [{{ ...{json.dumps(meta, ensure_ascii=False)}, css: "/h3zero/themes/win98/theme.css", plugin: true }}], warnings: [] }}));
+        const w = allThemes().filter((t) => t.id === "win98");
+        console.log(JSON.stringify({{ first, n: w.length, name: w[0]?.name }}));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out == {"first": "graphite", "n": 1, "name": meta["name_th"]}
+
+
+@need_node
+def test_settings_reset_defaults_button(tmp_path):
+    """«Вернуть настройки по умолчанию»: between the scope block and the tabs, H3 dialog (no native confirm),
+    i18n in every dictionary; the reset follows the scope and keeps API keys / projects."""
+    settings = pathlib.Path(JS, "h3s_settings.js").read_text(encoding="utf-8")
+    css = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
+    assert "scope, resetBtn, tabs, ...cur[2]" in settings
+    assert 'class: "h3z-btn sm danger h3z-setreset"' in settings and "onclick: () => this.askResetSettings()" in settings
+    assert ".h3z-setbody > .h3z-setreset {" in css
+    ask = settings[settings.index("    askResetSettings() {"):settings.index("    async resetSettings(")]
+    assert "h3z-modal" in ask and "closeSaveDialog" in ask and "confirm(" not in ask
+    keys = ["↺ Вернуть настройки по умолчанию", "↺ Вернуть настройки по умолчанию?", "Вернуть настройки по умолчанию", "Сбросить",
+            "Сохраняются: API-ключи и адреса LLM, папки моделей, проекты (отрезки, промпты, ассеты), модели и кэш.",
+            "Настройки для всех проектов сброшены по умолчанию", "Настройки этого проекта сброшены к глобальным (Ctrl+Z — вернуть)",
+            "Сбрасываются глобальные настройки («Для всех проектов»): все вкладки ниже вернутся к значениям по умолчанию — в этом проекте и во всех проектах с «Для всех проектов». Язык интерфейса станет «Авто», тема — «{0}», размытие панелей включится, масштаб — {1}%.",
+            "Сбрасываются настройки только этого проекта: все вкладки ниже снова станут как в глобальных настройках. Глобальные настройки, другие проекты, язык, тема и масштаб не меняются."]
+    for k in keys:
+        assert json.dumps(k, ensure_ascii=False) in settings or k in settings, k
+    driver = tmp_path / "reset.mjs"
+    driver.write_text(textwrap.dedent(f"""
+        const storage = new Map([["h3zs.lang", "en"], ["h3zs.theme", "ocean"], ["h3zs.uiBlur", "off"], ["h3zs.uiScale", "125"], ["h3zs.llm", "KEEP"]]);
+        globalThis.localStorage = {{ getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) }};
+        globalThis.document = {{ documentElement: {{ dataset: {{}}, style: {{}} }} }};
+        const C = await import({json.dumps(pathlib.Path(JS, "h3s_core.js").as_uri())});
+        const {{ installSettings }} = await import({json.dumps(pathlib.Path(JS, "h3s_settings.js").as_uri())});
+        const dicts = {{}};
+        for (const l of ["en", "th", "zh"]) dicts[l] = (await import({json.dumps(pathlib.Path(JS).as_uri())} + "/h3s_i18n_" + l + ".js")).default;
+        class Editor {{}}
+        installSettings(Editor, {{ C, h: () => ({{}}), ICON: {{}} }});
+        const mk = (scope) => {{
+          const ed = new Editor();
+          ed.p = C.normalizeProject({{ id: "p1", segments: [{{ frames: 124, prompt: "keep me" }}],
+            settings: {{ settings_scope: scope, steps: 6, cfg: 3, refine_sigma: 0.86, accel: {{ attention: "sage" }}, prompt: "project prompt", seed: 42 }} }});
+          ed.glob = {{ steps: 9, sampler: "euler" }}; ed.puts = []; ed.toasts = []; ed.scale = null;
+          ed.mutate = (fn) => fn(ed.p);
+          ed.globLoad = async () => ed.glob;
+          ed.globPut = async (v, replace) => {{ ed.puts.push([v, replace]); }};
+          ed.setUiScale = (p) => {{ ed.scale = p; storage.set("h3zs.uiScale", String(p)); }};
+          ed.toast = (m) => ed.toasts.push(m);
+          return ed;
+        }};
+        const def = C.normalizeProject({{}}).settings;
+        const g = mk("global"); await g.resetSettings(true); const gTheme = storage.get("h3zs.theme");
+        const pr = mk("project"); storage.set("h3zs.theme", "sunset"); await pr.resetSettings(false);
+        console.log(JSON.stringify({{
+          g: {{ steps: g.p.settings.steps, cfg: g.p.settings.cfg, sigma: g.p.settings.refine_sigma, accel: g.p.settings.accel.attention,
+               prompt: g.p.settings.prompt, seed: g.p.settings.seed, scope: g.p.settings.settings_scope, seg: g.p.segments[0].prompt,
+               put: g.puts[0], scale: g.scale }},
+          def: {{ steps: def.steps, cfg: def.cfg, sigma: def.refine_sigma, accel: def.accel.attention }},
+          ls: Object.fromEntries(storage), gTheme,
+          pr: {{ steps: pr.p.settings.steps, sampler: pr.p.settings.sampler, cfg: pr.p.settings.cfg, scope: pr.p.settings.settings_scope, puts: pr.puts.length }},
+          keys: {json.dumps(keys, ensure_ascii=False)}.filter((k) => !["en", "th", "zh"].every((l) => typeof dicts[l][k] === "string" && dicts[l][k])),
+          holes: {json.dumps(keys, ensure_ascii=False)}.filter((k) => ["en", "th", "zh"].some((l) => (dicts[l][k] || "").match(/\\{{\\d+\\}}/g)?.sort().join() !== (k.match(/\\{{\\d+\\}}/g) || []).sort().join() && (k.match(/\\{{\\d+\\}}/g) || dicts[l][k]?.match(/\\{{\\d+\\}}/g)))),
+        }}));
+    """), encoding="utf-8")
+    r = subprocess.run([NODE, str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["keys"] == [] and out["holes"] == []
+    d = out["def"]
+    # «Для всех проектов»: every GLOBAL_KEYS value → default, saved as the whole global set; interface → defaults
+    assert (out["g"]["steps"], out["g"]["cfg"], out["g"]["sigma"], out["g"]["accel"]) == (d["steps"], d["cfg"], d["sigma"], d["accel"])
+    assert out["g"]["prompt"] == "project prompt" and out["g"]["seed"] == 42 and out["g"]["seg"] == "keep me" and out["g"]["scope"] == "global"
+    assert out["g"]["put"][1] is True and out["g"]["put"][0]["steps"] == d["steps"]
+    assert out["gTheme"] == "graphite"
+    assert out["g"]["scale"] == 100 and out["ls"]["h3zs.lang"] == "auto" and out["ls"]["h3zs.uiBlur"] == "on" and out["ls"]["h3zs.llm"] == "KEEP"
+    # «Только этот проект»: the project takes the global values (defaults where none), the global set is not written
+    assert out["pr"] == {"steps": 9, "sampler": "euler", "cfg": d["cfg"], "scope": "project", "puts": 0}
+    assert out["ls"]["h3zs.theme"] == "sunset"
 
 
 @need_node

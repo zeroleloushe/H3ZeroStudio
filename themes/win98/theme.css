@@ -1,0 +1,203 @@
+/* H3ZeroStudio drop-in theme: Bonus Windows 98 — homage only, no Microsoft logos/assets. */
+:root[data-h3z-theme="win98"] {
+  --h3z-win98-face: #c0c0c0;
+  --h3z-win98-hilight: #ffffff;
+  --h3z-win98-shadow: #808080;
+  --h3z-win98-dkshadow: #000000;
+  --h3z-win98-navy: #000080;
+  --h3z-win98-title2: #1084d0;
+  --h3z-win98-teal: #008080;
+  --h3z-win98-sel: #000080;
+  --h3z-win98-font: Tahoma, "Microsoft Sans Serif", "MS Sans Serif", sans-serif;
+}
+
+:root[data-h3z-theme="win98"] :is(.h3z-root, .h3z-compact) {
+  --bg0: #008080;
+  --bg1: #008080;
+  --bg2: #c0c0c0;
+  --panel: #c0c0c0;
+  --panel2: #d4d0c8;
+  --line: #808080;
+  --line2: #000000;
+  --txt: #000000;
+  --mut: #404040;
+  --mut2: #606060;
+  --a1: #000080;
+  --a2: #1084d0;
+  --grad: linear-gradient(90deg, #000080, #1084d0);
+  --err: #800000;
+  --warn: #808000;
+  --ok: #008000;
+  --r: 0px;
+  --h3z-r: 0px;
+  --h3z-gap: 8px;
+  font-family: var(--h3z-win98-font);
+  font-size: 12px;
+  color: #000;
+  background: #008080;
+}
+
+:root[data-h3z-theme="win98"] .h3z-root,
+:root[data-h3z-theme="win98"] .h3z-compact {
+  border-radius: 0 !important;
+}
+
+:root[data-h3z-theme="win98"] .h3z-glass,
+:root[data-h3z-theme="win98"] .h3z-card,
+:root[data-h3z-theme="win98"] .h3z-panel,
+:root[data-h3z-theme="win98"] .h3z-head,
+:root[data-h3z-theme="win98"] .h3z-tools,
+:root[data-h3z-theme="win98"] .h3z-center,
+:root[data-h3z-theme="win98"] .h3z-tl,
+:root[data-h3z-theme="win98"] .h3z-insp > .h3z-card,
+:root[data-h3z-theme="win98"] .h3z-save,
+:root[data-h3z-theme="win98"] .h3z-ae,
+:root[data-h3z-theme="win98"] .h3z-menu,
+:root[data-h3z-theme="win98"] .h3z-regpop {
+  background: #c0c0c0 !important;
+  border: 2px solid !important;
+  border-color: #ffffff #000000 #000000 #ffffff !important;
+  border-radius: 0 !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-h3z-theme="win98"] .h3z-card-h,
+:root[data-h3z-theme="win98"] .h3z-save > .hd,
+:root[data-h3z-theme="win98"] .h3z-ae > .hd,
+:root[data-h3z-theme="win98"] .h3z-regpop > .hd,
+:root[data-h3z-theme="win98"] .h3z-menu .hd {
+  background: linear-gradient(90deg, #000080, #1084d0) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  font-family: var(--h3z-win98-font);
+  border-radius: 0 !important;
+  padding: 3px 6px !important;
+  margin: -2px -2px 6px -2px;
+}
+
+:root[data-h3z-theme="win98"] .h3z-card-h h4,
+:root[data-h3z-theme="win98"] .h3z-card-h b,
+:root[data-h3z-theme="win98"] .h3z-save > .hd b,
+:root[data-h3z-theme="win98"] .h3z-ae > .hd b,
+:root[data-h3z-theme="win98"] .h3z-card-h em,
+:root[data-h3z-theme="win98"] .h3z-card-h .h3z-note {
+  color: #fff !important;
+}
+
+:root[data-h3z-theme="win98"] .h3z-btn {
+  background: #c0c0c0 !important;
+  color: #000 !important;
+  border: 2px solid !important;
+  border-color: #ffffff #000000 #000000 #ffffff !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--h3z-win98-font);
+  font-size: 12px;
+  font-weight: 600;
+}
+:root[data-h3z-theme="win98"] .h3z-btn:hover { filter: none; background: #d4d0c8 !important; }
+:root[data-h3z-theme="win98"] .h3z-btn:active,
+:root[data-h3z-theme="win98"] .h3z-btn.on {
+  border-color: #000000 #ffffff #ffffff #000000 !important;
+  background: #c0c0c0 !important;
+}
+:root[data-h3z-theme="win98"] .h3z-btn.primary {
+  background: #c0c0c0 !important;
+  color: #000 !important;
+  font-weight: 700;
+}
+
+:root[data-h3z-theme="win98"] .h3z-in,
+:root[data-h3z-theme="win98"] .h3z-ta,
+:root[data-h3z-theme="win98"] .h3z-sel,
+:root[data-h3z-theme="win98"] .h3z-refs {
+  background: #fff !important;
+  color: #000 !important;
+  border: 2px solid !important;
+  border-color: #808080 #ffffff #ffffff #808080 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--h3z-win98-font);
+}
+
+:root[data-h3z-theme="win98"] .h3z-pill,
+:root[data-h3z-theme="win98"] .h3z-q {
+  background: #c0c0c0 !important;
+  color: #000 !important;
+  border: 2px solid !important;
+  border-color: #ffffff #000000 #000000 #ffffff !important;
+  border-radius: 0 !important;
+}
+:root[data-h3z-theme="win98"] .h3z-pill.on,
+:root[data-h3z-theme="win98"] .h3z-q.on {
+  border-color: #000000 #ffffff #ffffff #000000 !important;
+  background: #000080 !important;
+  color: #fff !important;
+}
+
+:root[data-h3z-theme="win98"] ::selection {
+  background: #000080;
+  color: #fff;
+}
+
+:root[data-h3z-theme="win98"] .h3z-status {
+  background: #fff !important;
+  border: 2px solid !important;
+  border-color: #808080 #ffffff #ffffff #808080 !important;
+  border-radius: 0 !important;
+  color: #000 !important;
+}
+:root[data-h3z-theme="win98"] .h3z-status.ok,
+:root[data-h3z-theme="win98"] .h3z-note.ok { color: #008000 !important; }
+
+:root[data-h3z-theme="win98"] .h3z-tl,
+:root[data-h3z-theme="win98"] .h3z-center {
+  background: #c0c0c0 !important;
+}
+:root[data-h3z-theme="win98"] .h3z-clip {
+  border-radius: 0 !important;
+  border: 1px solid #000 !important;
+}
+
+:root[data-h3z-theme="win98"] .h3z-modal {
+  background: rgba(0, 128, 128, 0.55) !important;
+  backdrop-filter: none !important;
+}
+
+:root[data-h3z-theme="win98"] .h3z-tog i {
+  border-radius: 0 !important;
+  border: 2px solid !important;
+  border-color: #808080 #ffffff #ffffff #808080 !important;
+  background: #fff !important;
+}
+:root[data-h3z-theme="win98"] .h3z-tog.on i {
+  background: #000080 !important;
+}
+
+/* classic scrollbars */
+:root[data-h3z-theme="win98"] .h3z-root ::-webkit-scrollbar { width: 16px; height: 16px; }
+:root[data-h3z-theme="win98"] .h3z-root ::-webkit-scrollbar-track {
+  background: #c0c0c0;
+  border: 1px solid #808080;
+}
+:root[data-h3z-theme="win98"] .h3z-root ::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #000000 #000000 #ffffff;
+}
+:root[data-h3z-theme="win98"] .h3z-root ::-webkit-scrollbar-button {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #000000 #000000 #ffffff;
+  width: 16px; height: 16px;
+}
+
+:root[data-h3z-theme="win98"] .h3z-lbl {
+  color: #000 !important;
+  font-family: var(--h3z-win98-font);
+  letter-spacing: 0;
+}
+:root[data-h3z-theme="win98"] .h3z-theme.plugin.on {
+  outline: 2px solid #000080;
+}

@@ -1,4 +1,6 @@
 const KEY = "h3zs.uiBlur";
+/** Panel blur of a fresh install (and of «Вернуть настройки по умолчанию»). */
+export const DEFAULT_UI_BLUR = true;
 
 export function uiBlurEnabled() {
   try {
@@ -6,7 +8,7 @@ export function uiBlurEnabled() {
     if (v === "0" || v === "off" || v === "false") return false;
     if (v === "1" || v === "on" || v === "true") return true;
   } catch {}
-  return true;
+  return DEFAULT_UI_BLUR;
 }
 
 export function applyUiBlur(on, save = false) {
